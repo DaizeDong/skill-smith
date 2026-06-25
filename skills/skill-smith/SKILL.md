@@ -1,0 +1,49 @@
+---
+name: skill-smith
+description: Create a new Claude Code skill (one, or a batch/series) to an industry-leading, tested-real bar. Use when the user wants to build, author, scaffold, or design a new skill from scratch, batch-create a series of skills, set up a skill factory / create->evaluate->iterate pipeline, or optimize a skill's triggering description. Research-first (delegates landscape + frontier-design recon to market-intel), scaffolds a Skill-Repo-Spec-conformant repo, enforces an anti-self-deception acceptance gate (eval lift, trigger rate, token budget, dedup, security, conformance, focus), then hands off to self-evolve for auto-iteration. NOT for improving an existing skill (use self-evolve) or finding a ready-made skill (use market-intel).
+---
+
+# skill-smith — a skill that creates skills
+
+> Governing principle (full text in the repo's `PHILOSOPHY.md`): **a skill is done when it is
+> *proven*, not when it is *generated*.** Research before you design (P1); generation != usable, so
+> nothing ships without passing the acceptance gate (P2); own the seam and delegate the engines (P3).
+
+## When to stop and route elsewhere (decide first)
+
+- **Improving / fixing an EXISTING skill** -> this is `self-evolve`'s job. Route there, do not recreate.
+- **"Is there a ready-made skill for X?"** -> `market-intel`'s `ready-skills` domain. Route there.
+- **Creating a NEW skill, or a batch of new skills** -> continue here.
+
+## Workflow (thin — load the named `reference/<shard>.md` only for the step you are on)
+
+| # | Step | Load | Delegates to |
+|---|---|---|---|
+| **0** | **Research-first (MANDATORY)** — survey best references + frontier designs + anti-patterns before any design | `reference/research-first.md` | **market-intel** (deep scale) |
+| 1 | Triage + dedup — overlap with existing library? single vs batch? | `reference/scaffold.md` §dedup + `scripts/dedup_check.py` | — |
+| 2 | Choose generation backend | `reference/generators.md` | Skill_Seekers / official skill-creator |
+| 3 | Scaffold Spec-v1 repo | `scripts/scaffold_skill.py` | — |
+| 4 | Draft SKILL.md + optimize triggering description | `reference/triggering.md` | official `run_loop.py` (60/40) |
+| 5 | **Acceptance gate** (all must pass; any fail = explicit reject) | `reference/acceptance-gate.md` + `budget_check.py` + `dedup_check.py` + `check_conformance.py` | agent-skills-eval / scenario-eval |
+| 6 | Hand off to auto-iteration | `reference/iterate-handoff.md` | **self-evolve** |
+| 7 | Batch a series (if multiple) | `reference/batch.md` | Workflow + library-budget manager |
+| 8 | Deploy (junction + GitHub publish) | `reference/deploy.md` | npx skills / gh |
+
+## Hard invariants (never violate — these are P1/P2/P4/P5 in force)
+
+1. **Research before design.** Never scaffold a skill without the Phase-0 market-intel recon. If
+   market-intel is unavailable, fall back to `deep-research` and SAY SO — never skip silently.
+2. **No skill is "accepted" without passing the full gate.** Eval lift vs baseline + held-out trigger
+   rate + library token budget + dedup + security audit + spec conformance + single-responsibility.
+   Failure is surfaced as an explicit gap, never a silent ship.
+3. **The token budget is library-wide.** A new/batch skill that pushes total descriptions past
+   ~15k chars / ~4k tokens must be merged/pruned first — adding it would silently truncate the set.
+4. **One skill, one job (<=3 modules).** Sprawl is rejected and split.
+5. **Conform or it is not a DaizeDong skill.** Output must pass `check_conformance.py` (Skill Repo
+   Spec v1: 7 files, philosophy-first bilingual README, badge block, version four-source-synced,
+   plugin fingerprint, base-9 GitHub topics).
+
+## Progressive loading
+
+This `SKILL.md` is the only always-loaded file. Read `reference/<shard>.md` on demand, one at a time,
+for the step you are executing. Never read the whole `reference/` directory at once.
