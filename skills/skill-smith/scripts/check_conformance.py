@@ -2,8 +2,7 @@
 """Skill Repo Spec v1 linter. Checks a skill repo dir for conformance.
 
 Usage:  python check_conformance.py <repo_dir>
-Exits 0 if all checks pass, 1 otherwise. Stdlib only. Spec母版:
-OneDrive/<private-backup-path>/docs/SKILL_REPO_SPEC.md
+Exits 0 if all checks pass, 1 otherwise. Stdlib only. (Skill Repo Spec v1.)
 """
 import json
 import os

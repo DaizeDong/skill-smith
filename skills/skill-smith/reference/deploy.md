@@ -1,41 +1,48 @@
-# Step 8 — Deploy (junction + GitHub publish)
+# Step 8 — Deploy (local junction + GitHub publish)
 
-Reuse the maintainer's existing mechanism — see memories `reference_skill_sync_junctions` and
-`user_github_identity`. Do NOT invent a new deploy path.
+Deploy the source as the live skill, then optionally publish the repo. Adjust paths and account
+names to your own setup — nothing here is machine-specific.
 
-## Local deploy = PowerShell junction (source = deployment)
+## Local deploy = junction (source = deployment)
 
-Source lives in `CodesSelf/<name>`; deploy to `~/.claude/skills/<name>` via a junction so source and
-live are the same files.
+Keep the source in your skills-source directory and link it into `~/.claude/skills/<name>` so the
+live skill and the source are the same files (edits flow both ways).
+
+PowerShell (Windows):
 
 ```powershell
 New-Item -ItemType Junction `
-  -Path "C:\Users\<username>\.claude\skills\<name>" `
-  -Target "C:\Users\<username>\CodesSelf\<name>\skills\<name>"     # plugin-style: <repo>/skills/<name>
-# root-skill style (SKILL.md at repo root, like self-evolve): Target the repo root instead.
+  -Path   "$HOME\.claude\skills\<name>" `
+  -Target "<your-skills-source>\<repo>\skills\<name>"   # plugin-style: <repo>/skills/<name>
+# root-skill style (SKILL.md at the repo root): target the repo root instead.
 ```
 
-- **Pitfall (hard-won):** do NOT use git-bash `cmd //c mklink /J` — MSYS mangles `//c` into an
-  interactive cmd that hangs. Use PowerShell `New-Item -ItemType Junction`.
-- Before creating, `ls CodesSelf/<name>/skills` to confirm the real skill list (don't trust memory).
-- Add the repo to `the skill-sync script` `$repos` so `SyncClaudeSkills` (daily 09:00,
-  `git pull --ff-only`, never push) keeps it synced.
-
-## GitHub publish (DaizeDong account)
+macOS / Linux:
 
 ```bash
-gh auth switch -u DaizeDong
-gh repo create DaizeDong/<name> --public
-git remote add origin git@daizedong:DaizeDong/<name>.git      # SSH host alias -> SSH key
-git -c user.name="DaizeDong" -c user.email="DaizeDong@users.noreply.github.com" commit ...
+ln -s <your-skills-source>/<repo>/skills/<name> ~/.claude/skills/<name>
+```
+
+- **Pitfall (Windows):** do NOT create the junction via git-bash `cmd //c mklink /J` — MSYS mangles
+  `//c` into an interactive cmd that hangs. Use PowerShell `New-Item -ItemType Junction`.
+- Before linking, list the repo's `skills/` to confirm the real skill name(s) — don't trust memory.
+- If you keep a daily skill-sync script, add the repo to its list so it stays current.
+
+## GitHub publish
+
+```bash
+gh repo create <gh-user>/<repo> --public
+git remote add origin git@github.com:<gh-user>/<repo>.git   # or your own SSH host alias
 git push -u origin main
 # topics: base-9 + domain (Skill Repo Spec v1)
-gh repo edit DaizeDong/<name> --add-topic claude-code,claude-plugin,claude-skill,claude,ai,ai-agent,agent,llm,skill,<domain...>
-gh auth switch -u <account>                                  # restore default
+gh repo edit <gh-user>/<repo> --add-topic claude-code,claude-plugin,claude-skill,claude,ai,ai-agent,agent,llm,skill,<domain...>
 ```
+
+If you maintain more than one GitHub identity, switch to the publishing account first
+(`gh auth switch -u <account>`) and switch back afterward. Commit under the matching name/email.
 
 ## Post-deploy verification
 
-- `python scripts/check_conformance.py ~/CodesSelf/<name>` passes (G6).
-- Restart Claude / `/mcp` if the skill needs MCPs; a freshly added skill is picked up on reload.
-- Confirm the junction resolves (`ls ~/.claude/skills/<name>` shows the live files).
+- `python scripts/check_conformance.py <path-to-repo>` passes (Gate G6).
+- Reload Claude / `/mcp` if the skill needs MCP servers; a freshly added skill is picked up on reload.
+- Confirm the junction resolves (the live skill dir shows the source files).

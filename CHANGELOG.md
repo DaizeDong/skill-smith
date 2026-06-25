@@ -16,3 +16,7 @@ All notable changes to this project are documented here (Keep a Changelog style)
   `budget_check.py` (library system-prompt token budget), `dedup_check.py` (cross-library description
   overlap).
 - Skill Repo Spec v1 conformance for this repo (dogfood).
+- A-tier pytest suite (`tests/`) verifying the create pipeline + each tool; scripts hardened for
+  UTF-8 BOM tolerance and empty-name input (found via a self-evolve iteration).
+- `trim_descriptions.py` — library description-budget remediation (scan -> review -> apply, with
+  per-file backups and a dry-run), the concrete fix for an over-budget skill set (Gate G3).

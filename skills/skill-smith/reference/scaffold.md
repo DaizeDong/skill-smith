@@ -12,8 +12,7 @@ installed skill (`~/.claude/skills/*/SKILL.md`).
 
 ## §scaffold — deterministic Spec-v1 skeleton
 
-Generate the repo with the scaffolder (templates are embedded; Spec v1 = the母版 at
-`OneDrive/<private-backup-path>/docs/SKILL_REPO_SPEC.md`):
+Generate the repo with the scaffolder (templates are embedded; conform to your Skill Repo Spec v1):
 
 ```bash
 python scripts/scaffold_skill.py <name> \
