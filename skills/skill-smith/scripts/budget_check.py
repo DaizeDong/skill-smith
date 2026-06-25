@@ -22,6 +22,7 @@ WARN_RATIO = 0.8
 
 def parse_frontmatter(text):
     """Return (name, description) from a SKILL.md frontmatter block."""
+    text = text.lstrip("﻿")  # tolerate a UTF-8 BOM (common from Windows editors)
     if not text.startswith("---"):
         return None, None
     end = text.find("\n---", 3)

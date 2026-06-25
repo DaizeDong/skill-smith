@@ -272,6 +272,9 @@ def main():
     a = ap.parse_args()
 
     name = kebab(a.name)
+    if not name:
+        print("ERROR: name %r normalizes to empty kebab-case; give a name with letters/digits." % a.name)
+        return 2
     if name != a.name:
         print("normalized name -> %s" % name)
     ver = a.version
