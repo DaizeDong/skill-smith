@@ -1,6 +1,6 @@
 ---
 name: skill-smith
-description: Create a new Claude Code skill (one, or a batch/series) to an industry-leading, tested-real bar. Use when the user wants to build, author, scaffold, or design a new skill from scratch, batch-create a series of skills, set up a skill factory / create->evaluate->iterate pipeline, or optimize a skill's triggering description. Research-first (delegates landscape + frontier-design recon to market-intel), scaffolds a Skill-Repo-Spec-conformant repo, enforces an anti-self-deception acceptance gate (eval lift, trigger rate, token budget, dedup, security, conformance, focus), then hands off to self-evolve for auto-iteration. NOT for improving an existing skill (use self-evolve) or finding a ready-made skill (use market-intel).
+description: Create, scaffold, or batch new Claude Code skills to a tested-real bar: research-first design, spec scaffold, eval+budget acceptance gate, then self-evolve iteration.
 ---
 
 # skill-smith — a skill that creates skills
