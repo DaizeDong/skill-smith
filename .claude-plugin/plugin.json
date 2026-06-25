@@ -1,0 +1,24 @@
+{
+  "name": "skill-smith",
+  "version": "0.1.0",
+  "description": "Thin meta-skill that creates other Claude Code skills to an industry-leading, tested-real bar. Use when you want to author a new skill, batch-create a series of skills, scaffold a Skill-Repo-Spec-conformant skill repo, optimize a skill's triggering description, or stand up a create -> evaluate -> iterate pipeline. It is research-first (delegates landscape + frontier-design recon to market-intel so every skill is designed against the state of the art), does deterministic Skill-Repo-Spec v1 scaffolding, enforces a hard anti-self-deception acceptance gate (eval lift vs baseline, held-out trigger rate, system-prompt token budget, cross-library dedup, security audit, spec conformance, single-responsibility focus), then hands the accepted skill to self-evolve for regression-gated auto-iteration; batch mode fans out many candidates under a global library-budget manager. Delegates generation depth, evaluation rigor, and iteration to existing tools rather than reimplementing them.",
+  "author": {
+    "name": "DaizeDong"
+  },
+  "homepage": "https://github.com/DaizeDong/skill-smith",
+  "license": "MIT",
+  "keywords": [
+    "skill-generator",
+    "meta-skill",
+    "skill-authoring",
+    "scaffolding",
+    "skill-repo-spec",
+    "evals",
+    "trigger-optimization",
+    "research-first",
+    "self-improving-agents",
+    "orchestration",
+    "claude-code",
+    "skill"
+  ]
+}
