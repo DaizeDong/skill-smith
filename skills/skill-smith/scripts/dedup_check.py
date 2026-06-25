@@ -22,6 +22,7 @@ STOP = set("a an the of to for and or in on with without via your you this that 
 
 
 def parse_frontmatter(text):
+    text = text.lstrip("﻿")  # tolerate a UTF-8 BOM (common from Windows editors)
     if not text.startswith("---"):
         return None, None
     end = text.find("\n---", 3)
