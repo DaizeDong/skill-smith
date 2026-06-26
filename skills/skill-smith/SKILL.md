@@ -27,7 +27,7 @@ description: Create, scaffold, or batch new Claude Code skills to a tested-real 
 | 5 | **Acceptance gate** (all must pass; any fail = explicit reject) | `reference/acceptance-gate.md` + `budget_check.py` + `dedup_check.py` + `check_conformance.py` + `check_config_conformance.py` (G8) | agent-skills-eval / scenario-eval |
 | 6 | Hand off to auto-iteration | `reference/iterate-handoff.md` | **self-evolve** |
 | 7 | Batch a series (if multiple) | `reference/batch.md` | Workflow + library-budget manager |
-| 8 | Deploy (junction + GitHub publish; config-bearing = G8 + README Config live) | `reference/deploy.md` | npx skills / gh |
+| 8 | Deploy (junction + GitHub publish; then MANDATORY set remote metadata + verify) | `reference/deploy.md` + `scripts/set_repo_metadata.py` + `scripts/check_remote_conformance.py` | npx skills / gh |
 
 > **Config-bearing skills** (need per-user keys / installed-tool registry / endpoints) are a
 > first-class case: decide at Step 1, scaffold with `--with-config` (Step 3), and they MUST pass the
@@ -43,9 +43,13 @@ description: Create, scaffold, or batch new Claude Code skills to a tested-real 
 3. **The token budget is library-wide.** A new/batch skill that pushes total descriptions past
    ~15k chars / ~4k tokens must be merged/pruned first — adding it would silently truncate the set.
 4. **One skill, one job (<=3 modules).** Sprawl is rejected and split.
-5. **Conform or it is not a DaizeDong skill.** Output must pass `check_conformance.py` (Skill Repo
-   Spec v1: 7 files, philosophy-first bilingual README, badge block, version four-source-synced,
-   plugin fingerprint, base-9 GitHub topics).
+5. **Conform or it is not a DaizeDong skill — locally AND on the remote.** Output must pass
+   `check_conformance.py` (G6: local files — 7 files, philosophy-first bilingual README, badge block,
+   version four-source-synced, plugin fingerprint) **and**, once published, `check_remote_conformance.py`
+   (G6b: the live GitHub repo carries the base-9 + domain topics and a description). These are **two
+   layers**: a plain `git push` sets no remote metadata, so passing G6 alone is how the topics=null
+   incident happened. Deploy (Step 8) MUST run `set_repo_metadata.py` then G6b — neither layer is
+   optional.
 6. **Config-bearing = configurable-by-anyone, or rejected.** If a skill needs a companion config
    (keys / registry / endpoints), it MUST pass the seven-element config standard (E1–E7) via
    `check_config_conformance.py` (G8): documented schema, env-var discovery mount, deterministic

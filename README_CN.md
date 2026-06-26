@@ -7,7 +7,7 @@
 [![理念先行](https://img.shields.io/badge/%E8%AE%BE%E8%AE%A1-%E8%B0%83%E7%A0%94%E5%85%88%E8%A1%8C-green?style=flat)](skills/skill-smith/reference/research-first.md)
 [![验收闸](https://img.shields.io/badge/%E4%B8%8A%E7%BA%BF-%E8%BF%87%E9%97%B8%E6%89%8D%E7%AE%97-green?style=flat)](skills/skill-smith/reference/acceptance-gate.md)
 [![语言](https://img.shields.io/badge/%E8%AF%AD%E8%A8%80-EN%20%2F%20CN-blue?style=flat)](#语言)
-[![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.1-purple?style=flat)](ROADMAP.md)
+[![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.2-purple?style=flat)](ROADMAP.md)
 
 [English](README.md) | [中文版](README_CN.md)
 

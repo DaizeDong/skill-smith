@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented here (Keep a Changelog style).
 
+## [0.1.2] - 2026-06-25
+### Added
+- **Remote conformance is now a first-class deploy step (Gate G6b).** Root-cause fix for the
+  topics=null incident: `git push` sets no GitHub topics/description/homepage, and `check_conformance.py`
+  (G6) only validates LOCAL files — so repos passed G6 yet shipped with `topics=null`, violating Skill
+  Repo Spec v1.
+- `scripts/set_repo_metadata.py` — idempotent setter for remote topics (base-9 + domain) + description
+  + homepage via `gh api PUT .../topics` and `gh repo edit`. Defaults are derived from the repo's own
+  `plugin.json` (owner/repo from homepage, domain topics from keywords minus the trailing `skill`/base-9
+  dups, one-line description). `--dry-run` previews; PUT replaces the whole topic set so re-runs converge.
+- `scripts/check_remote_conformance.py` — Gate **G6b**: queries the live GitHub repo and asserts the
+  base-9 topics are all present, >=1 domain topic exists, and description is non-empty (homepage is
+  advisory). Prints an explicit **SKIP** (never a silent pass) when `gh` is missing / unauthenticated /
+  offline. Self-tested read-only: PASS on a conformant repo, FAIL (exit 1) on a non-conformant one.
+- `reference/deploy.md` Step 8: setting remote metadata + passing G6b is now a MANDATORY publish
+  finisher (was a one-line optional `gh repo edit --add-topic`). SKILL.md invariant 5 + workflow Step 8
+  and `reference/acceptance-gate.md` add G6b as the remote-layer twin of G6 — both layers required,
+  neither substitutes for the other.
+
 ## [0.1.1] - 2026-06-25
 ### Added
 - **Config-bearing skills are now first-class** (config-spec E1–E7). A skill that needs a companion
