@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.sie/
+
+# Secrets gate (config-spec E6) — a config-bearing skill must never commit user secrets.
+secrets/*
+!secrets/README.md
+!secrets/.gitkeep
+*.env
+!*.env.template
+!env.template
+claude.json
+.claude.json
+*credentials*.json
+*.key
+*.pem
+!*.key.template
+!*.pem.template
