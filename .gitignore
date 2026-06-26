@@ -1,3 +1,17 @@
+# Python
 __pycache__/
 *.pyc
+.pytest_cache/
+
+# Build / self-evolve metadata
 .sie/
+scratchpad/
+*.log
+
+# Secrets (never commit)
+secrets/
+.env
+*.key
+*.pem
+*.cred
+.credentials.json
