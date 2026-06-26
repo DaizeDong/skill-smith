@@ -1,8 +1,17 @@
 # Roadmap
 
-Current: **v0.1.0**
+Current: **v0.1.1**
 
-## v0.1.0 (current) — framework
+## v0.1.1 (current) — config-bearing skills are first-class
+
+- `reference/config-spec.md`: the seven-element standard (E1–E7) for any skill that needs a companion
+  config — documented schema, env-var discovery mount, deterministic `init`, a `verify` doctor, two
+  configs hot-swappable by env var, secrets gitignored (Mode B), and a README Config section.
+- `scaffold_skill.py --with-config` emits the standard; `check_config_conformance.py` is Gate G8
+  (auto-detects config-bearing repos, live determinism + hot-swap test). Generalized from
+  market-intel's companion-config-spec to be skill-agnostic.
+
+## v0.1.0 — framework
 
 - Thin `SKILL.md` orchestrator with the full create workflow (research-first as Phase 0).
 - `PHILOSOPHY.md` (6 principles) + Skill-Repo-Spec-v1 conformance for this repo itself (dogfood).

@@ -41,13 +41,29 @@ keep them in lock-step on every bump.
 **Badge order (hard):** Claude Code Skill (orange) -> License MIT (blue) -> 0–2 feature (green) ->
 Languages EN/CN (blue) -> Roadmap vX.Y.Z (purple).
 
+### §config — config-bearing skills (decide at Step 1)
+
+If the skill needs per-user state (API keys, an installed-tool registry, endpoints), scaffold it as
+**config-bearing**:
+
+```bash
+python scripts/scaffold_skill.py <name> --with-config   # + the flags above
+```
+
+`--with-config` additionally emits the **config standard** (`reference/config-spec.md`, E1–E7):
+`CONFIG.md` (schema + mount + switch), generic `scripts/init_config.py` + `scripts/verify_config.py`,
+a `## Config` / `## 配置` section in both READMEs, and a `.gitignore` secrets gate (Mode B). The
+init/verify scripts are generic (they auto-detect the skill from `plugin.json`) and copied verbatim.
+
 After scaffolding, immediately verify:
 
 ```bash
-python scripts/check_conformance.py ~/CodesSelf/<name>
+python scripts/check_conformance.py ~/CodesSelf/<name>          # G6 Spec v1
+python scripts/check_config_conformance.py ~/CodesSelf/<name>   # G8 (auto-skips if not config-bearing)
 ```
 
-Conformance is part of the acceptance gate (Step 5) — a non-conformant repo is not shippable.
+Conformance is part of the acceptance gate (Step 5) — a non-conformant repo is not shippable, and a
+config-bearing repo failing E1–E7 is rejected.
 
 ## What the scaffolder does NOT do
 

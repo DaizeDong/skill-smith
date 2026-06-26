@@ -9,6 +9,7 @@ Usage:
     --tagline "Verb-first, quantified, one line." \
     --description "When to trigger + what it does + scope, one paragraph." \
     --topics "domain-a,domain-b" [--out-dir ~/CodesSelf] [--version 0.1.0] [--force]
+    [--with-config]   # also emit the config-bearing standard (config-spec E1-E7)
 """
 import argparse
 import json
@@ -250,6 +251,53 @@ def kebab(s):
     return re.sub(r"[^a-z0-9-]+", "-", s.strip().lower()).strip("-")
 
 
+ASSETS_CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "config")
+
+
+def _read_asset(rel):
+    with open(os.path.join(ASSETS_CONFIG, rel), "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def emit_config_bearing(root, name, force, write_fn):
+    """Emit the config-bearing standard (config-spec E1-E7) into the new skill repo.
+
+    - scripts/init_config.py + verify_config.py (verbatim generic tools; auto-detect skill)
+    - CONFIG.md (schema + mount + first-time + switch)
+    - README.md / README_CN.md '## Config' section appended
+    - .gitignore with the secrets gate (E6)
+    """
+    env = name.upper().replace("-", "_") + "_CONFIG"
+    defaultdir = ".%s-config" % name
+
+    def fill(t):
+        return (t.replace("__NAME__", name)
+                 .replace("__ENVVAR__", env)
+                 .replace("__DEFAULTDIR__", defaultdir))
+
+    # generic scripts copied verbatim (they self-detect the skill from plugin.json)
+    write_fn(os.path.join(root, "scripts", "init_config.py"), _read_asset("init_config.py"), force)
+    write_fn(os.path.join(root, "scripts", "verify_config.py"), _read_asset("verify_config.py"), force)
+    # authoritative config doc + secrets gitignore
+    write_fn(os.path.join(root, "CONFIG.md"), fill(_read_asset("CONFIG.md.tmpl")), force)
+    write_fn(os.path.join(root, ".gitignore"), _read_asset("skill-gitignore.tmpl"), force)
+    # append README '## Config' sections (idempotent: skip if already present)
+    for readme, asset in (("README.md", "readme-config-section.md.tmpl"),
+                          ("README_CN.md", "readme-config-section.cn.md.tmpl")):
+        p = os.path.join(root, readme)
+        existing = ""
+        if os.path.isfile(p):
+            with open(p, "r", encoding="utf-8") as f:
+                existing = f.read()
+        section = fill(_read_asset(asset))
+        if "## Config" in existing or "## 配置" in existing:
+            print("  SKIP (Config section exists): %s" % p)
+            continue
+        with open(p, "a", encoding="utf-8", newline="\n") as f:
+            f.write("\n" + section)
+        print("  appended Config section: %s" % p)
+
+
 def write(path, content, force):
     if os.path.exists(path) and not force:
         print("  SKIP (exists): %s" % path)
@@ -268,6 +316,9 @@ def main():
     ap.add_argument("--topics", default="", help="comma-separated domain keywords (excl. trailing 'skill')")
     ap.add_argument("--out-dir", default=os.path.expanduser("~/CodesSelf"))
     ap.add_argument("--version", default="0.1.0")
+    ap.add_argument("--with-config", action="store_true",
+                    help="emit the config-bearing standard (config-spec E1-E7): CONFIG.md, "
+                         "init/verify scripts, README Config section, secrets .gitignore")
     ap.add_argument("--force", action="store_true")
     a = ap.parse_args()
 
@@ -327,7 +378,14 @@ def main():
     # progressive-loading dir for the new skill
     write(os.path.join(root, "skills", name, "reference", ".gitkeep"), "", a.force)
 
+    if a.with_config:
+        print("Config-bearing standard (config-spec E1-E7):")
+        emit_config_bearing(root, name, a.force, write)
+
     print("\nDone. Next:")
+    if a.with_config:
+        print("  0) Config-bearing: fill CONFIG.md schema, then verify with")
+        print("     python skills/skill-smith/scripts/check_config_conformance.py %s" % root)
     print("  1) Fill docs/design-brief.md from a market-intel recon (Step 0).")
     print("  2) python check_conformance.py %s" % root)
     print("  3) Draft SKILL.md body + optimize the description (Step 4), then run the acceptance gate.")

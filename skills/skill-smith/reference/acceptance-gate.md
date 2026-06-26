@@ -14,13 +14,15 @@ skill must *prove* it works, not *look* like it does.
 | G5 | **Security** | generated scripts have no injection vectors / hardcoded secrets / destructive ops; audited before any run | manual + scan; never blind-run auto-generated code | prompt-injection / malware surface |
 | G6 | **Spec conformance** | passes Skill Repo Spec v1 | `python scripts/check_conformance.py <repo>` | repo inconsistency |
 | G7 | **Focus** | one job, <=3 modules; not a multi-purpose blob | review against the Step-0 brief | exhaustive < focused (SkillsBench) |
+| G8 | **Config standard** | IF config-bearing: passes the seven-element standard E1–E7 (schema doc · env-var discovery mount · deterministic init · verify doctor · two configs hot-swappable · secrets gitignored Mode B · README Config section) | `python scripts/check_config_conformance.py <repo>` (auto-skips if not config-bearing) | "works on my machine" config / unconfigurable-by-others |
 
 ## How to run the gate
 
 ```bash
-python scripts/check_conformance.py ~/CodesSelf/<name>   # G6
-python scripts/budget_check.py                           # G3 (whole library)
-python scripts/dedup_check.py                            # G4
+python scripts/check_conformance.py ~/CodesSelf/<name>          # G6
+python scripts/check_config_conformance.py ~/CodesSelf/<name>  # G8 (config-bearing; auto-skips otherwise)
+python scripts/budget_check.py                                 # G3 (whole library)
+python scripts/dedup_check.py                                  # G4
 # G1/G2 wired in v0.2 (agent-skills-eval / run_loop); until then run them manually and record numbers.
 ```
 

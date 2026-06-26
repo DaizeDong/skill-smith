@@ -1,0 +1,17 @@
+
+## Config
+
+`__NAME__` is **config-bearing** — it reads per-user state (keys, installed-tool registry) from a
+**separate, private** companion config repo. Full contract: [CONFIG.md](CONFIG.md).
+
+- **Mount (discovery order):** `$__ENVVAR__` → `$__ENVVAR___DIR` → `~/__DEFAULTDIR__/` →
+  `~/.config/__DEFAULTDIR__/`. First that exists wins; absent = runs without config.
+- **First time:**
+  ```bash
+  python scripts/init_config.py     # stamp a conformant skeleton (deterministic)
+  export __ENVVAR__=~/__DEFAULTDIR__ # or pass --out <dir> to init
+  python scripts/verify_config.py    # doctor: PASS/FAIL, names what is missing
+  ```
+- **Switch configs (hot-swap):** point the env var at another config dir — configs are self-contained,
+  no other change needed: `export __ENVVAR__=~/configs/work` ↔ `~/configs/personal`.
+- **Secrets:** Mode B — `secrets/*` is gitignored and never enters git; back up out-of-band.
