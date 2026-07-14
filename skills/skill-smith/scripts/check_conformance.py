@@ -6,6 +6,7 @@ Exits 0 if all checks pass, 1 otherwise. Stdlib only. (Skill Repo Spec v1.)
 """
 import json
 import os
+import subprocess
 import re
 import sys
 
@@ -34,6 +35,23 @@ def main(root):
                 os.path.join(".claude-plugin", "plugin.json"), "ROADMAP.md", "CHANGELOG.md"]
     for rel in required:
         check("file: %s" % rel, os.path.isfile(os.path.join(root, rel)))
+
+    # 1b) the PII gate (Spec v1 section 8) -- REQUIRED, not a later hardening pass.
+    # The 2026-07 audit found real private data (a phone, a home ZIP, an employer, a health-provider name, an email address on ~every commit) in five public skill repos. By the time anyone
+    # noticed, the fix was no longer an edit: it was a history rewrite and a force-push on each one.
+    # A repo without the gate is a repo accumulating that debt right now.
+    for rel in ["tools/pii_guard.py", "tools/test_pii_guard.py",
+                ".githooks/pre-commit", ".githooks/pre-push",
+                ".github/workflows/pii-guard.yml", ".pii-allow"]:
+        check("PII gate: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
+    # The gate must actually be clean -- shipping it red is worse than not having it, because the
+    # green checkbox above then means nothing.
+    guard = os.path.join(root, "tools", "pii_guard.py")
+    if os.path.isfile(guard):
+        p = subprocess.run([sys.executable, guard, "--tree", "--history"],
+                           cwd=root, capture_output=True, text=True)
+        check("PII gate: scan is clean (tree + history)", p.returncode == 0,
+              (p.stderr or "").strip().splitlines()[0] if p.returncode else "")
 
     # at least one skills/*/SKILL.md
     skill_mds = []
