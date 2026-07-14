@@ -53,6 +53,24 @@ def main(root):
         check("PII gate: scan is clean (tree + history)", p.returncode == 0,
               (p.stderr or "").strip().splitlines()[0] if p.returncode else "")
 
+    # 1c) the DATA BOUNDARY (Spec v1 section 9) -- the PRIMARY control; the scan above is a backstop.
+    #
+    # The same audit found what no scanner could: real-run output from the operator's own account, their
+    # private activity -- in public repos, written there by
+    # the SKILLS THEMSELVES on every real run. A ticker with an entry price has no email in it, no
+    # phone, no ZIP. Nothing to smell. pii_guard was green the whole time.
+    #
+    # So a conformant repo declares every path as TOOL / FIXTURE / DATA and ships as an UNINITIALIZED
+    # TOOL: real-run output resolves to a private store, and an agent writing this repo has nothing
+    # real within reach to copy.
+    for rel in ["tools/data_boundary.py", "tools/datadir.py", ".dataclass.json"]:
+        check("data boundary: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
+    boundary = os.path.join(root, "tools", "data_boundary.py")
+    if os.path.isfile(boundary):
+        p = subprocess.run([sys.executable, boundary], cwd=root, capture_output=True, text=True)
+        check("data boundary: repo is an uninitialized tool", p.returncode == 0,
+              (p.stderr or "").strip().splitlines()[0] if p.returncode else "")
+
     # at least one skills/*/SKILL.md
     skill_mds = []
     skills_dir = os.path.join(root, "skills")

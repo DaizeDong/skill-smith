@@ -309,24 +309,57 @@ def write(path, content, force):
     print("  wrote: %s" % path)
 
 
-def emit_pii_guard(root, force):
-    """Spec v1 section 8: every public repo is born with the PII gate already in it.
+DATACLASS_TMPL = """{
+  "_comment": [
+    "Spec v1 s9 -- every path in this repo belongs to exactly one class.",
+    "TOOL    = code, SKILL.md, docs, and metrics ABOUT THE SKILL. Public, hand-written, no data.",
+    "FIXTURE = tests and examples. Public, SYNTHETIC, produced by tools/make_fixtures.py.",
+    "DATA    = anything a REAL RUN produced. Never git-tracked. Lives in the private companion",
+    "          config, resolved at runtime by tools/datadir.py. This repo ships only the schema.",
+    "",
+    "Declare DATA paths here BEFORE the skill has anything to write, not after. A skill that",
+    "appends real-run output to a git-tracked file will do it on every run, quietly, forever --",
+    "that is how a public repo came to hold real-run output from the operator's own account, and no",
+    "content scanner can see it (a ticker with an entry price has no email or phone in it).",
+    "",
+    "data_sealed = a path that HELD real data, was purged, and must stay dead. Checked like data,",
+    "exempt from the .example schema requirement."
+  ],
+  "data": [],
+  "data_sealed": [],
+  "fixture": [],
+  "_data_home": "~/.%(name)s-config/data/   (override with $%(env)s)"
+}
+"""
 
-    Not optional, and not a later hardening pass. The 2026-07 audit found real private data -- a
-    phone number, a home ZIP, an employer, a health-provider name, an email address on ~every commit
-    -- in five public skill repos, because the agent writing them was looking at the operator's real
-    life for its examples and nothing in the pipeline forced a translation step. A repo that starts
-    without the gate accumulates the debt before anyone thinks to add one, and by then the fix is no
-    longer an edit: it is a history rewrite and a force-push.
+
+def emit_pii_guard(root, force, name):
+    """Spec v1 sections 8 + 9: every public repo is born with BOTH gates already in it.
+
+    Section 8 (pii_guard) is the backstop: it reads what you are about to publish and looks for
+    things that smell private. The 2026-07 audit found a phone number, a home ZIP, an employer and a health-provider name in five public skill repos, because the agent writing them was looking at the
+    operator's real life for its examples and nothing forced a translation step.
+
+    Section 9 (data_boundary) is the PRIMARY control, and it exists because the same audit found
+    something the scanner could never have caught: real-run output from a private account -- verdicts, purchases, and a research log -- none of it pasted in by anyone. The
+    SKILLS WROTE IT THERE, on every real run, by design. A ticker with an entry price contains no
+    email, no phone, no ZIP; there is nothing to smell. So the repo ships as an UNINITIALIZED TOOL:
+    real-run output resolves to a private store, and an agent writing this repo has nothing real
+    within reach to copy.
+
+    A repo that starts without these accumulates the debt before anyone thinks to add them, and by
+    then the fix is no longer an edit -- it is a history rewrite and a force-push.
     """
     src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        "assets", "pii-guard")
     if not os.path.isdir(src):
-        print("  WARN: assets/pii-guard missing; skipping the PII gate (Spec v1 s8 REQUIRES it)")
+        print("  WARN: assets/pii-guard missing; skipping the gates (Spec v1 s8+s9 REQUIRE them)")
         return
-    print("PII gate (Spec v1 section 8):")
+    print("PII gate + data boundary (Spec v1 sections 8 + 9):")
     pairs = [("pii_guard.py", os.path.join("tools", "pii_guard.py")),
              ("test_pii_guard.py", os.path.join("tools", "test_pii_guard.py")),
+             ("data_boundary.py", os.path.join("tools", "data_boundary.py")),
+             ("datadir.py", os.path.join("tools", "datadir.py")),
              (os.path.join("hooks", "pre-commit"), os.path.join(".githooks", "pre-commit")),
              (os.path.join("hooks", "pre-push"), os.path.join(".githooks", "pre-push")),
              (os.path.join("workflow", "pii-guard.yml"),
@@ -340,6 +373,15 @@ def emit_pii_guard(root, force):
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(os.path.join(src, rel_src), dst)
         print("  wrote: %s" % dst)
+
+    dc = os.path.join(root, ".dataclass.json")
+    if os.path.exists(dc) and not force:
+        print("  SKIP (exists): %s" % dc)
+    else:
+        with open(dc, "w", encoding="utf-8", newline="\n") as f:
+            f.write(DATACLASS_TMPL % {"name": name,
+                                      "env": name.upper().replace("-", "_") + "_DATA_DIR"})
+        print("  wrote: %s" % dc)
 
 
 def main():
@@ -412,7 +454,7 @@ def main():
     # progressive-loading dir for the new skill
     write(os.path.join(root, "skills", name, "reference", ".gitkeep"), "", a.force)
 
-    emit_pii_guard(root, a.force)
+    emit_pii_guard(root, a.force, a.name)
 
     if a.with_config:
         print("Config-bearing standard (config-spec E1-E7):")
