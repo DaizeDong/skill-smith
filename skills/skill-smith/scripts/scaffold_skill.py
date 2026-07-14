@@ -14,6 +14,7 @@ Usage:
 import argparse
 import json
 import os
+import shutil
 import sys
 import datetime
 import re
@@ -308,6 +309,39 @@ def write(path, content, force):
     print("  wrote: %s" % path)
 
 
+def emit_pii_guard(root, force):
+    """Spec v1 section 8: every public repo is born with the PII gate already in it.
+
+    Not optional, and not a later hardening pass. The 2026-07 audit found real private data -- a
+    phone number, a home ZIP, an employer, a health-provider name, an email address on ~every commit
+    -- in five public skill repos, because the agent writing them was looking at the operator's real
+    life for its examples and nothing in the pipeline forced a translation step. A repo that starts
+    without the gate accumulates the debt before anyone thinks to add one, and by then the fix is no
+    longer an edit: it is a history rewrite and a force-push.
+    """
+    src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "assets", "pii-guard")
+    if not os.path.isdir(src):
+        print("  WARN: assets/pii-guard missing; skipping the PII gate (Spec v1 s8 REQUIRES it)")
+        return
+    print("PII gate (Spec v1 section 8):")
+    pairs = [("pii_guard.py", os.path.join("tools", "pii_guard.py")),
+             ("test_pii_guard.py", os.path.join("tools", "test_pii_guard.py")),
+             (os.path.join("hooks", "pre-commit"), os.path.join(".githooks", "pre-commit")),
+             (os.path.join("hooks", "pre-push"), os.path.join(".githooks", "pre-push")),
+             (os.path.join("workflow", "pii-guard.yml"),
+              os.path.join(".github", "workflows", "pii-guard.yml")),
+             ("pii-allow.tmpl", ".pii-allow")]
+    for rel_src, rel_dst in pairs:
+        dst = os.path.join(root, rel_dst)
+        if os.path.exists(dst) and not force:
+            print("  SKIP (exists): %s" % dst)
+            continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(os.path.join(src, rel_src), dst)
+        print("  wrote: %s" % dst)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Scaffold a Spec-v1 Claude Code skill repo.")
     ap.add_argument("name", help="skill / repo name (kebab-case)")
@@ -378,13 +412,19 @@ def main():
     # progressive-loading dir for the new skill
     write(os.path.join(root, "skills", name, "reference", ".gitkeep"), "", a.force)
 
+    emit_pii_guard(root, a.force)
+
     if a.with_config:
         print("Config-bearing standard (config-spec E1-E7):")
         emit_config_bearing(root, name, a.force, write)
 
     print("\nDone. Next:")
+    print("  0) PII gate: git init, then `git config core.hooksPath .githooks` (local config cannot")
+    print("     be committed, so every clone must run it; CI does not depend on it).")
+    print("     Commit identity MUST be the GitHub noreply address -- a real mailbox on the author")
+    print("     line is the one leak no file scan will ever see (Spec v1 s8).")
     if a.with_config:
-        print("  0) Config-bearing: fill CONFIG.md schema, then verify with")
+        print("  0b) Config-bearing: fill CONFIG.md schema, then verify with")
         print("     python skills/skill-smith/scripts/check_config_conformance.py %s" % root)
     print("  1) Fill docs/design-brief.md from a market-intel recon (Step 0).")
     print("  2) python check_conformance.py %s" % root)
