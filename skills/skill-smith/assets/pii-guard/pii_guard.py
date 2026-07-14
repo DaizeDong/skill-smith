@@ -145,18 +145,66 @@ def load_repo_allow(root):
     return allow
 
 
-def load_private_denylist():
-    """Optional extra layer: the operator's own real tokens. Never lives in a repo."""
+def load_private_denylist(root=None):
+    """Optional extra layer: the operator's own real tokens. Never lives in a repo.
+
+    A few repos publish one of these tokens ON PURPOSE -- an academic homepage exists to show your
+    contact address. Blocking edits to that line would be a false alarm on a repo the operator edits
+    by hand, and a gate that cries wolf gets --no-verify'd, at which point it guards nothing
+    anywhere. So a token can be exempted PER REPO in ~/.pii-guard/denylist-exempt.json:
+
+        { "daizedong/some.github.io": ["<token>"] }   # the homepage's own contact line
+
+    That file lives OUTSIDE every repo, on purpose. An exemption granted from inside a repo would let
+    an agent that is leaking into that repo write itself a permission slip in the same commit.
+    Structural checks are never exempted -- only these named tokens, only in that one repo.
+    """
+    toks = []
     for p in (os.environ.get("PII_DENYLIST"), os.path.expanduser("~/.pii-denylist.json")):
         if p and os.path.isfile(p):
             try:
                 with open(p, encoding="utf-8") as f:
                     data = json.load(f)
-                toks = data.get("tokens") if isinstance(data, dict) else data
-                return [str(t).lower() for t in (toks or []) if str(t).strip()]
+                raw = data.get("tokens") if isinstance(data, dict) else data
+                toks = [str(t).lower() for t in (raw or []) if str(t).strip()]
             except (OSError, ValueError):
-                return []
-    return []
+                toks = []
+            break
+    if not toks or not root:
+        return toks
+    try:
+        with open(os.path.expanduser("~/.pii-guard/denylist-exempt.json"), encoding="utf-8") as f:
+            exempt = json.load(f)
+    except (OSError, ValueError):
+        return toks
+    url = _run(["git", "remote", "get-url", "origin"], root).strip().lower().rstrip("/")
+    if url.endswith(".git"):
+        url = url[:-4]
+    parts = [p for p in url.replace(":", "/").split("/") if p]
+    key = "/".join(parts[-2:]) if len(parts) >= 2 else ""
+    drop = {str(t).lower() for t in (exempt.get(key) or [])}
+    return [t for t in toks if t not in drop]
+
+
+_DENY_RE_CACHE = {}
+
+
+def _deny_hit(tok, low_text):
+    """Word-bounded match for alphabetic denylist tokens; plain substring for the rest.
+
+    A short first name is a substring of ordinary English. A denylisted given name matched inside a
+    CSS colour keyword in a minified JS bundle and turned a personal homepage red. False positives
+    are not a nuisance here -- they are how a gate dies: it cries wolf on something harmless, someone
+    reaches for --no-verify, and from then on it guards nothing. So bound alphabetic tokens; leave
+    digit-bearing ones (phones, ZIPs, account slugs) as raw substrings, where a boundary would only
+    cause misses.
+    """
+    if any(ch.isdigit() for ch in tok) or not any(ch.isalpha() for ch in tok):
+        return tok in low_text
+    rx = _DENY_RE_CACHE.get(tok)
+    if rx is None:
+        rx = _DENY_RE_CACHE[tok] = re.compile(r"(?<![a-z0-9])%s(?![a-z0-9])" % re.escape(tok))
+    return bool(rx.search(low_text))
 
 
 def email_ok(addr, allow):
@@ -184,7 +232,7 @@ def scan_text(text, where, allow, deny, out, strict=True, deny_only=False):
     """
     low = text.lower()
     for tok in deny:
-        if tok in low:
+        if _deny_hit(tok, low):
             out.append((where, "PRIVATE-DENYLIST", tok))
     if deny_only:
         return                            # a scanner file: it must contain the shapes it detects
@@ -248,26 +296,83 @@ def scan_history(root, allow, deny):
     return out
 
 
+def scan_range(root, allow, deny, rev_range):
+    """Scan ONLY the commits about to be published: their diffs, messages and author lines.
+
+    This is what the machine-wide pre-push hook uses, and the scope is the whole point of it. A
+    full-history scan is right for a repo you own and have cleaned. It is useless on a FORK of an
+    upstream project: thousands of other people's mailboxes sit in that history, the guard would be
+    permanently red, and a permanently red guard gets bypassed -- so the one place an agent is most
+    likely to publish something (a PR to someone else's project) would end up the least guarded.
+
+    Scanning the push range instead asks the only question that is actually yours to answer: is
+    there private data in what YOU are adding?
+    """
+    out = []
+    args = rev_range.split()
+    msgs = _run(["git", "log", "--format=%s%n%b"] + args, root)
+    if msgs:
+        scan_text(msgs, "<commit message (being pushed)>", allow, deny, out, strict=False)
+    for ident in set(_run(["git", "log", "--format=%ae%n%ce"] + args, root).split()):
+        if ident and not ALLOWED_AUTHOR_EMAIL_RE.search(ident):
+            out.append(("<commit author (being pushed)>", "AUTHOR-EMAIL", ident))
+    diff = _run(["git", "log", "-p", "--format=%n"] + args + ["--"] + HISTORY_EXCLUDE, root)
+    if diff:
+        scan_text(diff, "<diff (being pushed)>", allow, deny, out, strict=False)
+    return out
+
+
+def scan_staged(root, allow, deny):
+    """Scan only what is staged -- the machine-wide pre-commit gate.
+
+    This is the cheapest possible place to catch a leak, and the only one where the fix is still an
+    EDIT. One commit later it is a history rewrite and a force-push; one push later it is public
+    forever and everyone who cloned already has it. Every leak in the 2026-07 audit passed through
+    this exact point, and there was nothing standing here.
+
+    Breach classes only (strict=False): a consumer mailbox, a real phone, a home ZIP, a private
+    token. Not the full synthetic-namespace rule -- this hook runs in every repo on the machine,
+    including forks and research code, and a gate that nags there is a gate that gets bypassed.
+    """
+    out = []
+    diff = _run(["git", "diff", "--cached", "--unified=0", "--"] + HISTORY_EXCLUDE, root)
+    for line in (diff or "").splitlines():
+        if line.startswith("+") and not line.startswith("+++"):
+            scan_text(line[1:], "<staged>", allow, deny, out, strict=False)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="Structural allowlist PII guard for public repos.")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--tree", action="store_true", help="scan the git-tracked working tree")
     ap.add_argument("--history", action="store_true", help="scan every commit: blobs, messages, authors")
+    ap.add_argument("--range", dest="rev_range", default=None,
+                    help="scan only the commits in this rev-range (e.g. 'abc..def', or "
+                         "'<sha> --not --remotes'). Used by the machine-wide pre-push hook.")
+    ap.add_argument("--staged", action="store_true",
+                    help="scan only what is staged. Used by the machine-wide pre-commit hook: "
+                         "catching it here means the fix is still an EDIT, not a history rewrite.")
     a = ap.parse_args()
-    if not (a.tree or a.history):
+    if not (a.tree or a.history or a.rev_range or a.staged):
         a.tree = True
 
     root = _repo_root(os.path.abspath(a.repo))
-    allow, deny = load_repo_allow(root), load_private_denylist()
+    allow, deny = load_repo_allow(root), load_private_denylist(root)
 
     findings = []
     if a.tree:
         findings += scan_tree(root, allow, deny)
     if a.history:
         findings += scan_history(root, allow, deny)
+    if a.rev_range:
+        findings += scan_range(root, allow, deny, a.rev_range)
+    if a.staged:
+        findings += scan_staged(root, allow, deny)
 
     if not findings:
-        scope = "+".join([s for s, on in (("tree", a.tree), ("history", a.history)) if on])
+        scope = "+".join([s for s, on in (("tree", a.tree), ("history", a.history),
+                                          ("push-range", bool(a.rev_range))) if on])
         print("pii_guard: clean (%s)%s" % (scope, "" if deny else "  [no private denylist loaded]"))
         return 0
 
