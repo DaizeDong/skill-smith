@@ -384,6 +384,34 @@ def emit_pii_guard(root, force, name):
         print("  wrote: %s" % dc)
 
 
+def emit_dash_guard(root, force):
+    """Vendor the dash gate (Spec v1 section 10): the house rule that published prose carries no
+    en/em dash. tools/dash_guard.py de-dashes Markdown and Python COMMENTS only (string literals,
+    docstrings and data, are left alone so a functional literal is never corrupted), and the CI
+    workflow fails a push whose prose still carries a dash. The ASCII hyphen is never touched.
+
+    Runtime output compliance is the renderer's job, not this gate's: any skill that renders an
+    LLM-supplied field into user-facing output should normalize en/em/bar dashes to a comma in its
+    _inline helper (write the dash set as backslash-u escapes so the source stays dash-free)."""
+    src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "assets", "dash-guard")
+    if not os.path.isdir(src):
+        print("  WARN: assets/dash-guard missing; skipping the dash gate (Spec v1 s10)")
+        return
+    print("Dash gate (Spec v1 section 10):")
+    pairs = [("dash_guard.py", os.path.join("tools", "dash_guard.py")),
+             (os.path.join("workflow", "dash-guard.yml"),
+              os.path.join(".github", "workflows", "dash-guard.yml"))]
+    for rel_src, rel_dst in pairs:
+        dst = os.path.join(root, rel_dst)
+        if os.path.exists(dst) and not force:
+            print("  SKIP (exists): %s" % dst)
+            continue
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(os.path.join(src, rel_src), dst)
+        print("  wrote: %s" % dst)
+
+
 def main():
     ap = argparse.ArgumentParser(description="Scaffold a Spec-v1 Claude Code skill repo.")
     ap.add_argument("name", help="skill / repo name (kebab-case)")
@@ -455,6 +483,7 @@ def main():
     write(os.path.join(root, "skills", name, "reference", ".gitkeep"), "", a.force)
 
     emit_pii_guard(root, a.force, a.name)
+    emit_dash_guard(root, a.force)
 
     if a.with_config:
         print("Config-bearing standard (config-spec E1-E7):")
