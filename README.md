@@ -1,6 +1,6 @@
 # skill-smith
 
-Create Claude Code skills — one or a whole series — to an industry-leading, tested-real bar: research the field first, scaffold to spec, then refuse to ship anything that does not pass a hard acceptance gate.
+Create Claude Code skills, one or a whole series, to an industry-leading, tested-real bar: research the field first, scaffold to spec, then refuse to ship anything that does not pass a hard acceptance gate.
 
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-orange?style=flat)](https://docs.anthropic.com/en/docs/claude-code)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -13,11 +13,11 @@ Create Claude Code skills — one or a whole series — to an industry-leading, 
 
 ---
 
-## ⭐ Read this first — the design philosophy
+## ⭐ Read this first, the design philosophy
 
-skill-smith is built on one principle: **a skill is not "done" when it is generated — it is done when it is proven.** Two ideas follow from that, and they shape every decision in this repo:
+skill-smith is built on one principle: **a skill is not "done" when it is generated, it is done when it is proven.** Two ideas follow from that, and they shape every decision in this repo:
 
-1. **Research before you design (P1).** You cannot build something "industry-leading" by guessing. Before a single line of a new skill is written, skill-smith delegates a broad recon to [`market-intel`](https://github.com/DaizeDong/market-intel) — best reference implementations, frontier designs to borrow, and known anti-patterns to avoid. The design target is the state of the art, surveyed, not asserted.
+1. **Research before you design (P1).** You cannot build something "industry-leading" by guessing. Before a single line of a new skill is written, skill-smith delegates a broad recon to [`market-intel`](https://github.com/DaizeDong/market-intel), best reference implementations, frontier designs to borrow, and known anti-patterns to avoid. The design target is the state of the art, surveyed, not asserted.
 2. **Generation != usable (P2).** The whole community ships auto-generated skills that look fine and silently fail (~50% never even trigger; field audits put a majority below a usable quality bar). So skill-smith treats "accepted" exactly the way [`self-evolve`](https://github.com/DaizeDong/self-evolve) treats "improved": only after an anti-self-deception **acceptance gate** (measured eval lift vs baseline + held-out trigger rate + token budget + dedup + security + spec conformance + single-responsibility focus).
 
 So skill-smith does **not** try to be a bigger generator. It is a **thin orchestrator** that owns only the seam nothing else owns, and delegates the heavy parts to tools you already run.
@@ -32,11 +32,11 @@ You already have the pieces: `market-intel` (research orchestration), `self-evol
 
 It does **only what nothing else does**, and delegates everything else:
 
-1. **Research-first recon** — delegate landscape + frontier-design survey to `market-intel` (front engine).
-2. **Spec-conformant scaffolding** — deterministically emit a Skill-Repo-Spec-v1 repo skeleton (7 required files, badges, version four-source-synced, plugin fingerprint).
-3. **Acceptance gate** — eval lift, trigger rate, system-prompt token budget, cross-library dedup, security audit, spec conformance, focus. Fail = explicit reject, never silent ship.
-4. **Auto-iteration handoff** — hand the accepted skill to `self-evolve` (back engine) for regression-gated improvement.
-5. **Batch** — fan out a *series* of candidate skills, each through the gate, under one global library-budget manager.
+1. **Research-first recon**, delegate landscape + frontier-design survey to `market-intel` (front engine).
+2. **Spec-conformant scaffolding**, deterministically emit a Skill-Repo-Spec-v1 repo skeleton (7 required files, badges, version four-source-synced, plugin fingerprint).
+3. **Acceptance gate**, eval lift, trigger rate, system-prompt token budget, cross-library dedup, security audit, spec conformance, focus. Fail = explicit reject, never silent ship.
+4. **Auto-iteration handoff**, hand the accepted skill to `self-evolve` (back engine) for regression-gated improvement.
+5. **Batch**, fan out a *series* of candidate skills, each through the gate, under one global library-budget manager.
 
 It is **not**: a from-scratch generator (it calls Skill_Seekers / the official skill-creator), an eval framework (it calls agent-skills-eval / scenario-eval), or an iteration engine (it calls self-evolve). It is the glue + the gate.
 
@@ -54,7 +54,7 @@ Or clone manually:
 git clone https://github.com/DaizeDong/skill-smith.git ~/.claude/plugins/skill-smith
 ```
 
-(Maintainer setup: source lives in `CodesSelf/skill-smith`, deployed to `~/.claude/skills/skill-smith` via a PowerShell junction — see [`reference/deploy.md`](skills/skill-smith/reference/deploy.md).)
+(Maintainer setup: source lives in `CodesSelf/skill-smith`, deployed to `~/.claude/skills/skill-smith` via a PowerShell junction, see [`reference/deploy.md`](skills/skill-smith/reference/deploy.md).)
 
 ## Quick start
 
@@ -84,7 +84,7 @@ Trigger words: *create a skill, build a skill, scaffold a skill, author a new sk
 
 - v0.1 ships the **framework**: research-first workflow + deterministic scaffolder + Spec-v1 linter + budget/dedup checks. The acceptance gate's eval-lift wiring (agent-skills-eval / scenario-eval) and the self-evolve handoff land in v0.2/v0.3 (see [ROADMAP.md](ROADMAP.md)).
 - It assumes `market-intel` and `self-evolve` are installed; without them it degrades to plain web research and a manual gate, and says so (never silently).
-- It optimizes for *correct, focused, proven* skills, not raw volume — by design it will refuse to add a skill that overflows the library token budget.
+- It optimizes for *correct, focused, proven* skills, not raw volume, by design it will refuse to add a skill that overflows the library token budget.
 
 ## Languages
 

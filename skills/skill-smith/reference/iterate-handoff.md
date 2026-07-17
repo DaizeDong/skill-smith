@@ -1,6 +1,6 @@
-# Step 6 — Hand off to self-evolve (auto-iteration, don't reimplement)
+# Step 6, Hand off to self-evolve (auto-iteration, don't reimplement)
 
-Once a skill is **accepted** (Step 5), ongoing improvement is `self-evolve`'s job — it is the
+Once a skill is **accepted** (Step 5), ongoing improvement is `self-evolve`'s job, it is the
 anti-self-deception iteration engine ("被采纳 = 真改进", regression-gated, sandboxed). skill-smith does
 NOT build its own loop; it sets self-evolve up correctly and gets out of the way.
 
@@ -14,7 +14,7 @@ The Step-0 brief's "proof bar" tells you where the eval signal comes from. Map i
 | Grounded in an external source of truth (filings, prices, APIs) | **B** | anchor verification (e.g. EDGAR) |
 | Subjective / judgment / prose | **C** | scenario-eval (scenarios + rubric + heterogeneous judges) |
 
-`scenario-eval` is the universal load-bearing fallback — **there is no un-evolvable skill** (this is
+`scenario-eval` is the universal load-bearing fallback, **there is no un-evolvable skill** (this is
 self-evolve's correction to the early "markdown skill can't be tested" mistake). Even a pure-prose
 skill gets a C-provider eval.
 
@@ -32,4 +32,4 @@ skill gets a C-provider eval.
 
 skill-smith's gate (Step 5) proves the skill is good *at creation*; self-evolve keeps it good *over
 time* as the world drifts. Same anti-self-deception spine, two moments. Do not collapse them into a
-home-grown loop — reuse self-evolve so the safety guarantees come for free.
+home-grown loop, reuse self-evolve so the safety guarantees come for free.
