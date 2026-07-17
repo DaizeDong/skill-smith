@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented here (Keep a Changelog style).
 
+## [0.1.3] - 2026-07-16
+### Added
+- **Dash gate (Spec v1 section 10) is now scaffolded into every new skill.** `scaffold_skill.py`
+  vendors `tools/dash_guard.py` plus a `dash-guard` CI workflow (assets under `assets/dash-guard/`),
+  so a new skill is born enforcing the house rule that published prose carries no en/em dash. The
+  tool de-dashes Markdown and Python COMMENTS only, leaving every string literal (docstrings and data
+  such as regexes or fixtures) untouched, so a functional literal is never corrupted; the ASCII hyphen
+  is never touched. `check_conformance.py` now verifies the two files exist and that the tree is
+  dash-clean. Runtime output compliance stays the renderer's job (normalize dashes in `_inline`).
+
 ## [0.1.2] - 2026-06-25
 ### Added
 - **Remote conformance is now a first-class deploy step (Gate G6b).** Root-cause fix for the

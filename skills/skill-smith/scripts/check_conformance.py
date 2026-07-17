@@ -71,6 +71,17 @@ def main(root):
         check("data boundary: repo is an uninitialized tool", p.returncode == 0,
               (p.stderr or "").strip().splitlines()[0] if p.returncode else "")
 
+    # 1d) the DASH gate (Spec v1 section 10): published prose carries no en/em dash. Style, not
+    # security, so it scans the current tree only. The tool de-dashes Markdown + Python comments and
+    # leaves every string literal (data) alone.
+    for rel in ["tools/dash_guard.py", ".github/workflows/dash-guard.yml"]:
+        check("dash gate: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
+    dguard = os.path.join(root, "tools", "dash_guard.py")
+    if os.path.isfile(dguard):
+        p = subprocess.run([sys.executable, dguard, "--tree"], cwd=root, capture_output=True, text=True)
+        check("dash gate: prose is dash-clean (tree)", p.returncode == 0,
+              (p.stderr or "").strip().splitlines()[0] if p.returncode else "")
+
     # at least one skills/*/SKILL.md
     skill_mds = []
     skills_dir = os.path.join(root, "skills")
