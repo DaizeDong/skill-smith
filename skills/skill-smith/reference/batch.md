@@ -1,4 +1,4 @@
-# Step 7 — Batch / series (P4: the library token budget is the real constraint)
+# Step 7, Batch / series (P4: the library token budget is the real constraint)
 
 "Create a series of skills" is NOT "generate N SKILL.md files." The system prompt has a hard budget
 (~15k chars / ~4k tokens of skill descriptions); past it, descriptions are **silently truncated and
@@ -24,7 +24,7 @@ candidate list (from Step-0 brief: the focused jobs)
 ## Rules
 
 - **Per-skill gates run in parallel; the budget + dedup gates run once over the whole set** (a barrier).
-  A skill that is great alone can still be deferred because the set would overflow — that is correct.
+  A skill that is great alone can still be deferred because the set would overflow, that is correct.
 - **Rank by proven lift, not by count.** The output of a batch is a *ranked, budget-fit, deduped set*,
   with the deferred remainder listed explicitly (never silently dropped).
 - **Prefer a clean set of focused skills over a few fat ones** (P5): coverage comes from composition.

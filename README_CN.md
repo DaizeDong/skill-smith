@@ -1,6 +1,6 @@
 # skill-smith
 
-创建 Claude Code skill——单个或一整套——并达到业界领先、经测试真实可用的标准：先调研全行业，再按规范脚手架，最后对任何过不了验收闸的产物一律拒绝上线。
+创建 Claude Code skill,单个或一整套,并达到业界领先、经测试真实可用的标准：先调研全行业，再按规范脚手架，最后对任何过不了验收闸的产物一律拒绝上线。
 
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-orange?style=flat)](https://docs.anthropic.com/en/docs/claude-code)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -13,11 +13,11 @@
 
 ---
 
-## ⭐ 先读这里 —— 设计理念
+## ⭐ 先读这里, 设计理念
 
 skill-smith 立足一条原则：**skill 不是"生成出来"就算完成，而是"被证明可用"才算完成。** 由此推出两点，贯穿整个仓库的每个决策：
 
-1. **先调研，再设计（P1）。** 靠猜做不出"业界领先"。在写新 skill 的第一行之前，skill-smith 先把一次广泛调研委托给 [`market-intel`](https://github.com/DaizeDong/market-intel)——业界最佳参考实现、可借鉴的前沿设计、需规避的 anti-patterns。设计目标是**调研出来的当下最高水准**，不是嘴上声称的。
+1. **先调研，再设计（P1）。** 靠猜做不出"业界领先"。在写新 skill 的第一行之前，skill-smith 先把一次广泛调研委托给 [`market-intel`](https://github.com/DaizeDong/market-intel),业界最佳参考实现、可借鉴的前沿设计、需规避的 anti-patterns。设计目标是**调研出来的当下最高水准**，不是嘴上声称的。
 2. **生成 ≠ 可用（P2）。** 社区到处在量产"看着没问题、却静默失效"的自动生成 skill（约 50% 根本不触发；实测审计显示多数低于可用质量线）。所以 skill-smith 对"被接纳"的态度，与 [`self-evolve`](https://github.com/DaizeDong/self-evolve) 对"真改进"的态度完全一致：只有过了反自欺**验收闸**（相对 baseline 的可测 eval 提升 + held-out 触发率 + token 预算 + 去重 + 安全 + 规范一致 + 单一职责聚焦）才算数。
 
 因此 skill-smith **不**做又一个更大的生成器。它是一个**薄编排层**，只 own 别人不 own 的那道缝，把重活委托给你已经在跑的工具。
@@ -32,11 +32,11 @@ skill-smith 立足一条原则：**skill 不是"生成出来"就算完成，而�
 
 它只做别人不做的，其余全部委托：
 
-1. **调研先行** —— 把"业界标杆 + 前沿设计"调研委托给 `market-intel`（前端引擎）。
-2. **规范脚手架** —— 确定性吐出符合 Skill Repo Spec v1 的仓库骨架（必备 7 文件、徽章、版本四源同步、plugin 指纹）。
-3. **验收闸** —— eval 提升、触发率、系统提示 token 预算、跨库去重、安全审计、规范一致、聚焦度。不过 = 显式拒绝，绝不静默上线。
-4. **自迭代交棒** —— 把已接纳的 skill 交给 `self-evolve`（后端引擎）做回归门控的迭代优化。
-5. **批量** —— 扇出一**系列**候选 skill，逐个过闸，统一受一个全局"库预算管家"约束。
+1. **调研先行**, 把"业界标杆 + 前沿设计"调研委托给 `market-intel`（前端引擎）。
+2. **规范脚手架**, 确定性吐出符合 Skill Repo Spec v1 的仓库骨架（必备 7 文件、徽章、版本四源同步、plugin 指纹）。
+3. **验收闸**, eval 提升、触发率、系统提示 token 预算、跨库去重、安全审计、规范一致、聚焦度。不过 = 显式拒绝，绝不静默上线。
+4. **自迭代交棒**, 把已接纳的 skill 交给 `self-evolve`（后端引擎）做回归门控的迭代优化。
+5. **批量**, 扇出一**系列**候选 skill，逐个过闸，统一受一个全局"库预算管家"约束。
 
 它**不是**：从零生成器（它调用 Skill_Seekers / 官方 skill-creator）、eval 框架（它调用 agent-skills-eval / scenario-eval）、迭代引擎（它调用 self-evolve）。它是**缝 + 闸**。
 
@@ -54,7 +54,7 @@ skill-smith 立足一条原则：**skill 不是"生成出来"就算完成，而�
 git clone https://github.com/DaizeDong/skill-smith.git ~/.claude/plugins/skill-smith
 ```
 
-（维护者部署：源在 `CodesSelf/skill-smith`，用 PowerShell junction 部署到 `~/.claude/skills/skill-smith`——见 [`reference/deploy.md`](skills/skill-smith/reference/deploy.md)。）
+（维护者部署：源在 `CodesSelf/skill-smith`，用 PowerShell junction 部署到 `~/.claude/skills/skill-smith`,见 [`reference/deploy.md`](skills/skill-smith/reference/deploy.md)。）
 
 ## 快速开始
 
@@ -84,7 +84,7 @@ python skills/skill-smith/scripts/dedup_check.py                             # �
 
 - v0.1 交付**框架**：调研先行工作流 + 确定性脚手架 + Spec-v1 检查器 + 预算/去重检查。验收闸的 eval-lift 接线（agent-skills-eval / scenario-eval）与 self-evolve 交棒在 v0.2/v0.3（见 [ROADMAP.md](ROADMAP.md)）。
 - 假定已装 `market-intel` 与 `self-evolve`；没有时降级为普通 web 调研 + 手动闸，并会**显式说明**（绝不静默）。
-- 它优化的是**正确、聚焦、被证明**的 skill，不是数量——按设计，它会拒绝加入会撑爆库 token 预算的 skill。
+- 它优化的是**正确、聚焦、被证明**的 skill，不是数量,按设计，它会拒绝加入会撑爆库 token 预算的 skill。
 
 ## 语言
 

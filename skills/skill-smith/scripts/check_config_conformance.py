@@ -141,26 +141,26 @@ def main(root, no_run):
     readme = read(os.path.join(root, "README.md")) or ""
     readme_cn = read(os.path.join(root, "README_CN.md")) or ""
 
-    # E1 — schema documented
+    # E1, schema documented
     schema_doc = ("schema_version" in config_md and "registry.json" in config_md) or \
                  ("schema_version" in blob and "## Config" in readme)
     check("E1 schema documented (fields/types in CONFIG.md or README)", schema_doc,
           "need registry.json schema_version + fields in CONFIG.md or README Config section")
 
-    # E2 — discovery convention documented (env var + fallback path, ordered)
+    # E2, discovery convention documented (env var + fallback path, ordered)
     e2 = (env_var in blob) and (("~/.%s-config" % name) in blob or "~/.config/" in blob) \
         and ("CONFIG_DIR" in blob or "fallback" in blob.lower() or "order" in blob.lower()
              or "discovery" in blob.lower())
     check("E2 discovery convention documented (env var + fallback)", e2,
           "document %s + ~/.%s-config fallback order" % (env_var, name))
 
-    # E3 — init + verify scripts present
+    # E3, init + verify scripts present
     init = find_script(root, "init_config.py", "init-config.py")
     verify = find_script(root, "verify_config.py", "verify-config.py")
     check("E3 init + verify scripts present", bool(init and verify),
           "need scripts/init_config.py + scripts/verify_config.py")
 
-    # E6 — secrets isolation (skill repo .gitignore blocks secrets)
+    # E6, secrets isolation (skill repo .gitignore blocks secrets)
     gi = read(os.path.join(root, ".gitignore")) or ""
     e6_skill = ("secrets/" in gi) and ("*.env" in gi)
     # no committed real secrets in the skill repo
@@ -176,7 +176,7 @@ def main(root, no_run):
           ("gitignore missing secrets/*+*.env; " if not e6_skill else "") +
           ("committed secrets: %s" % leaked if leaked else ""))
 
-    # E7 — README Config section (EN + CN) with mount + first-time + switch
+    # E7, README Config section (EN + CN) with mount + first-time + switch
     def has_config_section(t, cn=False):
         head = "## 配置" if cn else "## Config"
         if head not in t:
@@ -213,7 +213,7 @@ def main(root, no_run):
                 v_b = run([verify], env={env_var: b_dir}, cwd=root)
                 resolves_a = v_a.returncode == 0 and a_dir.replace("\\", "/") in v_a.stdout.replace("\\", "/")
                 resolves_b = v_b.returncode == 0 and b_dir.replace("\\", "/") in v_b.stdout.replace("\\", "/")
-                # generated config self-contained (no abs-path leak) — also enforced by verify itself
+                # generated config self-contained (no abs-path leak), also enforced by verify itself
                 check("E5 hot-swap (two configs, env-var switch verifies)",
                       resolves_a and resolves_b,
                       "verify did not resolve+validate the env-pointed config on both legs")
