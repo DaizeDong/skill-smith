@@ -8,7 +8,7 @@ Usage:
   python scaffold_skill.py my-skill \
     --tagline "Verb-first, quantified, one line." \
     --description "When to trigger + what it does + scope, one paragraph." \
-    --topics "domain-a,domain-b" [--out-dir ~/CodesSelf] [--version 0.1.0] [--force]
+    --topics "domain-a,domain-b" [--out-dir ~/CodesClaude] [--version 0.1.0] [--force]
     [--with-config]   # also emit the config-bearing standard (config-spec E1-E7)
 """
 import argparse
@@ -418,7 +418,7 @@ def main():
     ap.add_argument("--tagline", default="TODO: one-line, verb-first, quantified tagline.")
     ap.add_argument("--description", default="TODO: when to trigger + what it does + scope, one paragraph.")
     ap.add_argument("--topics", default="", help="comma-separated domain keywords (excl. trailing 'skill')")
-    ap.add_argument("--out-dir", default=os.path.expanduser("~/CodesSelf"))
+    ap.add_argument("--out-dir", default=os.path.expanduser("~/CodesClaude"))
     ap.add_argument("--version", default="0.1.0")
     ap.add_argument("--with-config", action="store_true",
                     help="emit the config-bearing standard (config-spec E1-E7): CONFIG.md, "

@@ -54,7 +54,7 @@ Or clone manually:
 git clone https://github.com/DaizeDong/skill-smith.git ~/.claude/plugins/skill-smith
 ```
 
-(Maintainer setup: source lives in `CodesSelf/skill-smith`, deployed to `~/.claude/skills/skill-smith` via a PowerShell junction, see [`reference/deploy.md`](skills/skill-smith/reference/deploy.md).)
+(Maintainer setup: source lives in `CodesClaude/skill-smith`, deployed to `~/.claude/skills/skill-smith` via a PowerShell junction, see [`reference/deploy.md`](skills/skill-smith/reference/deploy.md).)
 
 ## Quick start
 
@@ -71,7 +71,7 @@ python skills/skill-smith/scripts/scaffold_skill.py my-skill \
   --description "When to trigger + what it does + scope, one paragraph." \
   --topics "domain-a,domain-b"
 
-python skills/skill-smith/scripts/check_conformance.py ~/CodesSelf/my-skill   # Spec v1 linter
+python skills/skill-smith/scripts/check_conformance.py ~/CodesClaude/my-skill   # Spec v1 linter
 python skills/skill-smith/scripts/budget_check.py                            # library token budget
 python skills/skill-smith/scripts/dedup_check.py                             # description overlap
 ```
