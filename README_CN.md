@@ -54,7 +54,7 @@ skill-smith 立足一条原则：**skill 不是"生成出来"就算完成，而�
 git clone https://github.com/DaizeDong/skill-smith.git ~/.claude/plugins/skill-smith
 ```
 
-（维护者部署：源在 `CodesSelf/skill-smith`，用 PowerShell junction 部署到 `~/.claude/skills/skill-smith`,见 [`reference/deploy.md`](skills/skill-smith/reference/deploy.md)。）
+（维护者部署：源在 `CodesClaude/skill-smith`，用 PowerShell junction 部署到 `~/.claude/skills/skill-smith`,见 [`reference/deploy.md`](skills/skill-smith/reference/deploy.md)。）
 
 ## 快速开始
 
@@ -71,7 +71,7 @@ python skills/skill-smith/scripts/scaffold_skill.py my-skill \
   --description "何时触发 + 做什么 + 覆盖范围,一段写完。" \
   --topics "domain-a,domain-b"
 
-python skills/skill-smith/scripts/check_conformance.py ~/CodesSelf/my-skill   # Spec v1 检查器
+python skills/skill-smith/scripts/check_conformance.py ~/CodesClaude/my-skill   # Spec v1 检查器
 python skills/skill-smith/scripts/budget_check.py                            # 库 token 预算
 python skills/skill-smith/scripts/dedup_check.py                             # 描述重叠
 ```
