@@ -165,7 +165,7 @@ def main():
     ap.add_argument("--apply", metavar="WORKLIST.json")
     ap.add_argument("--out", default="worklist.json")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--backup-dir", default="~/.skill-smith/backup")
+    ap.add_argument("--backup-dir", default=os.environ.get("SKILL_SMITH_BACKUP_DIR", "~/.skill-smith/backup"))
     a = ap.parse_args()
     base = os.path.abspath(os.path.expanduser(a.skills_dir))
     if a.scan:
