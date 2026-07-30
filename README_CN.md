@@ -75,7 +75,14 @@ python skills/skill-smith/scripts/check_conformance.py ~/CodesClaude/my-skill   
 python skills/skill-smith/scripts/bump_version.py ~/CodesClaude/my-skill --level patch  # 五处版本
 python skills/skill-smith/scripts/budget_check.py                            # 库 token 预算
 python skills/skill-smith/scripts/dedup_check.py                             # 描述重叠
+python skills/skill-smith/scripts/fleet_check.py                             # 全 fleet 体检, 只读
 ```
+
+`fleet_check.py` 是上面那个检查器一直缺的 driver。它把 `check_conformance.py` 铺到每个 plugin 仓上,
+再补上没人查的四件事: skill junction 能否解析、标为 PUBLIC 的仓是否带 `pii-guard` workflow、解析出的
+真实运行数据目录是否落在某个 git 工作区里、以及那个 `pii-guard` CI 到底绿没绿。它**只读, 没有 `--fix`**,
+任一项 FAIL 即非零退出, 并写一份带 UTC 时间戳的状态 JSON, 让定时调用方能把"这轮真跑了"和"这轮通过了"
+分开判断。加 `--offline` 可跳过需要联网的 CI 探针。
 
 `bump_version.py` 一次改齐五处版本(plugin.json、两个 README 徽章、ROADMAP、CHANGELOG)。仓库已经
 版本不一致时它直接拒跑而不是把不一致掩盖掉;它也从不 commit / push,发版是人的决定。

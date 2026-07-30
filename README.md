@@ -75,7 +75,15 @@ python skills/skill-smith/scripts/check_conformance.py ~/CodesClaude/my-skill   
 python skills/skill-smith/scripts/bump_version.py ~/CodesClaude/my-skill --level patch  # all 5 sites
 python skills/skill-smith/scripts/budget_check.py                            # library token budget
 python skills/skill-smith/scripts/dedup_check.py                             # description overlap
+python skills/skill-smith/scripts/fleet_check.py                             # whole fleet, read only
 ```
+
+`fleet_check.py` is the driver the linter above never had. It fans `check_conformance.py` over every
+plugin repo and adds what nothing else checks: skill junctions resolve, a repo marked PUBLIC carries
+a `pii-guard` workflow, a resolved real-run data directory is not inside a git worktree, and that
+`pii-guard` CI is actually green. It is **read-only, with no `--fix`**, exits nonzero on any FAIL,
+and writes a UTC-stamped status JSON so a scheduled caller can tell "the run happened" apart from
+"the run passed". Add `--offline` to skip the network-backed CI probe.
 
 `bump_version.py` moves the version at all five sites at once (plugin.json, both README badges,
 ROADMAP, CHANGELOG). It refuses on an already-drifted repo instead of papering over the drift, and
