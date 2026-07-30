@@ -84,20 +84,78 @@ def test_slug_from_url_garbage():
     assert fc.slug_from_url("not-a-url") is None
 
 
-# --- check 2: PUBLIC implies a workflow ---------------------------------------------------------
-def test_workflow_missing_is_a_fail(tmp_path):
+# --- check 2: PUBLIC implies the guards are ON THE REMOTE ---------------------------------------
+def _vis(tmp_path, mapping):
+    p = tmp_path / "visibility.json"
+    p.write_text(json.dumps(mapping), encoding="utf-8")
+    return str(p)
+
+
+def _fake_remote(monkeypatch, table):
+    """Stub the remote observation. table maps slug -> list of filenames, or None for unobservable."""
+    def fake(slug, path, timeout, offline=False):
+        names = table.get(slug, [])
+        if names is None:
+            return None, "stubbed outage"
+        return names, ""
+    monkeypatch.setattr(fc, "remote_workflow_files", fake)
+
+
+BOTH = ["dash-guard.yml", "pii-guard.yml"]
+
+
+def test_workflow_reads_the_remote_not_the_working_tree(tmp_path, monkeypatch):
+    """THE regression that motivated the rewrite (claude-codex-memory-sync, 2026-07-30).
+
+    The local clone carries pii-guard.yml -- committed, even. The REMOTE default branch does not.
+    The old check stat()ed the working tree and printed PASS for a public repo whose CI was
+    completely ungated. A file on this disk is not CI.
+    """
     root = tmp_path / "code"
     root.mkdir()
-    make_repo(root, "with-wf", workflow=True)
-    make_repo(root, "no-wf")
-    vis = tmp_path / "visibility.json"
-    vis.write_text(json.dumps({"owner/with-wf": "PUBLIC", "owner/no-wf": "PUBLIC"}),
-                   encoding="utf-8")
-    slugs = {"owner/with-wf": str(root / "with-wf"), "owner/no-wf": str(root / "no-wf")}
+    make_repo(root, "unpushed", workflow=True)          # the file IS here locally
+    assert (root / "unpushed" / ".github" / "workflows" / "pii-guard.yml").is_file()
+    _fake_remote(monkeypatch, {"owner/unpushed": ["test.yml"]})   # ...and NOT on the remote
 
-    c = fc.check_workflow(str(vis), slugs, str(root))
+    c = fc.check_workflow(_vis(tmp_path, {"owner/unpushed": "PUBLIC"}),
+                          {"owner/unpushed": str(root / "unpushed")}, str(root))
+    assert [s for s, _n, _d in c.rows] == [fc.FAIL]
+    assert "pii-guard" in c.rows[0][2] and "dash-guard" in c.rows[0][2]
+
+
+def test_workflow_passes_only_when_the_remote_carries_every_guard(tmp_path, monkeypatch):
+    _fake_remote(monkeypatch, {"owner/full": BOTH, "owner/half": ["pii-guard.yml"]})
+    c = fc.check_workflow(_vis(tmp_path, {"owner/full": "PUBLIC", "owner/half": "PUBLIC"}),
+                          {"owner/full": "/x", "owner/half": "/y"}, "/code")
     got = {n: s for s, n, _d in c.rows}
-    assert got == {"owner/with-wf": fc.PASS, "owner/no-wf": fc.FAIL}
+    assert got == {"owner/full": fc.PASS, "owner/half": fc.FAIL}
+    # the half repo must name the guard that is missing, not just say "something is wrong"
+    assert "dash-guard" in dict((n, d) for _s, n, d in c.rows)["owner/half"]
+
+
+def test_workflow_unreachable_remote_is_unknown_never_pass(tmp_path, monkeypatch):
+    """A question that could not be asked must never be recorded as a satisfied answer."""
+    _fake_remote(monkeypatch, {"owner/dark": None})
+    c = fc.check_workflow(_vis(tmp_path, {"owner/dark": "PUBLIC"}), {"owner/dark": "/x"}, "/code")
+    assert [s for s, _n, _d in c.rows] == [fc.UNKNOWN]
+    assert c.count(fc.PASS) == 0 and c.count(fc.FAIL) == 0
+
+
+def test_workflow_offline_does_not_manufacture_a_pass(tmp_path):
+    """--offline must not quietly restore the local-stat fail-open by another route."""
+    root = tmp_path / "code"
+    root.mkdir()
+    make_repo(root, "unpushed", workflow=True)
+    c = fc.check_workflow(_vis(tmp_path, {"owner/unpushed": "PUBLIC"}),
+                          {"owner/unpushed": str(root / "unpushed")}, str(root), offline=True)
+    assert [s for s, _n, _d in c.rows] == [fc.UNKNOWN]
+
+
+def test_workflow_records_what_the_remote_carries_for_the_ci_check(tmp_path, monkeypatch):
+    _fake_remote(monkeypatch, {"owner/full": BOTH, "owner/dark": None})
+    c = fc.check_workflow(_vis(tmp_path, {"owner/full": "PUBLIC", "owner/dark": "PUBLIC"}),
+                          {"owner/full": "/x", "owner/dark": "/y"}, "/code")
+    assert c.remote_workflows == {"owner/full": ["pii-guard", "dash-guard"]}
 
 
 def test_workflow_phantom_entry_skips_not_fails(tmp_path):
@@ -105,18 +163,14 @@ def test_workflow_phantom_entry_skips_not_fails(tmp_path):
 
     Failing on one would make the check permanently red for a reason no edit in any repo can fix.
     """
-    vis = tmp_path / "visibility.json"
-    vis.write_text(json.dumps({"owner/never-cloned": "PUBLIC"}), encoding="utf-8")
-    c = fc.check_workflow(str(vis), {}, str(tmp_path))
+    c = fc.check_workflow(_vis(tmp_path, {"owner/never-cloned": "PUBLIC"}), {}, str(tmp_path))
     assert [s for s, _n, _d in c.rows] == [fc.SKIP]
     assert c.count(fc.FAIL) == 0
 
 
 def test_workflow_private_entries_are_not_checked(tmp_path):
-    vis = tmp_path / "visibility.json"
-    vis.write_text(json.dumps({"owner/secret": "PRIVATE", "owner/dunno": "UNKNOWN"}),
-                   encoding="utf-8")
-    c = fc.check_workflow(str(vis), {}, str(tmp_path))
+    c = fc.check_workflow(_vis(tmp_path, {"owner/secret": "PRIVATE", "owner/dunno": "UNKNOWN"}),
+                          {}, str(tmp_path))
     assert c.rows == []
 
 
@@ -124,6 +178,45 @@ def test_workflow_unreadable_map_is_unknown_not_fail(tmp_path):
     c = fc.check_workflow(str(tmp_path / "nope.json"), {}, str(tmp_path))
     assert c.count(fc.FAIL) == 0
     assert c.count(fc.UNKNOWN) == 1
+
+
+# --- the remote observer itself -----------------------------------------------------------------
+def test_remote_reachable_repo_with_no_workflows_dir_is_an_answer(monkeypatch):
+    """gh 404 on the contents path, AFTER the repo probe succeeded, means "not there" -- a finding.
+
+    Reading it as an outage instead is exactly how a missing guard hid inside an UNKNOWN.
+    """
+    calls = []
+
+    def fake_run(args, **_k):
+        calls.append(args)
+        if args[2].startswith("repos/") and args[2].count("/") == 2:
+            return 0, "main\n", ""
+        return 1, "", "gh: Not Found (HTTP 404)"
+
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+    monkeypatch.setattr(fc, "run", fake_run)
+    names, why = fc.remote_workflow_files("owner/repo", "/x", 5)
+    assert names == [] and why == ""
+
+
+def test_remote_unreachable_repo_is_unobservable(monkeypatch):
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (1, "", "gh: could not resolve host"))
+    names, why = fc.remote_workflow_files("owner/repo", "/x", 5)
+    assert names is None and why
+
+
+def test_remote_offline_is_unobservable():
+    names, why = fc.remote_workflow_files("owner/repo", "/x", 5, offline=True)
+    assert names is None and "offline" in why
+
+
+def test_guards_present_matches_by_stem():
+    assert fc.guards_present(["pii-guard.yml", "dash-guard.yaml", "test.yml"]) == \
+        ["pii-guard", "dash-guard"]
+    assert fc.guards_present(["test.yml"]) == []
+    assert fc.guards_present([]) == []
 
 
 # --- check 4: the inverse data boundary ---------------------------------------------------------
@@ -174,29 +267,96 @@ def test_repo_without_datadir_is_not_reported(tmp_path):
     assert fc.check_data_boundary({"plain": str(root / "plain")}).rows == []
 
 
-# --- check 5: the CI probe degrades, it never blocks ---------------------------------------------
-def _ci_with_gh(monkeypatch, rc, stdout, stderr=""):
+def test_data_boundary_is_unknown_when_git_cannot_run(tmp_path, monkeypatch):
+    """The fail-open: `git -C` failing for ANY reason used to read as "outside a worktree".
+
+    With no git on PATH every data dir on the machine was cleared by a probe that never ran. Force
+    the failure condition and require that the row is not a PASS.
+    """
+    root = tmp_path / "code"
+    root.mkdir()
+    make_repo(root, "clean", datadir=True)
+    store = tmp_path / "private-store"
+    store.mkdir()
+    monkeypatch.setenv("CLEAN_DATA_DIR", str(store))
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (None, "", "git: command not found"))
+
+    c = fc.check_data_boundary({"clean": str(root / "clean")})
+    assert [s for s, _n, _d in c.rows] == [fc.UNKNOWN]
+    assert c.count(fc.PASS) == 0
+
+
+def test_in_git_worktree_tristate(tmp_path, monkeypatch):
+    outside = tmp_path / "plain"
+    outside.mkdir()
+    assert fc.in_git_worktree(str(outside))[0] is False
+    inside = tmp_path / "repo"
+    inside.mkdir()
+    assert git("init", "-q", cwd=inside).returncode == 0
+    assert fc.in_git_worktree(str(inside))[0] is True
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (None, "", "no git"))
+    assert fc.in_git_worktree(str(outside))[0] is None
+
+
+def test_data_boundary_nonexistent_resolved_dir_is_unknown(tmp_path, monkeypatch):
+    """`git -C <missing>` exits nonzero, which the probe would otherwise read as a clean pass."""
+    root = tmp_path / "code"
+    root.mkdir()
+    d = make_repo(root, "drifted")
+    (d / "tools").mkdir(exist_ok=True)
+    ghost = tmp_path / "ghost-dir"
+    (d / "tools" / "datadir.py").write_text(
+        "from pathlib import Path\n"
+        "def resolve_data_dir(skill, create=False):\n"
+        "    return Path(r'%s')\n" % str(ghost), encoding="utf-8")
+
+    c = fc.check_data_boundary({"drifted": str(d)})
+    assert [s for s, _n, _d in c.rows] == [fc.UNKNOWN]
+
+
+# --- check 5: the CI probe covers EVERY guard, and degrades without blocking ---------------------
+def _ci_with_gh(monkeypatch, rc, stdout, stderr="", targets=None):
     monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
     monkeypatch.setattr(fc, "run", lambda *_a, **_k: (rc, stdout, stderr))
-    return fc.check_ci(["owner/repo"], 5)
+    return fc.check_ci(targets or [("owner/repo", ["pii-guard"])], 5)
+
+
+def _runs(conclusion, status="completed"):
+    return json.dumps([{"conclusion": conclusion, "status": status,
+                        "createdAt": "2026-01-01T00:00:00Z"}])
 
 
 def test_ci_success_passes(monkeypatch):
-    c = _ci_with_gh(monkeypatch, 0, json.dumps(
-        [{"conclusion": "success", "status": "completed", "createdAt": "2026-01-01T00:00:00Z"}]))
+    c = _ci_with_gh(monkeypatch, 0, _runs("success"))
     assert [s for s, _n, _d in c.rows] == [fc.PASS]
 
 
 def test_ci_failure_fails(monkeypatch):
-    c = _ci_with_gh(monkeypatch, 0, json.dumps(
-        [{"conclusion": "failure", "status": "completed", "createdAt": "2026-01-01T00:00:00Z"}]))
+    c = _ci_with_gh(monkeypatch, 0, _runs("failure"))
     assert [s for s, _n, _d in c.rows] == [fc.FAIL]
+
+
+def test_ci_checks_every_guard_and_names_each_one(monkeypatch):
+    """The promotion-assistant regression: green pii-guard, red dash-guard, one confident PASS.
+
+    Both workflows must get their own row, and the red one must fail the run.
+    """
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+
+    def fake_run(args, **_k):
+        wf = args[args.index("-w") + 1]
+        return 0, _runs("success" if wf == "pii-guard" else "failure"), ""
+
+    monkeypatch.setattr(fc, "run", fake_run)
+    c = fc.check_ci([("owner/repo", ["pii-guard", "dash-guard"])], 5)
+    got = {n: s for s, n, _d in c.rows}
+    assert got == {"owner/repo [pii-guard]": fc.PASS, "owner/repo [dash-guard]": fc.FAIL}
 
 
 @pytest.mark.parametrize("rc,out,err", [
     (1, "", "gh: not authenticated"),          # unauthenticated
     (1, "", "API rate limit exceeded"),        # rate limited
-    (0, "[]", ""),                             # workflow never ran
+    (0, "[]", ""),                             # no run history (GitHub expires it)
     (0, "not json", ""),                       # garbage
 ])
 def test_ci_unobservable_is_unknown_never_fail(monkeypatch, rc, out, err):
@@ -206,16 +366,45 @@ def test_ci_unobservable_is_unknown_never_fail(monkeypatch, rc, out, err):
 
 
 def test_ci_in_progress_is_unknown(monkeypatch):
-    c = _ci_with_gh(monkeypatch, 0, json.dumps(
-        [{"conclusion": None, "status": "in_progress", "createdAt": "2026-01-01T00:00:00Z"}]))
+    c = _ci_with_gh(monkeypatch, 0, _runs(None, status="in_progress"))
     assert [s for s, _n, _d in c.rows] == [fc.UNKNOWN]
 
 
 def test_ci_without_gh_is_unknown(monkeypatch):
     monkeypatch.setattr(fc.shutil, "which", lambda _n: None)
-    c = fc.check_ci(["owner/repo"], 5)
+    c = fc.check_ci([("owner/repo", ["pii-guard"])], 5)
     assert c.count(fc.FAIL) == 0
     assert c.count(fc.UNKNOWN) == 1
+
+
+def test_ci_with_no_targets_says_so_instead_of_printing_nothing(monkeypatch):
+    """Zero rows renders as "pass 0, fail 0", which reads like a clean fleet."""
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+    c = fc.check_ci([], 5)
+    assert c.count(fc.UNKNOWN) == 1
+
+
+# --- checks must not report a clean sheet by looking at nothing -----------------------------------
+def test_junctions_missing_dir_is_unknown_not_silent(tmp_path):
+    c = fc.check_junctions(str(tmp_path / "nope"))
+    assert c.count(fc.UNKNOWN) == 1 and c.rows
+
+
+def test_junctions_empty_dir_is_unknown_not_silent(tmp_path):
+    d = tmp_path / "skills"
+    d.mkdir()
+    (d / "plain-copy").mkdir()
+    c = fc.check_junctions(str(d))
+    assert c.count(fc.UNKNOWN) == 1
+
+
+def test_conformance_reports_repos_it_skipped(tmp_path):
+    """A deleted plugin.json must show up as lost coverage, not as one fewer line."""
+    root = tmp_path / "code"
+    root.mkdir()
+    make_repo(root, "not-a-plugin")
+    c = fc.check_conformance({"not-a-plugin": str(root / "not-a-plugin")}, 30)
+    assert [s for s, _n, _d in c.rows] == [fc.SKIP]
 
 
 # --- the output contract -------------------------------------------------------------------------

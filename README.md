@@ -80,10 +80,20 @@ python skills/skill-smith/scripts/fleet_check.py                             # w
 
 `fleet_check.py` is the driver the linter above never had. It fans `check_conformance.py` over every
 plugin repo and adds what nothing else checks: skill junctions resolve, a repo marked PUBLIC carries
-a `pii-guard` workflow, a resolved real-run data directory is not inside a git worktree, and that
-`pii-guard` CI is actually green. It is **read-only, with no `--fix`**, exits nonzero on any FAIL,
-and writes a UTC-stamped status JSON so a scheduled caller can tell "the run happened" apart from
-"the run passed". Add `--offline` to skip the network-backed CI probe.
+every guard workflow (`pii-guard` **and** `dash-guard`) **on its remote default branch**, a resolved
+real-run data directory is not inside a git worktree, and that each of those guard workflows is
+actually green, one row per repo and workflow. It is **read-only, with no `--fix`** and no `git
+fetch`, exits nonzero on any FAIL, and writes a UTC-stamped status JSON so a scheduled caller can
+tell "the run happened" apart from "the run passed". Add `--offline` to skip the network-backed
+probes.
+
+The remote is the subject of that workflow check on purpose. It used to stat the local clone, so a
+guard workflow that was committed but never pushed scored PASS for a PUBLIC repo whose remote carried
+no guard at all. `UNKNOWN` now means one thing only, "this run could not observe the answer" (no
+`gh`, unauthenticated, rate limited, offline), which is why it is safe for it to never affect the
+exit code; a definitive negative from a remote that did answer is a `FAIL`. Unobserved rows are
+printed under their own `UNOBSERVED` heading and listed in the status JSON, because a fleet nobody
+could look at must not read like a clean one.
 
 `bump_version.py` moves the version at all five sites at once (plugin.json, both README badges,
 ROADMAP, CHANGELOG). It refuses on an already-drifted repo instead of papering over the drift, and
