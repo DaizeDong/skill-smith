@@ -37,6 +37,37 @@ All notable changes to this project are documented here (Keep a Changelog style)
   nothing, Unreleased absorption, pre-release round-trip, and rollback leaving no half-bumped repo.
 
 ### Fixed
+- **`fleet_check.py` certified two things it never actually checked.** All three failures were the
+  same shape: a PASS printed by a code path that never observed the thing on the label.
+  1. *The workflow check stat()ed the local clone.* `os.path.isfile(<repo>/.github/workflows/
+     pii-guard.yml)` answers "is this file on my disk", and the claim on the label was "this PUBLIC
+     repo is gated by CI". Those come apart the moment a workflow is committed but not pushed, and
+     they had: `claude-codex-memory-sync` is PUBLIC, its remote default branch carries only
+     `test.yml`, and it scored PASS for as long as the check existed. It now interrogates the REMOTE
+     default branch over `gh`, falling back to `git ls-remote` plus a local `ls-tree` when the remote
+     HEAD is already in the object store, and reports UNKNOWN (never PASS) when neither can answer.
+     Still no `git fetch`: the tool does not write to repos.
+  2. *The CI check asked about one workflow and reported on the category.* It queried `pii-guard`
+     only, under a heading claiming the guard CI was green. On 2026-07-30 it printed a single
+     confident PASS for `promotion-assistant` whose `dash-guard` had been failing since 2026-07-24.
+     It now queries every guard workflow found on the remote and prints one row per repo and
+     workflow, named, so a red guard cannot shelter behind a green sibling.
+  3. *UNKNOWN was defined as never-failing, and was carrying findings.* That reasoning is correct for
+     "gh is not installed" and wrong for "this public repo has no guard workflow at all", which is a
+     real finding in an UNKNOWN costume. UNKNOWN now means exactly one thing, "this run could not
+     OBSERVE the answer", and a definitive negative from a remote that did answer is a FAIL. Because
+     UNKNOWN can no longer carry a finding, it is genuinely safe for it not to affect the exit code.
+     Unobserved rows print under their own `UNOBSERVED` heading and land in the status JSON, so a
+     fleet nobody could look at cannot be mistaken for a clean one.
+
+  Same audit, same defect class, three more paths that could report success without testing their
+  label: `in_git_worktree()` collapsed "git said no" and "git could not run" into one `False`, so a
+  machine with no git on PATH cleared **every** data directory in the boundary check (proven: with
+  the probe forced to fail, the old code returns PASS, the new one UNKNOWN); the junctions and CI
+  checks could emit zero rows, which prints as `pass 0, fail 0` and reads like a clean sheet, so an
+  empty or missing skills dir now says so; and `check_conformance` silently dropped repos with no
+  `plugin.json` instead of listing them, which would have hidden a repo falling out of coverage.
+  The first run after the fix moved the fleet from 1 failure to 3, all of them real.
 - **`check_conformance.py` reported conforming repos as broken.** The version regex demanded a bare
   `Roadmap-vX.Y.Z-purple` badge, so a repo carrying a deliberate pre-release marker
   (`Roadmap-v0.2.2%20alpha-purple`, which is how shields.io encodes `v0.2.2 alpha`) read as having

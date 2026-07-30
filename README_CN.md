@@ -79,10 +79,17 @@ python skills/skill-smith/scripts/fleet_check.py                             # �
 ```
 
 `fleet_check.py` 是上面那个检查器一直缺的 driver。它把 `check_conformance.py` 铺到每个 plugin 仓上,
-再补上没人查的四件事: skill junction 能否解析、标为 PUBLIC 的仓是否带 `pii-guard` workflow、解析出的
-真实运行数据目录是否落在某个 git 工作区里、以及那个 `pii-guard` CI 到底绿没绿。它**只读, 没有 `--fix`**,
-任一项 FAIL 即非零退出, 并写一份带 UTC 时间戳的状态 JSON, 让定时调用方能把"这轮真跑了"和"这轮通过了"
-分开判断。加 `--offline` 可跳过需要联网的 CI 探针。
+再补上没人查的四件事: skill junction 能否解析、标为 PUBLIC 的仓**在远端默认分支上**是否带齐每个 guard
+workflow(`pii-guard` **和** `dash-guard`)、解析出的真实运行数据目录是否落在某个 git 工作区里、
+以及这些 guard workflow 到底绿没绿(每个仓每个 workflow 各出一行)。它**只读, 没有 `--fix`**,
+也从不 `git fetch`, 任一项 FAIL 即非零退出, 并写一份带 UTC 时间戳的状态 JSON,
+让定时调用方能把"这轮真跑了"和"这轮通过了"分开判断。加 `--offline` 可跳过需要联网的探针。
+
+workflow 这一项查的是**远端**而不是本地工作树, 这是刻意的: 以前它 stat 本地 clone, 于是一个已经 commit
+但从未 push 的 guard workflow, 会让一个远端根本没有任何 guard 的 PUBLIC 仓判成 PASS。现在 `UNKNOWN`
+只有一个含义: "这轮没能观测到答案"(没有 `gh`、未认证、被限流、离线), 所以它不影响退出码才是安全的;
+而一个真的回答了的远端给出的否定答案是 `FAIL`。没观测到的行会单独打在 `UNOBSERVED` 标题下并写进状态
+JSON, 因为"没人看得了的 fleet"绝不能读起来像"干净的 fleet"。
 
 `bump_version.py` 一次改齐五处版本(plugin.json、两个 README 徽章、ROADMAP、CHANGELOG)。仓库已经
 版本不一致时它直接拒跑而不是把不一致掩盖掉;它也从不 commit / push,发版是人的决定。

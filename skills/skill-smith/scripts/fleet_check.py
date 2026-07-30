@@ -24,32 +24,63 @@ WHAT IT DELIBERATELY DOES NOT DO
    design trains the operator to skip the digest line. That is precisely how check_conformance.py
    died the first time, and it would take this driver down with it.
 
+THE ONE INVARIANT THAT MAKES THE STATUSES MEAN ANYTHING
+-------------------------------------------------------
+    UNKNOWN means "this run could not OBSERVE the answer". It never means "the answer was bad."
+
+That distinction is the whole reason this file was rewritten on 2026-07-30. The workflow check used
+to stat the LOCAL clone and print PASS, so a guard workflow that was committed but never pushed
+scored green on a PUBLIC repo whose remote carried no guard at all (claude-codex-memory-sync was
+exactly this, for as long as the check existed). The CI check asked only about pii-guard, so
+promotion-assistant printed PASS while its dash-guard had been red since 2026-07-24. And UNKNOWN was
+defined as never-failing, which was right for "gh is not installed" and catastrophically wrong for
+"this public repo has no guard workflow at all" -- a real finding wearing an UNKNOWN costume.
+
+So the two are now separated by construction. Infrastructure that is unavailable (no gh, not
+authenticated, rate limited, offline, remote HEAD not present locally) yields UNKNOWN, is printed
+under UNOBSERVED with its reason, and never fails the run. A definitive negative answer from a
+remote we did reach is a FAIL. Because UNKNOWN can only ever be produced by the first case, the old
+sentence "UNKNOWN never affects the exit code" stays true without hiding anything.
+
 THE FIVE CHECKS
 ---------------
   junctions   every junction/symlink under ~/.claude/skills resolves to a directory that exists.
               Failure mode: a repo gets moved (CodesSelf -> CodesClaude, 2026-07-22) and the skill
-              silently vanishes from the agent's library with no error anywhere.
-  workflow    visibility PUBLIC implies the repo carries .github/workflows/pii-guard.yml.
+              silently vanishes from the agent's library with no error anywhere. A skills dir that
+              is missing or holds no junctions at all reports UNKNOWN rather than nothing: a check
+              that emits zero rows reads as green, which is the same lie in a quieter voice.
+  workflow    visibility PUBLIC implies the REMOTE default branch carries every guard workflow
+              (pii-guard and dash-guard -- the same pair check_conformance.py already requires
+              locally). The remote is interrogated over gh, falling back to `git ls-remote` plus a
+              local `ls-tree` of the remote HEAD when that sha is already in the object store. The
+              LOCAL working tree is never consulted, because the file being on this disk is not
+              evidence that it is on GitHub, and GitHub is where CI runs.
               Entries with no local clone under the fleet root are SKIPPED, not failed: the
               visibility map outlives the working copies it was built from and names repos that are
               not checked out here (and third-party forks, whose CI is not ours to install).
-  conformance check_conformance.py over every repo carrying .claude-plugin/plugin.json.
+  conformance check_conformance.py over every repo carrying .claude-plugin/plugin.json. Repos
+              without one are SKIPPED out loud, so that a deleted plugin.json shows up as a repo
+              dropping out of coverage instead of as one fewer line nobody counted.
   databoundary the INVERSE data-boundary assertion, which is the one check that would have caught
               the 2026-07 leak: data_boundary.py proves the REPO holds no real-run output, and this
               proves the reverse, that the resolved real-run output directory is not itself inside a
               git worktree. Both were true and the leak still happened, because nobody ever looked
               from this end. Not-initialized is not a failure: an uninitialized tool is the correct
-              shipping state.
-  ci          the pii-guard workflow is actually GREEN on the public repos. "CI is the authority"
-              is the load-bearing sentence of the whole doctrine and nothing observes whether that
-              authority is passing, so a red guard is invisible today. Degrades to UNKNOWN (never
-              FAIL, never blocking) when gh is missing, unauthenticated, rate limited, or the
-              workflow has simply never run.
+              shipping state. If git cannot be run at all the answer is UNKNOWN, never PASS -- a
+              missing git used to silently clear every repo in this check.
+  ci          EVERY guard workflow found on the remote is actually GREEN, reported one row per
+              (repo, workflow) so a red dash-guard cannot hide behind a green pii-guard. "CI is the
+              authority" is the load-bearing sentence of the whole doctrine and nothing observed
+              whether that authority was passing. Degrades to UNKNOWN (never FAIL, never blocking)
+              when gh is missing, unauthenticated, rate limited, or the workflow has no run history
+              -- GitHub expires run history, so "no runs" is an absence of evidence, not evidence of
+              absence. The presence question is the workflow check's job, and there it can FAIL.
 
 OUTPUT CONTRACT
 ---------------
-Read-only: there is nothing in here that writes to any repo. Exits nonzero if any row is FAIL.
-UNKNOWN and SKIP never affect the exit code. Prints a human-readable report to stdout and writes a
+Read-only: there is nothing in here that writes to any repo, including no `git fetch`. Exits nonzero
+if any row is FAIL. UNKNOWN and SKIP never affect the exit code, which is safe precisely because
+UNKNOWN can no longer carry a finding. Prints a human-readable report to stdout and writes a
 machine-readable status JSON (default ~/.skill-smith-data/fleet-check-status.json, override with
 --status-json) carrying a UTC timestamp, so the caller verifies FRESHNESS rather than trusting an
 exit code it cannot reliably read: a scheduled caller runs this in a child shell where the exit code
@@ -91,6 +122,12 @@ DEFAULT_STATUS = os.path.expanduser("~/.skill-smith-data/fleet-check-status.json
 
 PASS, FAIL, SKIP, UNKNOWN = "PASS", "FAIL", "SKIP", "UNKNOWN"
 STATUSES = (PASS, FAIL, SKIP, UNKNOWN)
+
+# The guard workflows every PUBLIC repo must carry ON THE REMOTE. This is not a new policy invented
+# here: check_conformance.py already requires .github/workflows/pii-guard.yml and dash-guard.yml in
+# the local tree. This check asserts the same pair actually reached GitHub, which is the only place
+# the assertion has teeth.
+GUARD_WORKFLOWS = ("pii-guard", "dash-guard")
 
 
 # --- tiny helpers --------------------------------------------------------------------------------
@@ -187,11 +224,127 @@ def repo_slugs(repos):
 
 
 def in_git_worktree(path):
-    """(True, toplevel) if `git rev-parse --show-toplevel` succeeds inside path."""
-    rc, so, _ = run(["git", "-C", path, "rev-parse", "--show-toplevel"], timeout=20)
+    """Tri-state: (True, toplevel) inside a worktree, (False, "") outside, (None, reason) unknown.
+
+    The None arm is load-bearing. This used to collapse "git said no" and "git could not run at all"
+    into the same False, so a machine with no git on PATH silently reported every data dir as
+    OUTSIDE a worktree -- a clean green sheet produced by never asking the question. Only an answer
+    git actually gave is allowed to clear a path.
+    """
+    rc, so, se = run(["git", "-C", path, "rev-parse", "--show-toplevel"], timeout=20)
+    if rc is None:
+        return None, "could not run git: %s" % (first_line(se) or "no result")
     if rc == 0 and first_line(so):
         return True, first_line(so)
+    err = (se or "").lower()
+    if "not a git repository" in err or "no such file" in err or "cannot change to" in err:
+        return False, ""
+    if rc == 0:
+        return None, "git printed no toplevel and no error"
     return False, ""
+
+
+# --- observing the REMOTE, without writing to any repo --------------------------------------------
+def _infra_error(text):
+    """True when a gh/git failure is about the plumbing rather than about the repo's contents."""
+    e = (text or "").lower()
+    return any(k in e for k in (
+        "auth", "login", "token", "rate limit", "could not resolve", "network", "timeout",
+        "timed out", "dial tcp", "offline", "connection", "tls", "proxy", "503", "502", "500"))
+
+
+def _is_404(text):
+    e = (text or "").lower()
+    return "404" in e or "not found" in e
+
+
+def _remote_workflows_via_gh(gh, slug, timeout):
+    """(names, reason). names is a list when OBSERVED (possibly empty), else None + why."""
+    # Probe the repo first. A successful probe proves the remote is reachable AND that our token can
+    # see this repo, which is what licenses reading a later 404 as "the directory is not there"
+    # rather than "we were not allowed to look". GitHub returns 404 for both, so without this first
+    # call the two are indistinguishable and a missing guard could be mistaken for a permission
+    # problem (or, far worse, the other way around).
+    rc, so, se = run([gh, "api", "repos/%s" % slug, "--jq", ".default_branch"], timeout=timeout)
+    if rc != 0:
+        return None, "gh could not reach %s: %s" % (slug, first_line(se) or "exit %s" % rc)
+    branch = first_line(so)
+    if not branch:
+        return None, "gh returned no default branch for %s" % slug
+    rc, so, se = run([gh, "api", "repos/%s/contents/.github/workflows?ref=%s" % (slug, branch),
+                      "--jq", ".[].name"], timeout=timeout)
+    if rc == 0:
+        return sorted(ln.strip() for ln in so.splitlines() if ln.strip()), ""
+    err = first_line(se) or "exit %s" % rc
+    if _infra_error(err):
+        return None, "gh failed on %s@%s: %s" % (slug, branch, err)
+    if _is_404(err):
+        # Reachable repo, reachable branch, no such directory. That is an ANSWER, not a gap.
+        return [], ""
+    return None, "gh failed on %s@%s: %s" % (slug, branch, err)
+
+
+def _remote_workflows_via_git(path, timeout):
+    """Same contract, over git alone, still without fetching anything.
+
+    `git ls-remote` asks the server for its current HEAD sha. If that exact commit is already in the
+    local object store then the tree hanging off it IS the remote's tree, byte for byte, and reading
+    it locally is a genuine observation of the remote rather than of the working copy. If the object
+    is absent we would have to fetch to find out, and this tool does not write to repos, so the
+    honest answer there is UNKNOWN.
+    """
+    if not path:
+        return None, "no local clone to ask about the remote"
+    rc, so, se = run(["git", "-C", path, "ls-remote", "--symref", "origin", "HEAD"], timeout=timeout)
+    if rc != 0:
+        return None, "git ls-remote failed: %s" % (first_line(se) or "exit %s" % rc)
+    sha = ""
+    for ln in (so or "").splitlines():
+        parts = ln.split()
+        if len(parts) >= 2 and parts[-1] == "HEAD" and not ln.startswith("ref:"):
+            sha = parts[0]
+            break
+    if not sha:
+        return None, "git ls-remote returned no HEAD sha"
+    rc, _so, _se = run(["git", "-C", path, "cat-file", "-e", "%s^{commit}" % sha], timeout=timeout)
+    if rc != 0:
+        return None, ("remote HEAD %s is not in the local object store; reading it would require a "
+                      "fetch and this tool never writes to a repo" % sha[:12])
+    rc, so, se = run(["git", "-C", path, "ls-tree", "--name-only", sha, ".github/workflows/"],
+                     timeout=timeout)
+    if rc != 0:
+        return None, "git ls-tree failed: %s" % (first_line(se) or "exit %s" % rc)
+    return sorted(os.path.basename(ln.strip()) for ln in so.splitlines() if ln.strip()), ""
+
+
+def remote_workflow_files(slug, path, timeout, offline=False):
+    """(names, reason) for .github/workflows on the REMOTE default branch.
+
+    names is a list (possibly empty) when the remote answered, None when it could not be observed.
+    Never consults the working tree: an unpushed file is not CI.
+    """
+    if offline:
+        return None, "offline mode: the remote was not contacted"
+    reasons = []
+    gh = shutil.which("gh")
+    if gh:
+        names, why = _remote_workflows_via_gh(gh, slug, timeout)
+        if names is not None:
+            return names, ""
+        reasons.append(why)
+    else:
+        reasons.append("gh not on PATH")
+    names, why = _remote_workflows_via_git(path, timeout)
+    if names is not None:
+        return names, ""
+    reasons.append(why)
+    return None, "; ".join(r for r in reasons if r)
+
+
+def guards_present(names):
+    """Which GUARD_WORKFLOWS a remote file listing contains, by bare name."""
+    stems = {os.path.splitext(n)[0].lower() for n in names or []}
+    return [g for g in GUARD_WORKFLOWS if g in stems]
 
 
 # --- the report ----------------------------------------------------------------------------------
@@ -216,7 +369,10 @@ class Check:
 def check_junctions(skills_dir):
     c = Check("junctions", "skill junctions under %s resolve" % skills_dir)
     if not os.path.isdir(skills_dir):
-        c.note = "skills dir does not exist; nothing declared"
+        # A check that returns zero rows prints "pass 0, fail 0" and reads exactly like a clean
+        # sheet. It is not one: nothing was looked at. Say that out loud instead.
+        c.note = "skills dir does not exist; nothing was inspected"
+        c.add(UNKNOWN, skills_dir, "no such directory; deployment state unobserved")
         return c
     for name in sorted(os.listdir(skills_dir)):
         p = os.path.join(skills_dir, name)
@@ -230,12 +386,25 @@ def check_junctions(skills_dir):
             c.add(FAIL, name, "DANGLING -> %s" % tgt)
     if not c.rows:
         c.note = "no junctions found (are the skills deployed as plain copies?)"
+        c.add(UNKNOWN, skills_dir, "contains no junctions; nothing to resolve")
     return c
 
 
-# --- check 2: PUBLIC implies a pii-guard workflow -------------------------------------------------
-def check_workflow(visibility_path, slugs, code_root):
-    c = Check("workflow", "visibility PUBLIC implies a pii-guard CI workflow")
+# --- check 2: PUBLIC implies the guard workflows are ON THE REMOTE --------------------------------
+def check_workflow(visibility_path, slugs, code_root, timeout=30, offline=False):
+    """Assert the guard workflows exist on the REMOTE default branch of every PUBLIC repo.
+
+    The predecessor stat()ed the local clone, which answers a question nobody asked. A workflow file
+    is only CI once GitHub has it: committed-but-unpushed, or sitting dirty in the worktree, both
+    scored PASS while the public remote was completely ungated.
+
+    The result is hung on the Check as .remote_workflows so the CI check can ask about exactly the
+    workflows that were observed to exist, instead of guessing a name and reading the resulting
+    "no such workflow" error as a shrug.
+    """
+    c = Check("workflow", "visibility PUBLIC implies %s on the REMOTE default branch"
+              % " + ".join(GUARD_WORKFLOWS))
+    c.remote_workflows = {}
     try:
         with open(visibility_path, encoding="utf-8") as f:
             vis = json.load(f)
@@ -243,18 +412,26 @@ def check_workflow(visibility_path, slugs, code_root):
         c.note = "visibility map unreadable: %s" % e
         c.add(UNKNOWN, os.path.basename(visibility_path), str(e))
         return c
-    c.note = ("skipping entries with no clone under %s; a fork of someone else's repo is not ours "
-              "to gate" % code_root)
+    c.note = ("the REMOTE is interrogated, never the working tree; entries with no clone under %s "
+              "are skipped, a fork of someone else's repo is not ours to gate" % code_root)
     for slug in sorted(k for k, v in vis.items() if str(v).upper() == "PUBLIC"):
         path = slugs.get(slug)
         if path is None:
             c.add(SKIP, slug, "no local clone")
             continue
-        wf = os.path.join(path, ".github", "workflows", "pii-guard.yml")
-        if os.path.isfile(wf):
-            c.add(PASS, slug, "")
+        names, why = remote_workflow_files(slug, path, timeout, offline=offline)
+        if names is None:
+            # Could not look. Say so; do not award a pass for a question never asked.
+            c.add(UNKNOWN, slug, "remote not observed: %s" % why)
+            continue
+        found = guards_present(names)
+        c.remote_workflows[slug] = found
+        missing = [g for g in GUARD_WORKFLOWS if g not in found]
+        if missing:
+            c.add(FAIL, slug, "PUBLIC but the remote default branch has no %s (remote workflows: %s)"
+                  % (", ".join(missing), ", ".join(names) or "none"))
         else:
-            c.add(FAIL, slug, "PUBLIC but no .github/workflows/pii-guard.yml (%s)" % path)
+            c.add(PASS, slug, "remote carries %s" % ", ".join(found))
     return c
 
 
@@ -267,7 +444,10 @@ def check_conformance(repos, timeout):
         return c
     for name, path in sorted(repos.items()):
         if not os.path.isfile(os.path.join(path, ".claude-plugin", "plugin.json")):
-            continue                     # not a plugin repo, Spec v1 does not apply
+            # Spec v1 does not apply, but say so. Silently dropping the repo means a plugin.json
+            # that gets deleted or renamed removes the repo from coverage with no trace anywhere.
+            c.add(SKIP, name, "no .claude-plugin/plugin.json")
+            continue
         rc, so, se = run([sys.executable, CONFORMANCE, path], timeout=timeout)
         tail = [ln.strip() for ln in so.splitlines() if "passed" in ln]
         score = tail[-1] if tail else ""
@@ -313,8 +493,16 @@ def check_data_boundary(repos):
             c.add(SKIP, name, "not initialized")
             continue
         resolved = str(resolved)
+        if not os.path.isdir(resolved):
+            # resolve_data_dir() is supposed to return only existing dirs, so this means a vendored
+            # copy has drifted. It matters because `git -C <missing>` exits nonzero, which the
+            # worktree probe would otherwise read as a clean "outside any repo".
+            c.add(UNKNOWN, name, "resolver returned %s, which does not exist" % resolved)
+            continue
         inside, top = in_git_worktree(resolved)
-        if inside:
+        if inside is None:
+            c.add(UNKNOWN, name, "%s: %s" % (resolved, top))
+        elif inside:
             c.add(FAIL, name, "data dir %s is inside git worktree %s" % (resolved, top))
         else:
             c.add(PASS, name, resolved)
@@ -326,40 +514,56 @@ GREEN = ("success",)
 RED = ("failure", "timed_out", "cancelled", "startup_failure", "action_required")
 
 
-def check_ci(slugs_public, timeout):
-    c = Check("ci", "pii-guard CI is green on the public repos")
+def check_ci(targets, timeout):
+    """targets: [(slug, [workflow names observed on that slug's remote]), ...].
+
+    One row per (repo, workflow). The predecessor asked only about pii-guard and titled itself "the
+    guard CI is green", so promotion-assistant printed a single confident PASS on 2026-07-30 while
+    its dash-guard had been failing since 2026-07-24. A check that names one workflow and reports on
+    the category is not a check, it is a headline.
+    """
+    c = Check("ci", "every guard workflow on the remote is GREEN (%s)" % ", ".join(GUARD_WORKFLOWS))
     gh = shutil.which("gh")
     if not gh:
-        c.note = "gh not on PATH; CI state unobserved"
+        c.note = "gh not on PATH; CI state unobserved (infrastructure, non-failing)"
         c.add(UNKNOWN, "gh", "not installed")
         return c
-    c.note = "UNKNOWN here never fails the run: an unauthenticated or rate limited gh is not a leak"
-    for slug in sorted(slugs_public):
-        rc, so, se = run([gh, "run", "list", "-w", "pii-guard", "--limit", "1", "-R", slug,
-                          "--json", "conclusion,status,createdAt"], timeout=timeout)
-        if rc != 0:
-            c.add(UNKNOWN, slug, first_line(se) or "gh exit %s" % rc)
-            continue
-        try:
-            runs = json.loads(so or "[]")
-        except ValueError as e:
-            c.add(UNKNOWN, slug, "unparseable gh output: %s" % e)
-            continue
-        if not runs:
-            c.add(UNKNOWN, slug, "no pii-guard run recorded (workflow never pushed or never fired)")
-            continue
-        r = runs[0]
-        concl = (r.get("conclusion") or "").lower()
-        state = (r.get("status") or "").lower()
-        when = r.get("createdAt") or ""
-        if state != "completed":
-            c.add(UNKNOWN, slug, "run %s (%s)" % (state or "unknown state", when))
-        elif concl in GREEN:
-            c.add(PASS, slug, when)
-        elif concl in RED:
-            c.add(FAIL, slug, "last run %s (%s)" % (concl, when))
-        else:
-            c.add(UNKNOWN, slug, "last run %s (%s)" % (concl or "no conclusion", when))
+    c.note = ("UNKNOWN here means the answer could not be OBSERVED and never fails the run; a red "
+              "run that WAS observed is a FAIL, and a guard missing from the remote entirely is a "
+              "FAIL in the workflow check above, not a shrug here")
+    if not targets:
+        c.add(UNKNOWN, "(nothing to ask)", "no public repo reported a guard workflow on its remote")
+        return c
+    for slug, workflows in sorted(targets):
+        for wf in sorted(workflows):
+            name = "%s [%s]" % (slug, wf)
+            rc, so, se = run([gh, "run", "list", "-w", wf, "--limit", "1", "-R", slug,
+                              "--json", "conclusion,status,createdAt"], timeout=timeout)
+            if rc != 0:
+                c.add(UNKNOWN, name, first_line(se) or "gh exit %s" % rc)
+                continue
+            try:
+                runs = json.loads(so or "[]")
+            except ValueError as e:
+                c.add(UNKNOWN, name, "unparseable gh output: %s" % e)
+                continue
+            if not runs:
+                # The file IS on the remote (that is why we are asking). GitHub expires run history,
+                # so a dormant repo legitimately has none. Absence of runs is not a red run.
+                c.add(UNKNOWN, name, "no run history (expired, or never fired)")
+                continue
+            r = runs[0]
+            concl = (r.get("conclusion") or "").lower()
+            state = (r.get("status") or "").lower()
+            when = r.get("createdAt") or ""
+            if state != "completed":
+                c.add(UNKNOWN, name, "run %s (%s)" % (state or "unknown state", when))
+            elif concl in GREEN:
+                c.add(PASS, name, when)
+            elif concl in RED:
+                c.add(FAIL, name, "last run %s (%s)" % (concl, when))
+            else:
+                c.add(UNKNOWN, name, "last run %s (%s)" % (concl or "no conclusion", when))
     return c
 
 
@@ -418,6 +622,16 @@ def print_report(checks, started, elapsed):
             for status, name, detail in c.rows:
                 if status == FAIL:
                     print("  %s: %s -- %s" % (c.id, name, detail))
+    if tot["unknown"]:
+        # Printed on purpose and separately. UNKNOWN is now defined as "could not observe", which
+        # makes it harmless to the exit code and therefore invisible unless it is listed. An
+        # unobserved check is not a passing check, and the operator has to be able to see the
+        # difference between a fleet that is clean and a fleet nobody could look at.
+        print("\nUNOBSERVED (infrastructure, does not affect exit code)")
+        for c in checks:
+            for status, name, detail in c.rows:
+                if status == UNKNOWN:
+                    print("  %s: %s -- %s" % (c.id, name, detail))
     return tot
 
 
@@ -432,6 +646,10 @@ def write_status(path, checks, tot, started_utc, elapsed, exit_code):
         "checks": {c.id: dict(title=c.title, note=c.note, **c.summary()) for c in checks},
         "failures": ["%s: %s -- %s" % (c.id, n, d)
                      for c in checks for s, n, d in c.rows if s == FAIL],
+        # Machine-readable twin of the UNOBSERVED block. A caller that only ever reads `failures`
+        # cannot tell a clean fleet from an unlooked-at one.
+        "unobserved": ["%s: %s -- %s" % (c.id, n, d)
+                       for c in checks for s, n, d in c.rows if s == UNKNOWN],
     }
     d = os.path.dirname(path)
     if d:
@@ -467,20 +685,25 @@ def main(argv=None):
     slugs = repo_slugs(repos)
 
     checks = [check_junctions(os.path.abspath(os.path.expanduser(a.skills_dir)))]
-    wf = check_workflow(os.path.abspath(os.path.expanduser(a.visibility)), slugs, code_root)
+    wf = check_workflow(os.path.abspath(os.path.expanduser(a.visibility)), slugs, code_root,
+                        timeout=a.gh_timeout, offline=a.offline)
     checks.append(wf)
     checks.append(check_conformance(repos, a.conformance_timeout))
     checks.append(check_data_boundary(repos))
 
     if a.offline:
-        c = Check("ci", "pii-guard CI is green on the public repos")
+        c = Check("ci", "every guard workflow on the remote is GREEN (%s)"
+                  % ", ".join(GUARD_WORKFLOWS))
         c.note = "skipped (--offline)"
+        c.add(UNKNOWN, "(all public repos)", "offline: CI state unobserved")
         checks.append(c)
     else:
-        # Only ask about repos we established are PUBLIC, cloned here, and actually carry the
-        # workflow. Asking about the others would produce UNKNOWN noise with no information in it.
-        public_with_wf = [n for s, n, _d in wf.rows if s == PASS]
-        checks.append(check_ci(public_with_wf, a.gh_timeout))
+        # Ask about exactly the guard workflows we OBSERVED on each remote. Note this includes repos
+        # that FAILED above for missing one of the pair: a repo with pii-guard but no dash-guard
+        # still gets its pii-guard run state read, because dropping it would let a red run hide
+        # behind an unrelated failure.
+        targets = [(slug, found) for slug, found in wf.remote_workflows.items() if found]
+        checks.append(check_ci(targets, a.gh_timeout))
 
     elapsed = time.time() - t0
     tot = print_report(checks, started_utc, elapsed)
