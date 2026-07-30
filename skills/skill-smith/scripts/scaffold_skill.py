@@ -19,13 +19,13 @@ import sys
 import datetime
 import re
 
-REQUIRED_BADGES = (
-    "[![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-orange?style=flat)]"
-    "(https://docs.anthropic.com/en/docs/claude-code)\n"
-    "[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)\n"
-    "[![Languages](https://img.shields.io/badge/Languages-EN%20%2F%20CN-blue?style=flat)](#languages)\n"
-    "[![Roadmap](https://img.shields.io/badge/Roadmap-v__VER__-purple?style=flat)](ROADMAP.md)\n"
-)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import version_sites  # noqa: E402  (sibling module: the one definition of where a version lives)
+
+# The badge block, including the Roadmap badge that is one of the five version sites, is defined
+# once in version_sites.py. check_conformance.py reads those sites and bump_version.py rewrites
+# them; if the shape were re-typed here, a bump could stamp a badge its own linter rejects.
+REQUIRED_BADGES = version_sites.REQUIRED_BADGES
 
 LICENSE_TMPL = """MIT License
 
@@ -460,7 +460,8 @@ def main():
 
     plugin = {
         "name": name,
-        "version": ver,
+        # Same reason as the badge: the field name is a version SITE, owned by version_sites.py.
+        version_sites.PLUGIN_VERSION_FIELD: ver,
         "description": a.description,
         "author": {"name": "DaizeDong"},
         "homepage": "https://github.com/DaizeDong/%s" % name,

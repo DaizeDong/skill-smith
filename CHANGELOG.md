@@ -2,6 +2,37 @@
 
 All notable changes to this project are documented here (Keep a Changelog style).
 
+## [Unreleased]
+### Added
+- **`scripts/bump_version.py`, the missing half of the version rule.** `scaffold_skill.py` stamped
+  the five version sites once at creation and `check_conformance.py` only read them, so every
+  release was five hand edits in the right order across five files, with no feedback until someone
+  ran the linter. Most repos ended up drifted, usually as a half-applied release (plugin.json and
+  CHANGELOG moved, the README badges and ROADMAP did not). The bumper rewrites all five together,
+  demotes the previous `## vX.Y.Z (current)` ROADMAP heading, and opens a dated CHANGELOG section
+  that absorbs any `## [Unreleased]` body. Two refusals are the point of it: it **exits nonzero on
+  an already-drifted repo** and prints the diff, because bumping over drift greens the linter while
+  erasing which site was left behind; and it **never commits, tags or pushes**, because cutting a
+  release is a human decision. A badge pre-release marker (`Roadmap-v0.2.2%20alpha-purple`)
+  round-trips rather than being flattened.
+- `scripts/version_sites.py`, one definition of where a version lives. The scaffolder, the linter
+  and the bumper now share it, so a bump cannot stamp a shape the linter rejects.
+- `tests/test_bump.py`, 17 tests covering the five sites moving together, the drift refusal writing
+  nothing, Unreleased absorption, pre-release round-trip, and rollback leaving no half-bumped repo.
+
+### Fixed
+- **`check_conformance.py` reported conforming repos as broken.** The version regex demanded a bare
+  `Roadmap-vX.Y.Z-purple` badge, so a repo carrying a deliberate pre-release marker
+  (`Roadmap-v0.2.2%20alpha-purple`, which is how shields.io encodes `v0.2.2 alpha`) read as having
+  no version at all and failed the sync check while all five of its sites agreed. Same fault in the
+  Languages badge check: an exact substring test meant a repo that also shipped Spanish
+  (`Languages-EN%20%2F%20CN%20%2F%20ES-blue`) was marked as missing the badge, penalizing it for
+  translating more. A linter that cries wolf gets muted, which is worse than no linter.
+- **The scaffolded PII gate was 113 lines behind the canonical scanner**, so every repo skill-smith
+  created was born with a downgraded backstop (no cross-repo token loading, no machine-path
+  detector, no repo-slug self-exclusion). `assets/pii-guard/` is re-vendored from canonical:
+  `pii_guard.py` +113 lines, `test_pii_guard.py` +110, `data_boundary.py` +1, `datadir.py` reworded.
+
 ## [0.1.3] - 2026-07-16
 ### Added
 - **Dash gate (Spec v1 section 10) is now scaffolded into every new skill.** `scaffold_skill.py`

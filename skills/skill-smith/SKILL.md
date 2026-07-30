@@ -49,7 +49,9 @@ description: Create, scaffold, or batch new Claude Code skills to a tested-real 
    (G6b: the live GitHub repo carries the base-9 + domain topics and a description). These are **two
    layers**: a plain `git push` sets no remote metadata, so passing G6 alone is how the topics=null
    incident happened. Deploy (Step 8) MUST run `set_repo_metadata.py` then G6b, neither layer is
-   optional.
+   optional. **Never hand-edit the five version sites**: use `scripts/bump_version.py` (see
+   `reference/scaffold.md` §bump). A five-file manual ritual is not a process, it is a pending
+   bug, which is why most repos drifted as half-applied releases.
 6. **Config-bearing = configurable-by-anyone, or rejected.** If a skill needs a companion config
    (keys / registry / endpoints), it MUST pass the seven-element config standard (E1 to E7) via
    `check_config_conformance.py` (G8): documented schema, env-var discovery mount, deterministic
