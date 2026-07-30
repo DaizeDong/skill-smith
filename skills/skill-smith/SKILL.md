@@ -58,6 +58,17 @@ description: Create, scaffold, or batch new Claude Code skills to a tested-real 
    `init`, a `verify` doctor, two configs hot-swappable by env var, secrets gitignored (Mode B), and
    a README Config section. "Works on my machine" config is a reject. See `reference/config-spec.md`.
 
+## After the gate: the fleet, not just the new skill
+
+`check_conformance.py` was correct for weeks and surfaced nothing, because nothing ran it. A gate
+with no driver does not exist, and the missing piece was never more judgment. `scripts/fleet_check.py`
+is that driver: **read-only, no `--fix` and never one**, it fans the linter over every plugin repo and
+adds what nothing else checks (skill junctions resolve, visibility PUBLIC implies a `pii-guard`
+workflow, a resolved real-run data dir is not inside a git worktree, and the `pii-guard` CI is
+actually green). It exits nonzero on any FAIL and writes a UTC-stamped status JSON, so a scheduled
+caller checks the artifact's freshness to know the run HAPPENED rather than trusting an exit code
+that only says whether it PASSED. Run it by hand with `python scripts/fleet_check.py [--offline]`.
+
 ## Progressive loading
 
 This `SKILL.md` is the only always-loaded file. Read `reference/<shard>.md` on demand, one at a time,

@@ -4,6 +4,22 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 ### Added
+- **`scripts/fleet_check.py`, the driver `check_conformance.py` never had.** The linter has been
+  correct and complete for weeks and surfaced nothing, because nothing ever ran it: a gate with no
+  driver does not exist. This fans it over every repo carrying `.claude-plugin/plugin.json` and adds
+  the four assertions nothing on the machine performs, each with a real failure mode: every skill
+  junction resolves (a repo move silently empties the agent's library and no error is raised
+  anywhere), visibility PUBLIC implies a `pii-guard` CI workflow, a resolved real-run data directory
+  is **not** sitting inside a git worktree, and the `pii-guard` CI that the whole doctrine calls
+  "the authority" is actually green. That fourth one is the inverse of `data_boundary.py`: the
+  boundary proves the repo holds no real-run output, this proves the output directory is not itself
+  a repo, and in the 2026-07 leak both halves were needed and only one existed. There is **no
+  `--fix` and never will be**: several of the directories it inspects hold live secrets and
+  uncommitted state, so "auto-converge" is a data-loss button with a helpful label. It exits nonzero
+  on any FAIL and writes a UTC-stamped status JSON, so a scheduled caller can verify the run
+  HAPPENED (freshness) separately from whether it PASSED, which an exit code alone cannot express.
+  Anything it cannot observe (gh missing, unauthenticated, rate limited, workflow never run) is
+  reported UNKNOWN and never blocks.
 - **`scripts/bump_version.py`, the missing half of the version rule.** `scaffold_skill.py` stamped
   the five version sites once at creation and `check_conformance.py` only read them, so every
   release was five hand edits in the right order across five files, with no feedback until someone
