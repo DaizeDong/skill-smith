@@ -10,6 +10,9 @@ import subprocess
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import version_sites  # noqa: E402  (sibling module: the one definition of where a version lives)
+
 PASS, FAIL = "PASS", "FAIL"
 results = []
 
@@ -97,7 +100,6 @@ def main(root):
 
     # 2) plugin.json fingerprint
     pj_raw = read(os.path.join(root, ".claude-plugin", "plugin.json"))
-    pj_ver = None
     if pj_raw:
         try:
             pj = json.loads(pj_raw)
@@ -110,7 +112,6 @@ def main(root):
             check("plugin.keywords end with 'skill'", bool(kw) and kw[-1] == "skill", str(kw[-3:]))
             check("plugin.name kebab-case", bool(re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", pj.get("name", ""))),
                   pj.get("name", ""))
-            pj_ver = pj.get("version")
         except Exception as e:
             check("plugin.json valid JSON", False, str(e))
     else:
@@ -119,27 +120,25 @@ def main(root):
     # 3) version four-source sync
     readme = read(os.path.join(root, "README.md")) or ""
     readme_cn = read(os.path.join(root, "README_CN.md")) or ""
-    roadmap = read(os.path.join(root, "ROADMAP.md")) or ""
-    changelog = read(os.path.join(root, "CHANGELOG.md")) or ""
 
-    def grab(pat, text):
-        m = re.search(pat, text)
-        return m.group(1) if m else None
-
-    v_readme = grab(r"Roadmap-v([0-9]+\.[0-9]+\.[0-9]+)-purple", readme)
-    v_readme_cn = grab(r"Roadmap-v([0-9]+\.[0-9]+\.[0-9]+)-purple", readme_cn)
-    v_roadmap = grab(r"Current:\s*\*\*v([0-9]+\.[0-9]+\.[0-9]+)\*\*", roadmap)
-    v_changelog = grab(r"##\s*\[([0-9]+\.[0-9]+\.[0-9]+)\]", changelog)
-    versions = {"plugin": pj_ver, "README": v_readme, "README_CN": v_readme_cn,
-                "ROADMAP": v_roadmap, "CHANGELOG": v_changelog}
-    uniq = set(v for v in versions.values() if v)
-    check("version four-source synced", len(uniq) == 1 and all(versions.values()), str(versions))
+    # The five site patterns live in version_sites.py, shared with scaffold_skill.py (which stamps
+    # them) and bump_version.py (which rewrites them). They used to be re-typed here, and the copy
+    # had drifted: it demanded a bare "Roadmap-vX.Y.Z-purple" badge, so a repo whose badge carries a
+    # deliberate pre-release marker ("Roadmap-v0.2.2%20alpha-purple") read as having NO version and
+    # was reported drifted while all five of its sites agreed. A linter that cries wolf gets muted,
+    # which is worse than no linter.
+    versions = version_sites.collect(root)
+    check("version four-source synced", version_sites.is_synced(versions), str(versions))
 
     # 4) README philosophy-first + badge block
     check("README badge: Claude Code Skill (orange)",
           "Claude%20Code-Skill-orange" in readme)
     check("README badge: License MIT (blue)", "License-MIT-blue" in readme)
-    check("README badge: Languages (blue)", "Languages-EN%20%2F%20CN-blue" in readme)
+    # EN + CN is the floor, not the ceiling: a repo that also ships ES writes
+    # "Languages-EN%20%2F%20CN%20%2F%20ES-blue", which is a superset of the requirement. The old
+    # substring test read that as a MISSING badge, i.e. it penalized a repo for translating more.
+    check("README badge: Languages (blue)",
+          bool(re.search(r"Languages-EN%20%2F%20CN(?:%20%2F%20[A-Z]{2})*-blue", readme)))
     check("README badge: Roadmap (purple)", "Roadmap-v" in readme and "-purple" in readme)
     i_phil = readme.find("## ⭐ Read this first")
     i_inst = readme.find("## Install")

@@ -72,9 +72,14 @@ python skills/skill-smith/scripts/scaffold_skill.py my-skill \
   --topics "domain-a,domain-b"
 
 python skills/skill-smith/scripts/check_conformance.py ~/CodesClaude/my-skill   # Spec v1 linter
+python skills/skill-smith/scripts/bump_version.py ~/CodesClaude/my-skill --level patch  # all 5 sites
 python skills/skill-smith/scripts/budget_check.py                            # library token budget
 python skills/skill-smith/scripts/dedup_check.py                             # description overlap
 ```
+
+`bump_version.py` moves the version at all five sites at once (plugin.json, both README badges,
+ROADMAP, CHANGELOG). It refuses on an already-drifted repo instead of papering over the drift, and
+it never commits or pushes: cutting a release stays a human decision.
 
 ## How to invoke
 

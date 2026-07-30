@@ -34,9 +34,32 @@ It emits the **必备 7 files** + `PHILOSOPHY.md`, all version-synced to `0.1.0`
   skills/<name>/SKILL.md             frontmatter (name + triggering description) + body skeleton
 ```
 
-**Four-source version rule (hard):** `plugin.json.version` == README/README_CN Roadmap badge ==
-`ROADMAP.md` top "Current:" == `CHANGELOG.md` latest entry. The scaffolder sets all four to `0.1.0`;
-keep them in lock-step on every bump.
+**Five-site version rule (hard):** `plugin.json.version` == README Roadmap badge == README_CN Roadmap
+badge == `ROADMAP.md` top "Current:" == `CHANGELOG.md` latest entry. The scaffolder sets all five to
+`0.1.0`. Where they live is defined once, in `scripts/version_sites.py`, shared by the scaffolder,
+the linter and the bumper, so no tool can stamp a shape another one rejects.
+
+## §bump, never edit the five sites by hand
+
+```bash
+python scripts/bump_version.py <repo> --level patch|minor|major   # or --set X.Y.Z
+python scripts/bump_version.py <repo> --level minor --notes "One line." --dry-run
+```
+
+It rewrites all five sites together, demotes the previous `## vX.Y.Z (current)` ROADMAP heading, and
+opens a `## [X.Y.Z] - <today>` CHANGELOG section that **absorbs** any `## [Unreleased]` body.
+
+Two behaviours are deliberate:
+
+- **It refuses on an already-drifted repo** (exit 1) and prints the diff. Bumping over drift would
+  green the linter while erasing which site was left behind and at what version. Reconcile by hand,
+  confirm with `check_conformance.py`, then bump.
+- **It never commits, tags or pushes.** Cutting a release is a human decision; the tool only moves
+  the numbers so that decision costs one command instead of five error-prone edits.
+
+A pre-release marker in the badge (`Roadmap-v0.2.2%20alpha-purple`) round-trips by default;
+`--prerelease TAG` sets one, `--no-prerelease` drops it. It lives in the badge only, because the
+other four sites are read by machines that expect plain semver.
 
 **Badge order (hard):** Claude Code Skill (orange) -> License MIT (blue) -> 0 to 2 feature (green) ->
 Languages EN/CN (blue) -> Roadmap vX.Y.Z (purple).

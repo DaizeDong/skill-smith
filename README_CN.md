@@ -72,9 +72,13 @@ python skills/skill-smith/scripts/scaffold_skill.py my-skill \
   --topics "domain-a,domain-b"
 
 python skills/skill-smith/scripts/check_conformance.py ~/CodesClaude/my-skill   # Spec v1 检查器
+python skills/skill-smith/scripts/bump_version.py ~/CodesClaude/my-skill --level patch  # 五处版本
 python skills/skill-smith/scripts/budget_check.py                            # 库 token 预算
 python skills/skill-smith/scripts/dedup_check.py                             # 描述重叠
 ```
+
+`bump_version.py` 一次改齐五处版本(plugin.json、两个 README 徽章、ROADMAP、CHANGELOG)。仓库已经
+版本不一致时它直接拒跑而不是把不一致掩盖掉;它也从不 commit / push,发版是人的决定。
 
 ## 如何触发
 
