@@ -1,8 +1,16 @@
 # Roadmap
 
-Current: **v0.1.2**
+Current: **v0.1.3**
 
-## v0.1.2 (current), remote metadata is a first-class deploy step (G6b)
+## v0.1.3 (current), the dash gate is scaffolded into every new skill
+
+- `scaffold_skill.py` vendors `tools/dash_guard.py` plus a `dash-guard` CI workflow (assets under
+  `assets/dash-guard/`), so a new skill is born enforcing the house rule that published prose carries
+  no en/em dash. The tool de-dashes Markdown and Python COMMENTS only, leaving every string literal
+  untouched, and never touches the ASCII hyphen.
+- `check_conformance.py` verifies both files exist and that the tree is dash-clean.
+
+## v0.1.2, remote metadata is a first-class deploy step (G6b)
 
 - Root-cause fix for the topics=null incident: a plain `git push` sets no GitHub topics/description, and
   the old `check_conformance.py` (G6) only lints LOCAL files, so repos shipped Spec-non-conformant.
