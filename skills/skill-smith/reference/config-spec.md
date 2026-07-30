@@ -117,7 +117,7 @@ one the env var points at, both times. If both legs pass, the skill is hot-swapp
 3. **First-time**, the `init → fill secrets → verify` three-liner.
 4. **Switch**, how to hot-swap two configs via the env var.
 
-A config-bearing skill whose README lacks this section is non-conformant even if every script works ,
+A config-bearing skill whose README lacks this section is non-conformant even if every script works,
 because the next person can't find any of it.
 
 ---

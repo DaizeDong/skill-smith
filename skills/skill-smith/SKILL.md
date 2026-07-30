@@ -20,9 +20,9 @@ description: Create, scaffold, or batch new Claude Code skills to a tested-real 
 | # | Step | Load | Delegates to |
 |---|---|---|---|
 | **0** | **Research-first (MANDATORY)**, survey best references + frontier designs + anti-patterns before any design | `reference/research-first.md` | **market-intel** (deep scale) |
-| 1 | Triage + dedup, overlap with existing library? single vs batch? | `reference/scaffold.md` §dedup + `scripts/dedup_check.py` |, |
+| 1 | Triage + dedup, overlap with existing library? single vs batch? | `reference/scaffold.md` §dedup + `scripts/dedup_check.py` | none |
 | 2 | Choose generation backend | `reference/generators.md` | Skill_Seekers / official skill-creator |
-| 3 | Scaffold Spec-v1 repo (add `--with-config` if config-bearing) | `scripts/scaffold_skill.py` + `reference/config-spec.md` |, |
+| 3 | Scaffold Spec-v1 repo (add `--with-config` if config-bearing) | `scripts/scaffold_skill.py` + `reference/config-spec.md` | none |
 | 4 | Draft SKILL.md + optimize triggering description | `reference/triggering.md` | official `run_loop.py` (60/40) |
 | 5 | **Acceptance gate** (all must pass; any fail = explicit reject) | `reference/acceptance-gate.md` + `budget_check.py` + `dedup_check.py` + `check_conformance.py` + `check_config_conformance.py` (G8) | agent-skills-eval / scenario-eval |
 | 6 | Hand off to auto-iteration | `reference/iterate-handoff.md` | **self-evolve** |

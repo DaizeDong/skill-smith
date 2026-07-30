@@ -38,7 +38,7 @@ generation in the middle.
 ## P3, Thin delegation: own the seam, not the engines
 
 - **Symptom patch:** build one mega-tool that generates, evaluates, and iterates.
-- **Root cause:** those engines already exist and are better than a reimplementation would be ,
+- **Root cause:** those engines already exist and are better than a reimplementation would be,
   `market-intel` (research), Skill_Seekers / the official skill-creator (generation), agent-skills-eval
   / scenario-eval (evaluation), `self-evolve` (iteration), `npx skills` (distribution). skill-smith's
   only durable value is the **composition + the gate + spec conformance + batch budgeting**.
