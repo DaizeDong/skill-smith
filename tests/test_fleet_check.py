@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -229,9 +230,21 @@ def test_guards_present_matches_by_stem():
 # answer red, which is how a live ledger got moved out to a loose unversioned directory to appease
 # a checker. What follows pins the RIGHT predicate: PUBLIC fails, UNKNOWN fails closed, PRIVATE
 # passes and the row names the repo so an approving row cannot be mistaken for a skipped one.
-def _vis_map(tmp_path, mapping):
-    p = tmp_path / "visibility.json"
-    p.write_text(json.dumps(mapping), encoding="utf-8")
+def _vis_map(tmp_path, mapping, stamp="now", name="visibility.json"):
+    """A visibility map on disk.
+
+    Stamped FRESH by default. The stamp is what tells a consumer how old the cached answers are;
+    an unstamped map is of unknown age and is deliberately not trusted (see the freshness block
+    further down), so the tests that are about PUBLIC/PRIVATE semantics rather than about staleness
+    have to hand over a map that is entitled to answer at all.
+    """
+    m = dict(mapping)
+    if stamp == "now":
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if stamp is not None:
+        m[fc.VisibilityOracle.STAMP_KEY] = stamp
+    p = tmp_path / name
+    p.write_text(json.dumps(m), encoding="utf-8")
     return str(p)
 
 
@@ -393,6 +406,132 @@ def test_visibility_map_is_never_written_back(tmp_path, monkeypatch):
     assert open(vis, encoding="utf-8").read() == before
 
 
+# --- the visibility oracle: a cache must not be able to outvote GitHub ---------------------------
+#
+# THE HOLE THIS BLOCK CLOSES (2026-07-31)
+# ---------------------------------------
+# The oracle read the map FIRST and asked gh only on a miss, so one stale line of JSON silently
+# defeated the entire data-boundary control. A copy of the real map poisoned with
+# {"daizedong/skill-smith": "PRIVATE"} -- a genuinely PUBLIC repo -- produced
+# `PASS ... [PRIVATE per visibility map]` over a data dir inside a public repo. Nothing on this
+# machine rewrites that file on its own, so the entry would have said PRIVATE forever, and a repo
+# flipped from private to public on GitHub is exactly the event the control exists to survive.
+#
+# The property pinned below: a map entry cannot indefinitely outvote reality. Online it never gets
+# to vote at all; offline its vote expires and an expired entry behaves like UNKNOWN, which already
+# fails closed.
+def _oracle(tmp_path, mapping, stamp="now", **kw):
+    return fc.VisibilityOracle(_vis_map(tmp_path, mapping, stamp=stamp), **kw)
+
+
+def _gh_says(monkeypatch, answer):
+    """Pretend gh is installed and reports `answer` for any repo."""
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (0, answer + "\n", ""))
+
+
+def test_live_gh_overrules_a_map_entry_that_disagrees(tmp_path, monkeypatch):
+    """The poisoning demonstration, as a unit: the map says PRIVATE, GitHub says PUBLIC."""
+    _gh_says(monkeypatch, "PUBLIC")
+    o = _oracle(tmp_path, {"owner/repo": "PRIVATE"})
+    vis, why = o.visibility("owner/repo")
+    assert vis == "PUBLIC"
+    assert "STALE" in why
+
+
+def test_live_gh_is_asked_even_when_the_map_has_an_entry(tmp_path, monkeypatch):
+    """Map-first was the bug. A cache hit must not short-circuit the question."""
+    calls = []
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+
+    def spy(args, **_k):
+        calls.append(args)
+        return 0, "PUBLIC\n", ""
+
+    monkeypatch.setattr(fc, "run", spy)
+    _oracle(tmp_path, {"owner/repo": "PRIVATE"}).visibility("owner/repo")
+    assert any("repo" in a and "view" in a for a in calls)
+
+
+def test_gh_answer_is_asked_once_per_slug(tmp_path, monkeypatch):
+    """The cost of asking live is bounded: one query per DISTINCT slug per run."""
+    calls = []
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+
+    def spy(args, **_k):
+        calls.append(args)
+        return 0, "PRIVATE\n", ""
+
+    monkeypatch.setattr(fc, "run", spy)
+    o = _oracle(tmp_path, {})
+    for _ in range(5):
+        assert o.visibility("owner/repo")[0] == "PRIVATE"
+    assert len(calls) == 1
+
+
+def test_map_may_answer_only_when_gh_cannot(tmp_path, monkeypatch):
+    """Offline, a FRESH map is the best evidence available and is allowed to vote."""
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: None)
+    vis, why = _oracle(tmp_path, {"owner/repo": "PRIVATE"}).visibility("owner/repo")
+    assert vis == "PRIVATE"
+    assert "visibility map" in why and "gh is not on PATH" in why
+
+
+def test_a_map_too_old_to_trust_is_unknown(tmp_path, monkeypatch):
+    """An entry that can never expire is an entry that outvotes reality forever."""
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: None)
+    old = (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    vis, why = _oracle(tmp_path, {"owner/repo": "PRIVATE"}, stamp=old).visibility("owner/repo")
+    assert vis == "UNKNOWN"
+    assert "trust window" in why
+
+
+def test_an_unstamped_map_is_of_unknown_age_and_is_not_trusted(tmp_path, monkeypatch):
+    """The map as it existed before this fix: no way to tell an hour old from a year old."""
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: None)
+    vis, why = _oracle(tmp_path, {"owner/repo": "PRIVATE"}, stamp=None).visibility("owner/repo")
+    assert vis == "UNKNOWN"
+    assert "no %s stamp" % fc.VisibilityOracle.STAMP_KEY in why
+
+
+def test_a_stamp_in_the_future_is_not_trusted(tmp_path, monkeypatch):
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: None)
+    ahead = (datetime.now(timezone.utc) + timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    vis, _why = _oracle(tmp_path, {"owner/repo": "PRIVATE"}, stamp=ahead).visibility("owner/repo")
+    assert vis == "UNKNOWN"
+
+
+def test_the_stamp_is_not_mistaken_for_a_repo(tmp_path, monkeypatch):
+    """The reserved key must never leak into the answers as if it were a slug."""
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: None)
+    o = _oracle(tmp_path, {"owner/repo": "PUBLIC"})
+    assert fc.VisibilityOracle.STAMP_KEY not in o.map
+    assert o.visibility(fc.VisibilityOracle.STAMP_KEY)[0] == "UNKNOWN"
+
+
+def test_expired_map_fails_the_data_boundary_check_closed(tmp_path, monkeypatch):
+    """End to end: a stale PRIVATE marking stops clearing a data dir, it does not keep clearing it."""
+    root = tmp_path / "code"
+    root.mkdir()
+    make_repo(root, "tidy", datadir=True)
+    comp = _companion(tmp_path, "priv-repo", "git@github.com:Owner/priv-repo.git")
+    monkeypatch.setenv("TIDY_DATA_DIR", str(comp / "data"))
+    old = (datetime.now(timezone.utc) - timedelta(days=99)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    vis = _vis_map(tmp_path, {"owner/priv-repo": "PRIVATE"}, stamp=old)
+
+    c = fc.check_data_boundary(vis, repos={"tidy": str(root / "tidy")}, offline=True)
+    assert [s for s, _n, _d in c.rows] == [fc.FAIL]
+    assert "failing closed" in c.rows[0][2]
+
+
+def test_parse_stamp_and_age():
+    assert fc.parse_stamp("") is None
+    assert fc.parse_stamp("not a date") is None
+    assert fc.parse_stamp("2026-07-31T00:00:00Z") == fc.parse_stamp("2026-07-31T00:00:00+00:00")
+    # naive timestamps are read as UTC rather than as local time, which would shift the age
+    assert fc.parse_stamp("2026-07-31T00:00:00") == fc.parse_stamp("2026-07-31T00:00:00Z")
+
+
 def test_in_git_worktree_tristate(tmp_path, monkeypatch):
     outside = tmp_path / "plain"
     outside.mkdir()
@@ -423,15 +562,22 @@ def test_data_boundary_nonexistent_resolved_dir_is_unknown(tmp_path, monkeypatch
 
 
 # --- check 5: the CI probe covers EVERY guard, and degrades without blocking ---------------------
-def _ci_with_gh(monkeypatch, rc, stdout, stderr="", targets=None):
+def _ci_with_gh(monkeypatch, rc, stdout, stderr="", targets=None, default="main"):
+    """gh that answers the default-branch probe, then `rc/stdout/stderr` for the run query."""
     monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
-    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (rc, stdout, stderr))
+
+    def fake(args, **_k):
+        if "api" in args:
+            return (0, default + "\n", "") if default else (1, "", "no such repo")
+        return rc, stdout, stderr
+
+    monkeypatch.setattr(fc, "run", fake)
     return fc.check_ci(targets or [("owner/repo", ["pii-guard"])], 5)
 
 
-def _runs(conclusion, status="completed"):
+def _runs(conclusion, status="completed", branch="main"):
     return json.dumps([{"conclusion": conclusion, "status": status,
-                        "createdAt": "2026-01-01T00:00:00Z"}])
+                        "createdAt": "2026-01-01T00:00:00Z", "headBranch": branch}])
 
 
 def test_ci_success_passes(monkeypatch):
@@ -452,6 +598,8 @@ def test_ci_checks_every_guard_and_names_each_one(monkeypatch):
     monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
 
     def fake_run(args, **_k):
+        if "api" in args:
+            return 0, "main\n", ""
         wf = args[args.index("-w") + 1]
         return 0, _runs("success" if wf == "pii-guard" else "failure"), ""
 
@@ -459,6 +607,93 @@ def test_ci_checks_every_guard_and_names_each_one(monkeypatch):
     c = fc.check_ci([("owner/repo", ["pii-guard", "dash-guard"])], 5)
     got = {n: s for s, n, _d in c.rows}
     assert got == {"owner/repo [pii-guard]": fc.PASS, "owner/repo [dash-guard]": fc.FAIL}
+
+
+# --- the CI probe must judge the DEFAULT BRANCH, not whatever ref ran last -----------------------
+#
+# WHY (2026-07-31): the query was `gh run list -w <wf> --limit 1`, the newest run on ANY ref. Two of
+# 34 green rows on 2026-07-31 were runs from the topic branch feat/login-handoff-and-depth-gate on
+# shopping-aggregator, printed as if they described main. The same shape had teeth on 2026-07-22,
+# when daily-hotspots had a GREEN pii-guard run on feat/source-coverage-selfevolve while master's own
+# newest pii-guard run was a FAILURE: this check would have said PASS over a red default branch.
+def test_ci_asks_only_about_the_default_branch(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+
+    def fake_run(args, **_k):
+        if "api" in args:
+            return 0, "master\n", ""
+        seen["args"] = args
+        return 0, _runs("success", branch="master"), ""
+
+    monkeypatch.setattr(fc, "run", fake_run)
+    fc.check_ci([("owner/repo", ["pii-guard"])], 5)
+    a = seen["args"]
+    assert "-b" in a and a[a.index("-b") + 1] == "master"
+
+
+def test_ci_does_not_report_a_topic_branch_run_as_the_default_branch(monkeypatch):
+    """The exact 2026-07-22 shape: topic branch green, default branch red."""
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+
+    def fake_run(args, **_k):
+        if "api" in args:
+            return 0, "master\n", ""
+        on_default = "-b" in args and args[args.index("-b") + 1] == "master"
+        if on_default:
+            return 0, _runs("failure", branch="master"), ""
+        return 0, _runs("success", branch="feat/topic"), ""
+
+    monkeypatch.setattr(fc, "run", fake_run)
+    c = fc.check_ci([("owner/repo", ["pii-guard"])], 5)
+    assert [s for s, _n, _d in c.rows] == [fc.FAIL]
+    assert "master" in c.rows[0][2]
+
+
+def test_ci_no_run_on_the_default_branch_is_unknown_not_a_topic_branch_run(monkeypatch):
+    """A workflow that has only ever fired on topic branches has said nothing about main yet."""
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+
+    def fake_run(args, **_k):
+        if "api" in args:
+            return 0, "main\n", ""
+        if "-b" in args:
+            return 0, "[]", ""
+        return 0, _runs("success", branch="feat/topic"), ""
+
+    monkeypatch.setattr(fc, "run", fake_run)
+    c = fc.check_ci([("owner/repo", ["pii-guard"])], 5)
+    assert [s for s, _n, _d in c.rows] == [fc.UNKNOWN]
+    assert "default branch main" in c.rows[0][2]
+
+
+def test_ci_without_a_default_branch_is_unknown_never_a_fallback(monkeypatch):
+    """No default branch means no question to ask; answering from another ref is the bug."""
+    c = _ci_with_gh(monkeypatch, 0, _runs("success", branch="feat/topic"), default="")
+    assert [s for s, _n, _d in c.rows] == [fc.UNKNOWN]
+    assert "default branch" in c.rows[0][2]
+
+
+def test_ci_default_branch_is_looked_up_once_per_repo(monkeypatch):
+    """One extra gh call per REPO, not per workflow."""
+    api_calls = []
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+
+    def fake_run(args, **_k):
+        if "api" in args:
+            api_calls.append(args)
+            return 0, "main\n", ""
+        return 0, _runs("success"), ""
+
+    monkeypatch.setattr(fc, "run", fake_run)
+    fc.check_ci([("owner/repo", ["pii-guard", "dash-guard"])], 5)
+    assert len(api_calls) == 1
+
+
+def test_ci_row_names_the_branch_it_judged(monkeypatch):
+    """A green row must say which ref the evidence came from, or it is the old lie again."""
+    c = _ci_with_gh(monkeypatch, 0, _runs("success", branch="main"))
+    assert "main" in c.rows[0][2]
 
 
 @pytest.mark.parametrize("rc,out,err", [

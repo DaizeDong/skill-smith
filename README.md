@@ -104,11 +104,22 @@ wording is genuinely not the operator's to edit.
 plugin repo and adds what nothing else checks: skill junctions resolve, a repo marked PUBLIC carries
 every guard workflow (`pii-guard` **and** `dash-guard`) **on its remote default branch**, the
 installed library still fits in the system prompt, a resolved real-run data directory is not inside a
-**PUBLIC or UNKNOWN** repo, and each of those guard workflows is actually green, one row per repo and
-workflow. It
+**PUBLIC or UNKNOWN** repo, and each of those guard workflows is actually green **on the remote
+default branch**, one row per repo and workflow. It
 is **read-only, with no `--fix`** and no `git fetch`, exits nonzero on any FAIL, and writes a
 UTC-stamped status JSON so a scheduled caller can tell "the run happened" apart from "the run
 passed". Add `--offline` to skip the network-backed probes.
+
+Two of those answers were quietly about the wrong subject until 2026-07-31. The CI probe asked for
+the newest run on **any ref**, so a green push to a topic branch was printed as the default branch's
+status; on 2026-07-22 that would have shown a repo's `pii-guard` as PASS from a green topic-branch
+run while its own `master` run was a FAILURE. It now filters on the default branch, and "no run on
+the default branch" is `UNKNOWN` rather than a quiet fallback to whatever run exists. The visibility
+answer behind the data-boundary check read a cached map **first** and asked `gh` only on a miss, so
+one stale line of JSON could clear a data directory sitting in a public repo, forever, with nothing
+on the machine refreshing that file. `gh` is now asked live and the map only votes when `gh` cannot
+answer, and only while it is younger than its trust window: a cache that can never expire is not a
+cache, it is an assertion.
 
 The remote is the subject of that workflow check on purpose. It used to stat the local clone, so a
 guard workflow that was committed but never pushed scored PASS for a PUBLIC repo whose remote carried

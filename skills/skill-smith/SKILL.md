@@ -68,14 +68,20 @@ with no driver does not exist, and the missing piece was never more judgment. `s
 is that driver: **read-only, no `--fix` and never one**, it fans the linter over every plugin repo and
 adds what nothing else checks (skill junctions resolve, visibility PUBLIC implies every guard
 workflow -- `pii-guard` and `dash-guard` -- is on the repo's REMOTE default branch, the installed
-library still fits in the system prompt, a resolved real-run data dir is not inside a git worktree,
-and each of those guard workflows is actually green, one row per repo and workflow). It exits nonzero
+library still fits in the system prompt, a resolved real-run data dir is not inside a PUBLIC or
+UNKNOWN repo, and each of those guard workflows is actually green ON THE REMOTE DEFAULT BRANCH, one
+row per repo and workflow). It exits nonzero
 on any FAIL and writes a UTC-stamped status JSON, so a scheduled caller checks the artifact's
 freshness to know the run HAPPENED rather than trusting an exit code that only says whether it
 PASSED. Run it by hand with `python scripts/fleet_check.py [--offline]`.
 
-Three rules keep that report honest. The workflow check interrogates the REMOTE, never the working
-tree, because a guard file on your disk that was never pushed is not CI. `UNKNOWN` means only
+Three rules keep that report honest. Every remote question is about the DEFAULT BRANCH, and every
+answer about the outside world is asked LIVE. The workflow check interrogates the REMOTE, never the
+working tree, because a guard file on your disk that was never pushed is not CI; the CI check filters
+on the default branch, because a green topic-branch run reported as the branch the world clones is
+the same lie in a quieter voice; and the visibility answer comes from `gh`, with the cached map
+allowed to vote only when `gh` cannot answer and only while it is inside its trust window, because a
+cache that can never expire outvotes reality forever. `UNKNOWN` means only
 "could not observe" (no `gh`, unauthenticated, rate limited, offline) which is why it never affects
 the exit code, while a definitive negative from a remote that did answer is a `FAIL`; `WARN` means
 observed, not clean, and unfixable by any edit available today. And the run ends in one **VERDICT**

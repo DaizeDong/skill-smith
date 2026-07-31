@@ -95,13 +95,22 @@ THE FIVE CHECKS
               Not-initialized is not a failure: an uninitialized tool is the correct shipping state.
               If git cannot be run at all the answer is UNKNOWN, never PASS -- a missing git used to
               silently clear every repo in this check.
-  ci          EVERY guard workflow found on the remote is actually GREEN, reported one row per
-              (repo, workflow) so a red dash-guard cannot hide behind a green pii-guard. "CI is the
-              authority" is the load-bearing sentence of the whole doctrine and nothing observed
-              whether that authority was passing. Degrades to UNKNOWN (never FAIL, never blocking)
-              when gh is missing, unauthenticated, rate limited, or the workflow has no run history
-              -- GitHub expires run history, so "no runs" is an absence of evidence, not evidence of
-              absence. The presence question is the workflow check's job, and there it can FAIL.
+              Visibility comes from LIVE gh, with the map as a bounded-age offline fallback: see
+              VisibilityOracle for why the reverse order made the whole check defeatable by one
+              stale line of JSON.
+  ci          EVERY guard workflow found on the remote is actually GREEN ON THE DEFAULT BRANCH,
+              reported one row per (repo, workflow) so a red dash-guard cannot hide behind a green
+              pii-guard. "CI is the authority" is the load-bearing sentence of the whole doctrine and
+              nothing observed whether that authority was passing. Degrades to UNKNOWN (never FAIL,
+              never blocking) when gh is missing, unauthenticated, rate limited, or the workflow has
+              no run on the default branch -- GitHub expires run history, so "no runs" is an absence
+              of evidence, not evidence of absence. The presence question is the workflow check's
+              job, and there it can FAIL.
+              The branch filter is not a detail. Without it the probe reported the newest run on ANY
+              ref, so a green push to a topic branch was printed as the default branch's status: on
+              2026-07-22 daily-hotspots would have shown PASS for pii-guard from a green run on
+              feat/source-coverage-selfevolve while master's own newest run was a FAILURE. Every
+              other check here interrogates the remote DEFAULT branch; this one silently did not.
 
 OUTPUT CONTRACT
 ---------------
@@ -588,44 +597,128 @@ def origin_slug(repo_path, timeout=20):
     return slug_from_url(first_line(so))
 
 
-class VisibilityOracle:
-    """PUBLIC / PRIVATE / UNKNOWN for a slug, from the same map the PII gate reads.
+def parse_stamp(text):
+    """Epoch seconds from an ISO-8601 timestamp, or None if it is absent or unparseable."""
+    s = str(text or "").strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
 
-    Map first (~/.pii-guard/visibility.json, built by refresh_visibility.py and kept warm by
-    visibility_of.py), live `gh` only on a miss, and UNKNOWN when neither can answer. Unlike
-    visibility_of.py this never WRITES the map back: fleet_check's contract is read-only, and a
-    checker that mutates machine state to answer its own question is a checker whose second run
-    tests something different from its first.
+
+def human_age(seconds):
+    if seconds is None:
+        return "unknown"
+    s = abs(float(seconds))
+    if s < 3600:
+        return "%.0f min" % (s / 60.0)
+    if s < 2 * 86400:
+        return "%.1f h" % (s / 3600.0)
+    return "%.1f days" % (s / 86400.0)
+
+
+class VisibilityOracle:
+    """PUBLIC / PRIVATE / UNKNOWN for a slug. LIVE gh first, the map only as an aged fallback.
+
+    WHY THE ORDER FLIPPED (2026-07-31)
+    ----------------------------------
+    This used to read ~/.pii-guard/visibility.json FIRST and ask gh only on a miss. That made one
+    line of cached JSON able to outvote GitHub forever. Poisoning a copy of the map with
+    `{"daizedong/skill-smith": "PRIVATE"}` -- a genuinely PUBLIC repo -- made check_data_boundary
+    print `PASS ... [PRIVATE per visibility map]` over a data dir sitting in a public repo. Nothing
+    on this machine refreshes that file, so the entry would have said PRIVATE until someone
+    remembered to rerun refresh_visibility.py, and the event this whole control exists to survive is
+    precisely a repo being flipped from private to PUBLIC on GitHub. A cache that can never be wrong
+    is not a cache, it is an assertion.
+
+    THE TRADE THAT WAS MADE
+    -----------------------
+    Three fixes were on the table. A TTL alone is the cheapest, but it does not close the hole: a
+    freshly written map entry is inside any window, so the poisoned-copy demonstration above still
+    passes. Scheduling refresh_visibility.py narrows the drift but leaves a window of exactly the
+    refresh interval, and it makes correctness depend on a scheduled task nobody watches -- the same
+    "remember to run the script" design that visibility_of.py already learned not to trust. So the
+    order is inverted instead: gh is asked live, and the map is consulted ONLY when gh cannot answer
+    (--offline, gh missing, unauthenticated, rate limited).
+
+    The cost is real and was accepted deliberately: one `gh repo view` per DISTINCT slug that this
+    check actually reaches, which is the handful of skills that have both tools/datadir.py and an
+    initialized data dir, not the 119 keys in the map. Answers are cached per run. That is small
+    beside the two gh calls per public repo the workflow check already makes.
+
+    The fallback is bounded so the property survives even offline: the map may only vote while it is
+    younger than MAX_MAP_AGE_S, measured from the `_refreshed` stamp refresh_visibility.py writes
+    into it. An unstamped map, a stamp in the future, or a stamp past the window all behave as
+    UNKNOWN, which already fails closed. So a map entry cannot indefinitely outvote reality by any
+    path: online it never gets to vote at all, offline its vote expires.
+
+    When gh and the map DISAGREE the live answer wins and the row says the map is stale, because a
+    disagreement is itself the finding.
+
+    Never WRITES the map back: fleet_check's contract is read-only, and a checker that mutates
+    machine state to answer its own question is a checker whose second run tests something different
+    from its first.
     """
 
-    def __init__(self, path, offline=False, timeout=30):
+    # How long a cached visibility answer may still vote once gh has gone silent. Visibility changes
+    # are rare and deliberate, so this is not tuned to how fast the fact changes -- it is tuned to
+    # how long a machine may sit offline before "I cannot see GitHub" should stop being papered over
+    # with an old answer. A week is long enough that a normal disconnection never turns the check
+    # red, and short enough that an abandoned map cannot keep clearing a repo indefinitely.
+    MAX_MAP_AGE_S = 7 * 24 * 3600
+    STAMP_KEY = "_refreshed"        # reserved: a slug always contains "/", so it cannot collide
+
+    def __init__(self, path, offline=False, timeout=30, max_age=None, now=None):
         self.offline = offline
         self.timeout = timeout
+        self.max_age = self.MAX_MAP_AGE_S if max_age is None else max_age
+        self.now = now              # epoch seconds; injectable so age is testable without sleeping
         self.error = ""
         self.cache = {}
+        self.map = {}
+        self.stamp = None
         try:
             with open(path, encoding="utf-8") as f:
                 m = json.load(f)
-            self.map = {str(k).lower(): str(v).upper() for k, v in m.items()} \
-                if isinstance(m, dict) else {}
         except (OSError, ValueError) as e:
-            self.map, self.error = {}, str(e)
+            self.error = str(e)
+            m = {}
+        if isinstance(m, dict):
+            self.stamp = parse_stamp(m.get(self.STAMP_KEY))
+            self.map = {str(k).lower(): str(v).upper()
+                        for k, v in m.items() if k != self.STAMP_KEY}
 
-    def visibility(self, slug):
-        if not slug:
-            return "UNKNOWN", "no origin remote"
+    def map_age(self):
+        """(age_seconds, trouble). trouble is "" only when the map is fresh enough to vote."""
+        if self.stamp is None:
+            return None, ("it carries no %s stamp, so its age cannot be established; run "
+                          "refresh_visibility.py" % self.STAMP_KEY)
+        age = (time.time() if self.now is None else self.now) - self.stamp
+        if age < 0:
+            return age, "its %s stamp is in the future" % self.STAMP_KEY
+        if age > self.max_age:
+            return age, ("it was last refreshed %s ago, past the %s trust window; run "
+                         "refresh_visibility.py" % (human_age(age), human_age(self.max_age)))
+        return age, ""
+
+    def _mapped(self, slug):
         v = self.map.get(slug)
-        if v in ("PUBLIC", "PRIVATE"):
-            return v, "visibility map"
-        if v == "INTERNAL":
-            return "PRIVATE", "visibility map"
-        if slug in self.cache:
-            return self.cache[slug]
+        return "PRIVATE" if v == "INTERNAL" else v
+
+    def _ask_gh(self, slug):
+        """(visibility, how) from a live query, or (None, why-it-could-not-answer)."""
         if self.offline:
-            return "UNKNOWN", "not in the visibility map and --offline forbids asking gh"
+            return None, "--offline forbids asking gh"
         gh = shutil.which("gh")
         if not gh:
-            return "UNKNOWN", "not in the visibility map and gh is not on PATH"
+            return None, "gh is not on PATH"
         # Both identities: a private repo owned by one account is a 404 to the other's token, so
         # asking with only one of them turns "private, and you cannot see it" into "no answer".
         # visibility_of.py handles this with `gh auth switch`, which rewrites the machine's ACTIVE
@@ -645,11 +738,33 @@ class VisibilityOracle:
                 continue
             got = first_line(so).upper()
             if got in ("PUBLIC", "PRIVATE", "INTERNAL"):
-                ans = ("PRIVATE" if got == "INTERNAL" else got,
-                       "gh" + (" as %s" % acct if acct else ""))
-                self.cache[slug] = ans
-                return ans
-        ans = ("UNKNOWN", "gh could not answer for %s" % slug)
+                return ("PRIVATE" if got == "INTERNAL" else got,
+                        "gh" + (" as %s" % acct if acct else ""))
+        return None, "gh could not answer for %s" % slug
+
+    def _from_map(self, slug, gh_why):
+        cached = self._mapped(slug)
+        if cached not in ("PUBLIC", "PRIVATE"):
+            return "UNKNOWN", "%s, and %s is not in the visibility map" % (gh_why, slug)
+        age, trouble = self.map_age()
+        if trouble:
+            return "UNKNOWN", ("%s, and the map's cached %s cannot be trusted because %s"
+                               % (gh_why, cached, trouble))
+        return cached, "the visibility map, refreshed %s ago (%s)" % (human_age(age), gh_why)
+
+    def visibility(self, slug):
+        if not slug:
+            return "UNKNOWN", "no origin remote"
+        if slug in self.cache:
+            return self.cache[slug]
+        live, how = self._ask_gh(slug)
+        if live:
+            cached = self._mapped(slug)
+            if cached in ("PUBLIC", "PRIVATE") and cached != live:
+                how += "; the visibility map still says %s and is STALE" % cached
+            ans = (live, how)
+        else:
+            ans = self._from_map(slug, how)
         self.cache[slug] = ans
         return ans
 
@@ -679,10 +794,16 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
               "resolved real-run data dirs are never inside a PUBLIC or UNKNOWN repo")
     c.note = ("DATA belongs in the PRIVATE companion repo, versioned; a data dir inside a private "
               "repo PASSES and the repo is named. Unknown visibility FAILS CLOSED. An uninitialized "
-              "skill has no data dir yet, which is the correct shipping state")
+              "skill has no data dir yet, which is the correct shipping state. Visibility comes from "
+              "LIVE gh; the map only votes when gh cannot answer, and only while it is younger than "
+              "%s" % human_age(VisibilityOracle.MAX_MAP_AGE_S))
     oracle = VisibilityOracle(visibility_path, offline=offline, timeout=timeout)
     if oracle.error:
-        c.note += " | visibility map unreadable (%s): every lookup falls through to gh" % oracle.error
+        c.note += " | visibility map unreadable (%s): there is no fallback left" % oracle.error
+    else:
+        age, trouble = oracle.map_age()
+        c.note += (" | the map %s" % trouble if trouble
+                   else " | the map was refreshed %s ago" % human_age(age))
     for name, path in sorted(repos.items()):
         dd = os.path.join(path, "tools", "datadir.py")
         if not os.path.isfile(dd):
@@ -742,6 +863,15 @@ GREEN = ("success",)
 RED = ("failure", "timed_out", "cancelled", "startup_failure", "action_required")
 
 
+def default_branch(gh, slug, timeout, cache):
+    """(branch, why-not) for a slug's remote default branch, cached per run."""
+    if slug not in cache:
+        rc, so, se = run([gh, "api", "repos/%s" % slug, "--jq", ".default_branch"], timeout=timeout)
+        b = first_line(so) if rc == 0 else ""
+        cache[slug] = (b, "" if b else (first_line(se) or "gh exit %s" % rc))
+    return cache[slug]
+
+
 def check_ci(targets, timeout):
     """targets: [(slug, [workflow names observed on that slug's remote]), ...].
 
@@ -749,24 +879,49 @@ def check_ci(targets, timeout):
     guard CI is green", so promotion-assistant printed a single confident PASS on 2026-07-30 while
     its dash-guard had been failing since 2026-07-24. A check that names one workflow and reports on
     the category is not a check, it is a headline.
+
+    WHY THE BRANCH FILTER EXISTS (2026-07-31)
+    -----------------------------------------
+    The query was `gh run list -w <wf> --limit 1`, which is the newest run on ANY ref. Every other
+    check in this file interrogates the remote DEFAULT branch, and the sentence this one prints --
+    "the guard CI is green" -- is a claim about the branch the world clones. On 2026-07-31 two of
+    its 34 green rows were evidence from the topic branch feat/login-handoff-and-depth-gate on
+    shopping-aggregator, reported as if they described main. That is survivable only by luck: on
+    2026-07-22 daily-hotspots had a GREEN pii-guard run on feat/source-coverage-selfevolve while
+    master's own newest pii-guard run was a FAILURE, so this check would have printed PASS over a
+    red default branch. A gate that answers a question nobody asked, in the voice of the question
+    they did ask, is the defect class this whole file was written against.
+
+    "No run on the default branch" is UNKNOWN, not a silent fallback to whatever run exists. A
+    workflow that has only ever fired on topic branches has not yet said anything about the branch
+    being asked about, and inventing an answer from the wrong ref is how this started.
     """
-    c = Check("ci", "every guard workflow on the remote is GREEN (%s)" % ", ".join(GUARD_WORKFLOWS))
+    c = Check("ci", "every guard workflow is GREEN ON THE DEFAULT BRANCH (%s)"
+              % ", ".join(GUARD_WORKFLOWS))
     gh = shutil.which("gh")
     if not gh:
         c.note = "gh not on PATH; CI state unobserved (infrastructure, non-failing)"
         c.add(UNKNOWN, "gh", "not installed")
         return c
-    c.note = ("UNKNOWN here means the answer could not be OBSERVED and never fails the run; a red "
-              "run that WAS observed is a FAIL, and a guard missing from the remote entirely is a "
-              "FAIL in the workflow check above, not a shrug here")
+    c.note = ("only runs whose head ref IS the remote default branch are counted; UNKNOWN means the "
+              "answer could not be OBSERVED and never fails the run, a red run that WAS observed is "
+              "a FAIL, and a guard missing from the remote entirely is a FAIL in the workflow check "
+              "above, not a shrug here")
     if not targets:
         c.add(UNKNOWN, "(nothing to ask)", "no public repo reported a guard workflow on its remote")
         return c
+    branches = {}
     for slug, workflows in sorted(targets):
+        branch, why = default_branch(gh, slug, timeout, branches)
         for wf in sorted(workflows):
             name = "%s [%s]" % (slug, wf)
-            rc, so, se = run([gh, "run", "list", "-w", wf, "--limit", "1", "-R", slug,
-                              "--json", "conclusion,status,createdAt"], timeout=timeout)
+            if not branch:
+                # Without the default branch there is no question to ask. Reporting the newest run
+                # on any ref instead is exactly the bug this arm replaced.
+                c.add(UNKNOWN, name, "could not determine the default branch: %s" % why)
+                continue
+            rc, so, se = run([gh, "run", "list", "-w", wf, "-b", branch, "--limit", "1", "-R", slug,
+                              "--json", "conclusion,status,createdAt,headBranch"], timeout=timeout)
             if rc != 0:
                 c.add(UNKNOWN, name, first_line(se) or "gh exit %s" % rc)
                 continue
@@ -776,14 +931,16 @@ def check_ci(targets, timeout):
                 c.add(UNKNOWN, name, "unparseable gh output: %s" % e)
                 continue
             if not runs:
-                # The file IS on the remote (that is why we are asking). GitHub expires run history,
-                # so a dormant repo legitimately has none. Absence of runs is not a red run.
-                c.add(UNKNOWN, name, "no run history (expired, or never fired)")
+                # The file IS on the remote default branch (that is why we are asking). GitHub
+                # expires run history, so a dormant repo legitimately has none. Absence of runs is
+                # not a red run -- and it is not permission to quote a topic branch's run either.
+                c.add(UNKNOWN, name, "no run on the default branch %s (expired, never fired, or the "
+                                     "workflow has only ever run on other refs)" % branch)
                 continue
             r = runs[0]
             concl = (r.get("conclusion") or "").lower()
             state = (r.get("status") or "").lower()
-            when = r.get("createdAt") or ""
+            when = "%s on %s" % (r.get("createdAt") or "", r.get("headBranch") or branch)
             if state != "completed":
                 c.add(UNKNOWN, name, "run %s (%s)" % (state or "unknown state", when))
             elif concl in GREEN:
@@ -963,7 +1120,7 @@ def main(argv=None):
                                       repos=repos, offline=a.offline, timeout=a.gh_timeout))
 
     if a.offline:
-        c = Check("ci", "every guard workflow on the remote is GREEN (%s)"
+        c = Check("ci", "every guard workflow is GREEN ON THE DEFAULT BRANCH (%s)"
                   % ", ".join(GUARD_WORKFLOWS))
         c.note = "skipped (--offline)"
         c.add(UNKNOWN, "(all public repos)", "offline: CI state unobserved")
