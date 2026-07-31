@@ -59,7 +59,7 @@ __BADGES__
 
 ---
 
-## ⭐ Read this first — the design philosophy
+## ⭐ Read this first, the design philosophy
 
 <!-- One screen: WHY it is designed this way. Root-cause, not features. Link PHILOSOPHY.md. -->
 TODO: state the single governing principle of __NAME__, then link PHILOSOPHY.md.
@@ -118,7 +118,7 @@ __BADGES_CN__
 
 ---
 
-## ⭐ 先读这里 — 设计理念
+## ⭐ 先读这里, 设计理念
 
 <!-- 一屏说清"为什么这样设计"。改根因,不堆功能。链 PHILOSOPHY.md。 -->
 TODO: 写清 __NAME__ 的唯一统领原则,然后链 PHILOSOPHY.md。
@@ -168,14 +168,14 @@ TODO。
 见 [ROADMAP.md](ROADMAP.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [LICENSE](LICENSE)(MIT)。
 """
 
-PHILOSOPHY_TMPL = """# __NAME__ — Design Philosophy
+PHILOSOPHY_TMPL = """# __NAME__, Design Philosophy
 
 > One test governs every change: **does it fix the framing, or just patch a symptom?**
 
 TODO: state the root-cause design principle(s) of __NAME__. Each principle should give the
 patch-vs-root contrast and the concrete decision in this repo that it produced.
 
-## P1 — <principle>
+## P1, <principle>
 - **Symptom patch:** ...
 - **Root cause:** ...
 - **Decision it produced:** ...
@@ -227,7 +227,7 @@ TODO.
 This `SKILL.md` is the only always-loaded file. Read `reference/<shard>.md` on demand.
 """
 
-DESIGN_BRIEF_TMPL = """# Design Brief — __NAME__
+DESIGN_BRIEF_TMPL = """# Design Brief, __NAME__
 
 > Produced by skill-smith Step 0 (research-first). The design rationale, auditable.
 

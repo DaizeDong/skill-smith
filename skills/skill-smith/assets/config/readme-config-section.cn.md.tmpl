@@ -1,17 +1,17 @@
 
 ## 配置
 
-`__NAME__` 是**带 config 的 skill** —— 它从一个**独立、私有**的伴随 config 仓读取每用户状态(密钥、已装工具
+`__NAME__` 是**带 config 的 skill**, 它从一个**独立、私有**的伴随 config 仓读取每用户状态(密钥、已装工具
 注册表)。完整规范见 [CONFIG.md](CONFIG.md)。
 
 - **挂载(发现顺序):** `$__ENVVAR__` → `$__ENVVAR___DIR` → `~/__DEFAULTDIR__/` →
-  `~/.config/__DEFAULTDIR__/`。命中第一个即用;都没有则无 config 运行。
+  `~/.config/__NAME__-config/`。命中第一个即用;都没有则无 config 运行。
 - **首次配置:**
   ```bash
   python scripts/init_config.py      # 生成符合规范的 config 骨架(确定性)
   export __ENVVAR__=~/__DEFAULTDIR__  # 或给 init 传 --out <dir>
   python scripts/verify_config.py     # doctor:逐项 PASS/FAIL,明确报缺什么
   ```
-- **切换 config(即插即用):** 把环境变量指向另一个 config 目录即可 —— config 自包含,无需任何别的改动:
+- **切换 config(即插即用):** 把环境变量指向另一个 config 目录即可, config 自包含,无需任何别的改动:
   `export __ENVVAR__=~/configs/work` ↔ `~/configs/personal`。
-- **密钥:** Mode B —— `secrets/*` 已 gitignore,永不入库;请用库外备份。
+- **密钥:** Mode B, `secrets/*` 已 gitignore,永不入库;请用库外备份。

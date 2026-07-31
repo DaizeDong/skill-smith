@@ -1,31 +1,31 @@
-# __NAME__ — Config
+# __NAME__, Config
 
 `__NAME__` is **config-bearing**: it reads per-user / per-machine state (API keys, installed-tool
 registry, endpoints) from a **separate companion config repo** that you create and keep private.
 Secrets never live in this repo. This file is the authoritative config contract (config-spec E1).
 
-## Discovery convention (how the skill finds your config) — E2
+## Discovery convention (how the skill finds your config), E2
 
 The skill resolves its config dir in this order; the first that exists wins:
 
-1. `$__ENVVAR__` — environment variable (recommended; location-independent).
-2. `$__ENVVAR___DIR` — accepted alias.
-3. `~/__DEFAULTDIR__/` — dotfile-in-home fallback.
-4. `~/.config/__DEFAULTDIR__/` — XDG-style fallback (Linux/macOS).
+1. `$__ENVVAR__`, environment variable (recommended; location-independent).
+2. `$__ENVVAR___DIR`, accepted alias.
+3. `~/__DEFAULTDIR__/`, dotfile-in-home fallback.
+4. `~/.config/__NAME__-config/`, XDG-style fallback (Linux/macOS).
 
-If none resolves, the skill runs without config and says so — config is optional, never a hard crash.
+If none resolves, the skill runs without config and says so: config is optional, never a hard crash.
 
-## Schema — `registry.json` (E1)
+## Schema, `registry.json` (E1)
 
 ```json
 {
-  "schema_version": 1,            // REQUIRED — integer
-  "skill": "__NAME__",            // REQUIRED — owning skill name
-  "tools": [                      // REQUIRED — array (may be empty)
+  "schema_version": 1,            // REQUIRED: integer
+  "skill": "__NAME__",            // REQUIRED: owning skill name
+  "tools": [                      // REQUIRED: array (may be empty)
     {
-      "slug": "example",          // REQUIRED — kebab-case; matches tools/<slug>/
-      "installed": true,          // REQUIRED — boolean
-      "transport": "stdio",       // OPTIONAL — stdio | http | sse | rest | python-lib
+      "slug": "example",          // REQUIRED: kebab-case; matches tools/<slug>/
+      "installed": true,          // REQUIRED: boolean
+      "transport": "stdio",       // OPTIONAL: stdio | http | sse | rest | python-lib
       "notes": "free text"        // OPTIONAL
     }
   ]
@@ -36,15 +36,15 @@ Per tool that needs credentials, add `tools/<slug>/{claude.json.template, env.te
 real values in `secrets/<slug>.env` (gitignored). The template/placeholder shape follows market-intel
 `companion-config-spec.md` §4 (`<UPPER_SNAKE>` placeholders, UTF-8 without BOM).
 
-## Secrets — Mode B (E6)
+## Secrets, Mode B (E6)
 
-The companion config repo is **separate and private**. `secrets/*` is **gitignored** — real values
+The companion config repo is **separate and private**. `secrets/*` is **gitignored**, so real values
 never enter git; back them up out-of-band. The skill repo and config repo never echo secrets.
 
-## First-time setup (E3) — succeeds on the first try
+## First-time setup (E3), succeeds on the first try
 
 ```bash
-# 1. Stamp a conformant, empty config skeleton (deterministic — E4):
+# 1. Stamp a conformant, empty config skeleton (deterministic, E4):
 python scripts/init_config.py            # -> ~/__DEFAULTDIR__/  (or pass --out <dir>)
 
 # 2. Point the skill at it (skip if you used the default path):
@@ -54,15 +54,15 @@ export __ENVVAR__=~/__DEFAULTDIR__
 python scripts/verify_config.py          # doctor: PASS/FAIL per check, names what is missing
 ```
 
-## Switching between two configs (hot-swap) — E5
+## Switching between two configs (hot-swap), E5
 
 A config dir is self-contained (no hardcoded paths). Keep as many as you like and switch by repointing
-the env var — no other change:
+the env var, with no other change:
 
 ```bash
 export __ENVVAR__=~/configs/work       # config A
-export __ENVVAR__=~/configs/personal   # config B — same skill, different state
+export __ENVVAR__=~/configs/personal   # config B, same skill, different state
 ```
 
 Verify the swap: `python scripts/init_config.py --out ~/configs/work` and `--out ~/configs/personal`,
-run `verify_config.py` against each, then flip `$__ENVVAR__` between them — both must verify READY.
+run `verify_config.py` against each, then flip `$__ENVVAR__` between them. Both must verify READY.
