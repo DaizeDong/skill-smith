@@ -7,8 +7,8 @@ check_conformance.py has been correct and complete for weeks and has surfaced ex
 because nothing ever ran it. A linter with no driver is a linter that does not exist. The missing
 piece here was never more judgment, it was a driver and a schedule. So this file adds no new
 opinions: it fans out the checkers that already exist, plus the two assertions nothing on this
-machine performs at all (a data directory sitting inside a git worktree, and whether the CI that
-the whole doctrine calls "the authority" is actually green).
+machine performs at all (a data directory resolving into a repo the world can read, and whether the
+CI that the whole doctrine calls "the authority" is actually green).
 
 WHAT IT DELIBERATELY DOES NOT DO
 --------------------------------
@@ -85,11 +85,16 @@ THE FIVE CHECKS
               tier, because third-party wording is genuinely not ours to edit.
   databoundary the INVERSE data-boundary assertion, which is the one check that would have caught
               the 2026-07 leak: data_boundary.py proves the REPO holds no real-run output, and this
-              proves the reverse, that the resolved real-run output directory is not itself inside a
-              git worktree. Both were true and the leak still happened, because nobody ever looked
-              from this end. Not-initialized is not a failure: an uninitialized tool is the correct
-              shipping state. If git cannot be run at all the answer is UNKNOWN, never PASS -- a
-              missing git used to silently clear every repo in this check.
+              proves the reverse, that the resolved real-run output directory is not somewhere the
+              world can read. Both directions were nominally true and the leak still happened,
+              because nobody ever looked from this end.
+              The predicate is PUBLIC-or-UNKNOWN, not in-git. DATA lives in the PRIVATE companion
+              repo, versioned; a data dir inside a private repo PASSES and the row names that repo,
+              so a reader can tell an examined-and-approved row from a skipped one. Unknown
+              visibility FAILS CLOSED, mirroring the PII gate's treatment of an unknown remote.
+              Not-initialized is not a failure: an uninitialized tool is the correct shipping state.
+              If git cannot be run at all the answer is UNKNOWN, never PASS -- a missing git used to
+              silently clear every repo in this check.
   ci          EVERY guard workflow found on the remote is actually GREEN, reported one row per
               (repo, workflow) so a red dash-guard cannot hide behind a green pii-guard. "CI is the
               authority" is the load-bearing sentence of the whole doctrine and nothing observed
@@ -160,10 +165,10 @@ GUARD_WORKFLOWS = ("pii-guard", "dash-guard")
 
 
 # --- tiny helpers --------------------------------------------------------------------------------
-def run(args, cwd=None, timeout=60):
+def run(args, cwd=None, timeout=60, env=None):
     """Run a command, never raise. Returns (rc, stdout, stderr); rc is None on timeout."""
     try:
-        p = subprocess.run(args, cwd=cwd, capture_output=True, text=True,
+        p = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env,
                            encoding="utf-8", errors="replace", timeout=timeout)
         return p.returncode, p.stdout or "", p.stderr or ""
     except subprocess.TimeoutExpired:
@@ -575,9 +580,109 @@ def load_datadir(path, modname):
     return mod
 
 
-def check_data_boundary(repos):
-    c = Check("databoundary", "resolved real-run data dirs are OUTSIDE any git worktree")
-    c.note = "an uninitialized skill has no data dir yet; that is the correct shipping state"
+def origin_slug(repo_path, timeout=20):
+    """owner/repo for a worktree's origin, or None when it has no origin at all."""
+    rc, so, _se = run(["git", "-C", repo_path, "remote", "get-url", "origin"], timeout=timeout)
+    if rc != 0:
+        return None
+    return slug_from_url(first_line(so))
+
+
+class VisibilityOracle:
+    """PUBLIC / PRIVATE / UNKNOWN for a slug, from the same map the PII gate reads.
+
+    Map first (~/.pii-guard/visibility.json, built by refresh_visibility.py and kept warm by
+    visibility_of.py), live `gh` only on a miss, and UNKNOWN when neither can answer. Unlike
+    visibility_of.py this never WRITES the map back: fleet_check's contract is read-only, and a
+    checker that mutates machine state to answer its own question is a checker whose second run
+    tests something different from its first.
+    """
+
+    def __init__(self, path, offline=False, timeout=30):
+        self.offline = offline
+        self.timeout = timeout
+        self.error = ""
+        self.cache = {}
+        try:
+            with open(path, encoding="utf-8") as f:
+                m = json.load(f)
+            self.map = {str(k).lower(): str(v).upper() for k, v in m.items()} \
+                if isinstance(m, dict) else {}
+        except (OSError, ValueError) as e:
+            self.map, self.error = {}, str(e)
+
+    def visibility(self, slug):
+        if not slug:
+            return "UNKNOWN", "no origin remote"
+        v = self.map.get(slug)
+        if v in ("PUBLIC", "PRIVATE"):
+            return v, "visibility map"
+        if v == "INTERNAL":
+            return "PRIVATE", "visibility map"
+        if slug in self.cache:
+            return self.cache[slug]
+        if self.offline:
+            return "UNKNOWN", "not in the visibility map and --offline forbids asking gh"
+        gh = shutil.which("gh")
+        if not gh:
+            return "UNKNOWN", "not in the visibility map and gh is not on PATH"
+        # Both identities: a private repo owned by one account is a 404 to the other's token, so
+        # asking with only one of them turns "private, and you cannot see it" into "no answer".
+        # visibility_of.py handles this with `gh auth switch`, which rewrites the machine's ACTIVE
+        # account. This tool is read-only, so it borrows each token for one child process instead
+        # and leaves the active account exactly where it found it.
+        for acct in (None,):
+            env = None
+            if acct:
+                rc, tok, _se = run([gh, "auth", "token", "--user", acct], timeout=self.timeout)
+                tok = first_line(tok)
+                if rc != 0 or not tok:
+                    continue
+                env = dict(os.environ, GH_TOKEN=tok)
+            rc, so, _se = run([gh, "repo", "view", slug, "--json", "visibility",
+                               "-q", ".visibility"], timeout=self.timeout, env=env)
+            if rc != 0:
+                continue
+            got = first_line(so).upper()
+            if got in ("PUBLIC", "PRIVATE", "INTERNAL"):
+                ans = ("PRIVATE" if got == "INTERNAL" else got,
+                       "gh" + (" as %s" % acct if acct else ""))
+                self.cache[slug] = ans
+                return ans
+        ans = ("UNKNOWN", "gh could not answer for %s" % slug)
+        self.cache[slug] = ans
+        return ans
+
+
+def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
+    """Assert no skill's real-run output resolves into a repo the world can read.
+
+    WHY THE PREDICATE CHANGED (2026-07-31)
+    --------------------------------------
+    This used to assert "the resolved data dir is not inside a git worktree". That is the wrong
+    question, and it condemned the correct answer. Real-run output LIVES IN the private companion
+    repo, versioned and backed up -- that is what the doctrine has always said and what the operator
+    has now confirmed explicitly. Implementing "must not reach a public repo" as "must not be in
+    git" turned the fleet's intended shape into a red row: market-intel FAILED here for keeping its
+    ledger in its private companion repo, an agent then moved that ledger OUT to a loose unversioned
+    directory to satisfy the check, and all the while daily-hotspots kept a tracked ledger in ITS
+    private companion repo and nothing objected, because this check could not even see it. Two
+    contradictory shapes in one fleet, and the checker endorsing neither consistently.
+
+    The predicate is now the one that matches the harm: PUBLIC or UNKNOWN fails, PRIVATE passes and
+    SAYS SO, naming the repo, so a reader can tell "the control looked and approved this" apart from
+    "the control skipped it". UNKNOWN fails closed, matching how the PII gate treats an unknown
+    remote: marking a remote private is a deliberate visible act, silently clearing a public one is
+    invisible and permanent.
+    """
+    c = Check("databoundary",
+              "resolved real-run data dirs are never inside a PUBLIC or UNKNOWN repo")
+    c.note = ("DATA belongs in the PRIVATE companion repo, versioned; a data dir inside a private "
+              "repo PASSES and the repo is named. Unknown visibility FAILS CLOSED. An uninitialized "
+              "skill has no data dir yet, which is the correct shipping state")
+    oracle = VisibilityOracle(visibility_path, offline=offline, timeout=timeout)
+    if oracle.error:
+        c.note += " | visibility map unreadable (%s): every lookup falls through to gh" % oracle.error
     for name, path in sorted(repos.items()):
         dd = os.path.join(path, "tools", "datadir.py")
         if not os.path.isfile(dd):
@@ -588,7 +693,14 @@ def check_data_boundary(repos):
             mod = load_datadir(dd, "fleet_datadir_%s" % name.replace("-", "_"))
             resolved = mod.resolve_data_dir(name, create=False)
         except Exception as e:                                   # noqa: BLE001 (report, never crash)
-            c.add(UNKNOWN, name, "cannot load tools/datadir.py: %s" % e)
+            # The resolver's own refusal is a FINDING, not a gap. datadir.py raises
+            # DataDirInsideOwnRepo when a data dir resolves inside the skill repo that ships it --
+            # the in-repo fallback shape. Reporting that as UNKNOWN would file a caught violation
+            # under "could not observe", which is the exact rounding this file exists to prevent.
+            if type(e).__name__ == "DataDirInsideOwnRepo":
+                c.add(FAIL, name, first_line(str(e)) or str(e))
+            else:
+                c.add(UNKNOWN, name, "cannot load tools/datadir.py: %s" % e)
             continue
         if resolved is None:
             c.add(SKIP, name, "not initialized")
@@ -603,10 +715,25 @@ def check_data_boundary(repos):
         inside, top = in_git_worktree(resolved)
         if inside is None:
             c.add(UNKNOWN, name, "%s: %s" % (resolved, top))
-        elif inside:
-            c.add(FAIL, name, "data dir %s is inside git worktree %s" % (resolved, top))
+            continue
+        if not inside:
+            # A plain directory outside every worktree. Nothing can publish it, so it clears this
+            # check -- but it is NOT the preferred shape: unversioned means no history and no
+            # backup for the one artifact that records real runs.
+            c.add(PASS, name, "%s (outside any git worktree; unversioned)" % resolved)
+            continue
+        slug = origin_slug(top, timeout=timeout)
+        vis, why = oracle.visibility(slug)
+        where = "%s -> %s" % (resolved, slug or top)
+        if vis == "PRIVATE":
+            c.add(PASS, name, "%s [PRIVATE per %s] versioned in the private companion repo"
+                  % (where, why))
+        elif vis == "PUBLIC":
+            c.add(FAIL, name, "data dir %s is inside PUBLIC repo %s (per %s) -- real-run output "
+                              "must never reach a public repo" % (resolved, slug, why))
         else:
-            c.add(PASS, name, resolved)
+            c.add(FAIL, name, "data dir %s is inside repo %s whose visibility could not be "
+                              "established (%s) -- failing closed" % (resolved, slug or top, why))
     return c
 
 
@@ -832,7 +959,8 @@ def main(argv=None):
     checks.append(wf)
     checks.append(check_conformance(repos, a.conformance_timeout))
     checks.append(check_budget(skills_dir, code_root, a.conformance_timeout))
-    checks.append(check_data_boundary(repos))
+    checks.append(check_data_boundary(os.path.abspath(os.path.expanduser(a.visibility)),
+                                      repos=repos, offline=a.offline, timeout=a.gh_timeout))
 
     if a.offline:
         c = Check("ci", "every guard workflow on the remote is GREEN (%s)"

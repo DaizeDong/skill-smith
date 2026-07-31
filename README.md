@@ -104,7 +104,8 @@ wording is genuinely not the operator's to edit.
 plugin repo and adds what nothing else checks: skill junctions resolve, a repo marked PUBLIC carries
 every guard workflow (`pii-guard` **and** `dash-guard`) **on its remote default branch**, the
 installed library still fits in the system prompt, a resolved real-run data directory is not inside a
-git worktree, and each of those guard workflows is actually green, one row per repo and workflow. It
+**PUBLIC or UNKNOWN** repo, and each of those guard workflows is actually green, one row per repo and
+workflow. It
 is **read-only, with no `--fix`** and no `git fetch`, exits nonzero on any FAIL, and writes a
 UTC-stamped status JSON so a scheduled caller can tell "the run happened" apart from "the run
 passed". Add `--offline` to skip the network-backed probes.
