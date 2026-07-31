@@ -40,8 +40,11 @@ description: Create, scaffold, or batch new Claude Code skills to a tested-real 
 2. **No skill is "accepted" without passing the full gate.** Eval lift vs baseline + held-out trigger
    rate + library token budget + dedup + security audit + spec conformance + single-responsibility.
    Failure is surfaced as an explicit gap, never a silent ship.
-3. **The token budget is library-wide.** A new/batch skill that pushes total descriptions past
-   ~15k chars / ~4k tokens must be merged/pruned first, adding it would silently truncate the set.
+3. **The token budget is library-wide, and it is already blown.** Past the cutoff the loader drops
+   descriptions silently, so the skill exists and never fires. The written rule says ~15k chars; the
+   cutoff OBSERVED on this machine 2026-07-31 is ~20k, and four installed skills are past it right
+   now. Run `budget_check.py`, believe the observed number, and never add without pruning. Our own
+   descriptions are capped at **180 chars** each, the part that is ours to fix.
 4. **One skill, one job (<=3 modules).** Sprawl is rejected and split.
 5. **Conform or it is not a DaizeDong skill, locally AND on the remote.** Output must pass
    `check_conformance.py` (G6: local files, 7 files, philosophy-first bilingual README, badge block,
@@ -64,18 +67,22 @@ description: Create, scaffold, or batch new Claude Code skills to a tested-real 
 with no driver does not exist, and the missing piece was never more judgment. `scripts/fleet_check.py`
 is that driver: **read-only, no `--fix` and never one**, it fans the linter over every plugin repo and
 adds what nothing else checks (skill junctions resolve, visibility PUBLIC implies every guard
-workflow -- `pii-guard` and `dash-guard` -- is on the repo's REMOTE default branch, a resolved
-real-run data dir is not inside a git worktree, and each of those guard workflows is actually green,
-one row per repo and workflow). It exits nonzero on any FAIL and writes a UTC-stamped status JSON, so
-a scheduled caller checks the artifact's freshness to know the run HAPPENED rather than trusting an
-exit code that only says whether it PASSED. Run it by hand with `python scripts/fleet_check.py
-[--offline]`.
+workflow -- `pii-guard` and `dash-guard` -- is on the repo's REMOTE default branch, the installed
+library still fits in the system prompt, a resolved real-run data dir is not inside a git worktree,
+and each of those guard workflows is actually green, one row per repo and workflow). It exits nonzero
+on any FAIL and writes a UTC-stamped status JSON, so a scheduled caller checks the artifact's
+freshness to know the run HAPPENED rather than trusting an exit code that only says whether it
+PASSED. Run it by hand with `python scripts/fleet_check.py [--offline]`.
 
-Two rules keep that report honest. The workflow check interrogates the REMOTE, never the working
-tree, because a guard file on your disk that was never pushed is not CI. And `UNKNOWN` means only
+Three rules keep that report honest. The workflow check interrogates the REMOTE, never the working
+tree, because a guard file on your disk that was never pushed is not CI. `UNKNOWN` means only
 "could not observe" (no `gh`, unauthenticated, rate limited, offline) which is why it never affects
-the exit code, while a definitive negative from a remote that did answer is a `FAIL`. If you add a
-check here, put it on one side of that line and say which.
+the exit code, while a definitive negative from a remote that did answer is a `FAIL`; `WARN` means
+observed, not clean, and unfixable by any edit available today. And the run ends in one **VERDICT**
+line carrying a coverage fraction, which the caller quotes verbatim: the nightly digest once turned
+"pass 86, fail 0, skip 82" into the words "all green" over a fleet in which every defect of the next
+day's audit was already present. If you add a check here, put it on one side of those lines and say
+which.
 
 ## Progressive loading
 

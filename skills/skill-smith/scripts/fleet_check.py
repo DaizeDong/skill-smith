@@ -24,6 +24,17 @@ WHAT IT DELIBERATELY DOES NOT DO
    design trains the operator to skip the digest line. That is precisely how check_conformance.py
    died the first time, and it would take this driver down with it.
 
+THE SECOND THING THAT MAKES A GATE WORSE THAN NO GATE
+-----------------------------------------------------
+On 2026-07-30 this driver printed "pass 86, fail 0, skip 82" and the nightly digest rendered that as
+the words "all green", while every defect the next day's audit found was already sitting in the
+fleet. Nearly half the checked surface was not evaluated and the report still read as a clean sheet.
+
+So a run now ends with an explicit VERDICT line carrying a COVERAGE fraction, and the caller is meant
+to quote that line rather than compose its own adjective from the counts. GREEN is allowed to mean
+only "nothing that was evaluated failed", and the same line says out loud how much was evaluated.
+Wording that hides a skip inside a green headline is the bug, not a formatting preference.
+
 THE ONE INVARIANT THAT MAKES THE STATUSES MEAN ANYTHING
 -------------------------------------------------------
     UNKNOWN means "this run could not OBSERVE the answer". It never means "the answer was bad."
@@ -60,7 +71,15 @@ THE FIVE CHECKS
               not checked out here (and third-party forks, whose CI is not ours to install).
   conformance check_conformance.py over every repo carrying .claude-plugin/plugin.json. Repos
               without one are SKIPPED out loud, so that a deleted plugin.json shows up as a repo
-              dropping out of coverage instead of as one fewer line nobody counted.
+              dropping out of coverage instead of as one fewer line nobody counted. A repo whose
+              linter exits 0 but printed warnings is reported WARN here, not PASS: the always-loaded
+              SKILL.md size gate and the shard-pointer check both have findings no edit fixes today,
+              and rolling those up into a PASS is how the last green total was manufactured.
+  budget      budget_check.py, the one check that is about the LIBRARY rather than any repo: do the
+              installed skill descriptions still fit in the system prompt. Past the cutoff they are
+              truncated silently, so a skill keeps existing, keeps having a description, and simply
+              stops being visible to the agent. Only OUR tier can fail it; a third-party or plugin
+              description over budget is real, is printed, and is not the operator's to edit.
   databoundary the INVERSE data-boundary assertion, which is the one check that would have caught
               the 2026-07 leak: data_boundary.py proves the REPO holds no real-run output, and this
               proves the reverse, that the resolved real-run output directory is not itself inside a
@@ -109,6 +128,7 @@ from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFORMANCE = os.path.join(HERE, "check_conformance.py")
+BUDGET = os.path.join(HERE, "budget_check.py")
 
 DEFAULT_SKILLS_DIR = os.path.expanduser("~/.claude/skills")
 DEFAULT_CODE_ROOT = os.path.expanduser("~/CodesClaude")
@@ -120,8 +140,14 @@ DEFAULT_VISIBILITY = os.path.expanduser("~/.pii-guard/visibility.json")
 # passes --status-json; that is the caller's layout decision to make, not this tool's.
 DEFAULT_STATUS = os.path.expanduser("~/.skill-smith-data/fleet-check-status.json")
 
-PASS, FAIL, SKIP, UNKNOWN = "PASS", "FAIL", "SKIP", "UNKNOWN"
-STATUSES = (PASS, FAIL, SKIP, UNKNOWN)
+# WARN is "evaluated, not clean, and no edit available today makes it clean". It is deliberately
+# NOT a pass (a pass would hide it) and deliberately NOT a fail (a nightly that is permanently red
+# for something unfixable is a nightly the operator learns to ignore, which is the failure mode this
+# whole file exists to avoid). It counts toward COVERAGE, because it was looked at.
+PASS, FAIL, WARN, SKIP, UNKNOWN = "PASS", "FAIL", "WARN", "SKIP", "UNKNOWN"
+STATUSES = (PASS, FAIL, WARN, SKIP, UNKNOWN)
+# Statuses that mean "this row was actually evaluated". SKIP and UNKNOWN are the silence.
+EVALUATED = (PASS, FAIL, WARN)
 
 # The guard workflows every PUBLIC repo must carry ON THE REMOTE. This is not a new policy invented
 # here: check_conformance.py already requires .github/workflows/pii-guard.yml and dash-guard.yml in
@@ -451,8 +477,15 @@ def check_conformance(repos, timeout):
         rc, so, se = run([sys.executable, CONFORMANCE, path], timeout=timeout)
         tail = [ln.strip() for ln in so.splitlines() if "passed" in ln]
         score = tail[-1] if tail else ""
+        warns = [ln.strip() for ln in so.splitlines() if ln.strip().startswith("[WARN]")]
         if rc is None:
             c.add(UNKNOWN, name, se or "no result")
+        elif rc == 0 and warns:
+            # Exit 0 with warnings is not a clean sheet, and the linter's own summary line already
+            # carries the count. Surfacing it as PASS is exactly the rounding that produced a green
+            # total over a fleet full of findings.
+            c.add(WARN, name, score + " | " + "; ".join(w[len("[WARN]"):].strip().split("  -> ")[0]
+                                                        for w in warns))
         elif rc == 0:
             c.add(PASS, name, score)
         else:
@@ -464,7 +497,49 @@ def check_conformance(repos, timeout):
     return c
 
 
-# --- check 4: the inverse data boundary -----------------------------------------------------------
+# --- check 4: does the installed library still fit in the system prompt? --------------------------
+def check_budget(skills_dir, code_root, timeout):
+    """Run budget_check.py (G3) once for the whole machine.
+
+    Every other check here is per repo. This one is per LIBRARY, and it is the only check whose
+    failure is invisible by construction: past the cutoff a skill's description is dropped from the
+    prompt with no error anywhere, so the skill simply never fires and nothing says why.
+
+    Exit-code contract of budget_check.py:
+      0  our tier is clean (the tier may still be over the cutoff; that part is not ours to edit)
+      1  our tier has a finding
+      2  nothing to measure, which is a state and not a failure
+    """
+    c = Check("budget", "installed skill descriptions still fit in the system prompt (G3)")
+    if not os.path.isfile(BUDGET):
+        c.note = "budget_check.py not found next to this script"
+        c.add(UNKNOWN, "budget_check.py", BUDGET)
+        return c
+    c.note = ("only OUR tier can fail: a third-party or plugin description over budget is real, is "
+              "printed by the tool, and is not the operator's to edit")
+    rc, so, se = run([sys.executable, BUDGET, "--skills-dir", skills_dir, "--code-root", code_root],
+                     timeout=timeout)
+    lines = [ln.strip() for ln in (so or "").splitlines() if ln.strip()]
+    status_line = next((ln for ln in lines if ln.startswith("STATUS:")), "")
+    ends_at = next((ln for ln in lines if ln.startswith("user tier ends at")), "")
+    past = [ln for ln in lines if "past the high bound" in ln or "inside the uncertain band" in ln]
+    detail = " | ".join(x for x in (status_line, ends_at,
+                                    "%d skill(s) past the cutoff" % len(past) if past else "") if x)
+    if rc is None:
+        c.add(UNKNOWN, "library", se or "no result")
+    elif rc == 2:
+        c.add(UNKNOWN, "library", detail or "nothing to measure")
+    elif rc == 0:
+        # Our tier is clean, but skills ARE being truncated right now. That is a real, observed,
+        # currently-happening loss, and printing it as a plain PASS is the same rounding this file
+        # was rewritten to stop.
+        c.add(WARN if past else PASS, "library", detail or "within budget")
+    else:
+        c.add(FAIL, "library", detail or first_line(se) or "exit %s" % rc)
+    return c
+
+
+# --- check 5: the inverse data boundary -----------------------------------------------------------
 def load_datadir(path, modname):
     spec = importlib.util.spec_from_file_location(modname, path)
     if spec is None or spec.loader is None:
@@ -509,7 +584,7 @@ def check_data_boundary(repos):
     return c
 
 
-# --- check 5: is the authority green? --------------------------------------------------------------
+# --- check 6: is the authority green? --------------------------------------------------------------
 GREEN = ("success",)
 RED = ("failure", "timed_out", "cancelled", "startup_failure", "action_required")
 
@@ -601,6 +676,25 @@ def print_rows(rows):
         print(line.rstrip())
 
 
+def digest_line(tot):
+    """The single line a caller is meant to quote verbatim.
+
+    It exists because the caller used to build its own sentence out of the counts and chose the word
+    "all green" for a run with 82 unevaluated rows. A verdict and a coverage fraction on one line
+    leave no room for that: GREEN can only mean "nothing that was EVALUATED failed", and the same
+    line says how much was evaluated.
+    """
+    ev = tot["pass"] + tot["fail"] + tot["warn"]
+    silent = tot["skip"] + tot["unknown"]
+    total = ev + silent
+    pct = (100.0 * ev / total) if total else 0.0
+    verdict = "RED" if tot["fail"] else ("AMBER" if tot["warn"] else "GREEN")
+    return ("VERDICT %s | pass %d fail %d warn %d | NOT EVALUATED %d (skip %d, unobserved %d) | "
+            "coverage %d%% (%d of %d rows)"
+            % (verdict, tot["pass"], tot["fail"], tot["warn"], silent, tot["skip"], tot["unknown"],
+               round(pct), ev, total)), verdict
+
+
 def print_report(checks, started, elapsed):
     print("fleet check  %s  (%.1fs)" % (started, elapsed))
     print("=" * 78)
@@ -610,12 +704,19 @@ def print_report(checks, started, elapsed):
         if c.note:
             print("  note: %s" % c.note)
         print_rows(c.rows)
-        print("  -> pass %d, fail %d, skip %d, unknown %d"
-              % (s["pass"], s["fail"], s["skip"], s["unknown"]))
+        print("  -> pass %d, fail %d, warn %d, skip %d, unknown %d"
+              % (s["pass"], s["fail"], s["warn"], s["skip"], s["unknown"]))
     print("\n" + "=" * 78)
-    tot = {k: sum(c.summary()[k] for c in checks) for k in ("pass", "fail", "skip", "unknown")}
-    print("TOTAL  pass %d  fail %d  skip %d  unknown %d"
-          % (tot["pass"], tot["fail"], tot["skip"], tot["unknown"]))
+    tot = {k: sum(c.summary()[k] for c in checks)
+           for k in ("pass", "fail", "warn", "skip", "unknown")}
+    print("TOTAL  pass %d  fail %d  warn %d  skip %d  unknown %d"
+          % (tot["pass"], tot["fail"], tot["warn"], tot["skip"], tot["unknown"]))
+    if tot["warn"]:
+        print("\nWARNINGS (evaluated, not clean, not blocking)")
+        for c in checks:
+            for status, name, detail in c.rows:
+                if status == WARN:
+                    print("  %s: %s -- %s" % (c.id, name, detail))
     if tot["fail"]:
         print("\nFAILURES")
         for c in checks:
@@ -632,16 +733,28 @@ def print_report(checks, started, elapsed):
             for status, name, detail in c.rows:
                 if status == UNKNOWN:
                     print("  %s: %s -- %s" % (c.id, name, detail))
+    line, _verdict = digest_line(tot)
+    print("\n" + line)
     return tot
 
 
 def write_status(path, checks, tot, started_utc, elapsed, exit_code):
+    line, verdict = digest_line(tot)
     payload = {
         "tool": "fleet_check",
-        "schema": 1,
+        # Bumped from 1: `totals` gained a `warn` key, and `verdict`/`digest`/`coverage` are new.
+        # A caller that composes its own adjective out of the counts is how "all green" got printed
+        # over a fleet with 82 unevaluated rows, so the wording now ships WITH the numbers.
+        "schema": 2,
         "utc": started_utc,
         "duration_s": round(elapsed, 2),
         "exit": exit_code,
+        "verdict": verdict,
+        "digest": line,
+        "coverage": {
+            "evaluated": tot["pass"] + tot["fail"] + tot["warn"],
+            "not_evaluated": tot["skip"] + tot["unknown"],
+        },
         "totals": tot,
         "checks": {c.id: dict(title=c.title, note=c.note, **c.summary()) for c in checks},
         "failures": ["%s: %s -- %s" % (c.id, n, d)
@@ -650,6 +763,8 @@ def write_status(path, checks, tot, started_utc, elapsed, exit_code):
         # cannot tell a clean fleet from an unlooked-at one.
         "unobserved": ["%s: %s -- %s" % (c.id, n, d)
                        for c in checks for s, n, d in c.rows if s == UNKNOWN],
+        "warnings": ["%s: %s -- %s" % (c.id, n, d)
+                     for c in checks for s, n, d in c.rows if s == WARN],
     }
     d = os.path.dirname(path)
     if d:
@@ -684,11 +799,13 @@ def main(argv=None):
     repos = local_repos(code_root)
     slugs = repo_slugs(repos)
 
-    checks = [check_junctions(os.path.abspath(os.path.expanduser(a.skills_dir)))]
+    skills_dir = os.path.abspath(os.path.expanduser(a.skills_dir))
+    checks = [check_junctions(skills_dir)]
     wf = check_workflow(os.path.abspath(os.path.expanduser(a.visibility)), slugs, code_root,
                         timeout=a.gh_timeout, offline=a.offline)
     checks.append(wf)
     checks.append(check_conformance(repos, a.conformance_timeout))
+    checks.append(check_budget(skills_dir, code_root, a.conformance_timeout))
     checks.append(check_data_boundary(repos))
 
     if a.offline:

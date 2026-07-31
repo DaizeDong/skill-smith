@@ -407,12 +407,62 @@ def test_conformance_reports_repos_it_skipped(tmp_path):
     assert [s for s, _n, _d in c.rows] == [fc.SKIP]
 
 
+def test_conformance_exit_zero_with_warnings_is_not_a_pass(tmp_path, monkeypatch):
+    """A linter that exits 0 having printed warnings has not reported a clean repo.
+
+    Rolling that up into PASS is precisely how a green total was produced over a fleet in which
+    every defect of the next day's audit was already present.
+    """
+    root = tmp_path / "code"
+    root.mkdir()
+    d = make_repo(root, "warny", plugin=True)
+    out = ("  [PASS] file: README.md\n"
+           "  [WARN] SKILL.md size (17000 chars): skills/x/SKILL.md  -> over the line\n"
+           "  36/37 passed  (1 WARN)\n")
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (0, out, ""))
+    c = fc.check_conformance({"warny": str(d)}, 30)
+    assert [s for s, _n, _d in c.rows] == [fc.WARN], c.rows
+    assert "1 WARN" in c.rows[0][2] and "SKILL.md size" in c.rows[0][2]
+
+
+# --- the library budget check --------------------------------------------------------------------
+@pytest.mark.parametrize("rc,want", [(0, "PASS"), (1, "FAIL"), (2, "UNKNOWN"), (None, "UNKNOWN")])
+def test_budget_maps_the_tools_exit_code(monkeypatch, rc, want):
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (rc, "STATUS: OK\n", "boom"))
+    c = fc.check_budget("skills", "code", 30)
+    assert c.rows[0][0] == want, c.rows
+
+
+def test_budget_pass_with_truncation_is_a_warning(monkeypatch):
+    """Our tier clean while skills ARE being truncated is not a clean sheet.
+
+    budget_check exits 0 when nothing of OURS is at fault, which is correct (a third-party
+    description is not the operator's to edit) and is exactly the shape that would let a
+    currently-happening loss print as a plain PASS.
+    """
+    out = ("user tier ends at : 20999 chars\n"
+           "    training-check  other  running total 20617  (past the high bound: certainly truncated)\n"
+           "STATUS: OK (our tier clean)\n")
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (0, out, ""))
+    c = fc.check_budget("skills", "code", 30)
+    assert c.rows[0][0] == fc.WARN, c.rows
+    assert "1 skill(s) past the cutoff" in c.rows[0][2]
+
+
+def test_budget_missing_tool_is_unknown_not_pass(monkeypatch):
+    monkeypatch.setattr(fc.os.path, "isfile", lambda _p: False)
+    c = fc.check_budget("skills", "code", 30)
+    assert c.rows[0][0] == fc.UNKNOWN
+
+
 # --- the output contract -------------------------------------------------------------------------
 def test_status_json_shape_and_timestamp(tmp_path):
     c = fc.Check("demo", "demo check")
     c.add(fc.PASS, "a")
     c.add(fc.FAIL, "b", "because")
-    tot = {"pass": 1, "fail": 1, "skip": 0, "unknown": 0}
+    c.add(fc.WARN, "c", "not clean, not blocking")
+    c.add(fc.SKIP, "d", "not looked at")
+    tot = {"pass": 1, "fail": 1, "warn": 1, "skip": 1, "unknown": 0}
     out = tmp_path / "nested" / "status.json"
     fc.write_status(str(out), [c], tot, "2026-01-01T00:00:00Z", 1.5, 1)
 
@@ -422,7 +472,24 @@ def test_status_json_shape_and_timestamp(tmp_path):
     assert got["totals"] == tot
     assert got["checks"]["demo"]["fail"] == 1
     assert got["failures"] == ["demo: b -- because"]
+    assert got["warnings"] == ["demo: c -- not clean, not blocking"]
+    # The caller is meant to QUOTE this, not compose its own adjective out of the counts. That is
+    # how "all green" got printed over a run with 82 unevaluated rows.
+    assert got["verdict"] == "RED"
+    assert "coverage 75% (3 of 4 rows)" in got["digest"], got["digest"]
+    assert got["coverage"] == {"evaluated": 3, "not_evaluated": 1}
     assert not list(tmp_path.glob("**/*.tmp"))       # written atomically, no debris
+
+
+def test_digest_never_calls_a_skipped_run_green():
+    """A skip must be distinguishable from a pass in the one line a human reads."""
+    line, verdict = fc.digest_line({"pass": 86, "fail": 0, "warn": 0, "skip": 82, "unknown": 0})
+    assert verdict == "GREEN"
+    assert "NOT EVALUATED 82" in line and "coverage 51%" in line, line
+    line, verdict = fc.digest_line({"pass": 5, "fail": 0, "warn": 2, "skip": 0, "unknown": 0})
+    assert verdict == "AMBER", "warnings must not read as a clean sheet: %s" % line
+    line, verdict = fc.digest_line({"pass": 5, "fail": 1, "warn": 0, "skip": 0, "unknown": 0})
+    assert verdict == "RED"
 
 
 def test_no_status_flag_writes_nothing(tmp_path, capsys):

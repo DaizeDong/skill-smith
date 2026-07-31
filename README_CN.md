@@ -73,16 +73,27 @@ python skills/skill-smith/scripts/scaffold_skill.py my-skill \
 
 python skills/skill-smith/scripts/check_conformance.py ~/CodesClaude/my-skill   # Spec v1 检查器
 python skills/skill-smith/scripts/bump_version.py ~/CodesClaude/my-skill --level patch  # 五处版本
-python skills/skill-smith/scripts/budget_check.py                            # 库 token 预算
+python skills/skill-smith/scripts/budget_check.py                            # 库的系统提示词预算
 python skills/skill-smith/scripts/dedup_check.py                             # 描述重叠
 python skills/skill-smith/scripts/fleet_check.py                             # 全 fleet 体检, 只读
 ```
 
+`check_conformance.py` 还会量 SKILL.md 自身, 因为这个文件在该 skill **每一次**被调用时都要付费:
+**超过 12,000 字符告警, 超过 16,000 字符判失败**; 它写下的每个相对路径都必须在盘上解析得到;
+指令文本要直接写规则, 而不是写"第几轮加了什么"。2026-07-31 当天已经超线的文件按名字连同实测大小
+进白名单, 只许变小不许变大, 所以那份名单只会越来越短。
+
+`budget_check.py` 回答的是唯一一个"失败本身就看不见"的问题: 超过预算后 loader 会静默丢掉 skill 描述,
+于是那个 skill 依然存在, 只是永远不再触发。它分三层分别报数(我们的、其他用户 skill、plugin skill),
+plugin 那层从 `installed_plugins.json` 读而不是 glob 缓存目录(缓存里每个 plugin 存着 2 到 4 个旧版本),
+同时打印文档写的 15,000 字符预算和这台机器上实测约 20,000 字符的真实截断点, 并点名越线的 skill。
+只有**我们这层**能判失败: 第三方描述超预算是真的、要打印, 但不是使用者能改的。
+
 `fleet_check.py` 是上面那个检查器一直缺的 driver。它把 `check_conformance.py` 铺到每个 plugin 仓上,
-再补上没人查的四件事: skill junction 能否解析、标为 PUBLIC 的仓**在远端默认分支上**是否带齐每个 guard
-workflow(`pii-guard` **和** `dash-guard`)、解析出的真实运行数据目录是否落在某个 git 工作区里、
-以及这些 guard workflow 到底绿没绿(每个仓每个 workflow 各出一行)。它**只读, 没有 `--fix`**,
-也从不 `git fetch`, 任一项 FAIL 即非零退出, 并写一份带 UTC 时间戳的状态 JSON,
+再补上没人查的五件事: skill junction 能否解析、标为 PUBLIC 的仓**在远端默认分支上**是否带齐每个 guard
+workflow(`pii-guard` **和** `dash-guard`)、已安装的库是否还塞得进系统提示词、解析出的真实运行数据目录
+是否落在某个 git 工作区里、以及这些 guard workflow 到底绿没绿(每个仓每个 workflow 各出一行)。
+它**只读, 没有 `--fix`**, 也从不 `git fetch`, 任一项 FAIL 即非零退出, 并写一份带 UTC 时间戳的状态 JSON,
 让定时调用方能把"这轮真跑了"和"这轮通过了"分开判断。加 `--offline` 可跳过需要联网的探针。
 
 workflow 这一项查的是**远端**而不是本地工作树, 这是刻意的: 以前它 stat 本地 clone, 于是一个已经 commit
@@ -90,6 +101,11 @@ workflow 这一项查的是**远端**而不是本地工作树, 这是刻意的: 
 只有一个含义: "这轮没能观测到答案"(没有 `gh`、未认证、被限流、离线), 所以它不影响退出码才是安全的;
 而一个真的回答了的远端给出的否定答案是 `FAIL`。没观测到的行会单独打在 `UNOBSERVED` 标题下并写进状态
 JSON, 因为"没人看得了的 fleet"绝不能读起来像"干净的 fleet"。
+
+每轮结束会打出一行 **VERDICT**, 上面带着覆盖率, 调用方应当原样引用这一行, 而不是拿计数自己拼形容词。
+2026-07-30 那晚, 夜间简报把 "pass 86, fail 0, skip 82" 说成了"全绿", 而第二天审计翻出的每一条缺陷
+当时就已经在 fleet 里了: 近一半被检面根本没评估, 报告却读起来像干净的。现在 `GREEN` 只能表示
+"评估过的都没失败", `AMBER` 表示有今天无法用一次修改消掉的发现, 而同一行会写明到底看了多少。
 
 `bump_version.py` 一次改齐五处版本(plugin.json、两个 README 徽章、ROADMAP、CHANGELOG)。仓库已经
 版本不一致时它直接拒跑而不是把不一致掩盖掉;它也从不 commit / push,发版是人的决定。
