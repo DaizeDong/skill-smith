@@ -12,7 +12,10 @@ leverage line in the skill.
   `reference/<shard>.md`, loaded on demand. (Mirror this repo's own structure.)
   "Thin" is what the rule used to say, and because nothing could measure it, the fleet drifted to a
   41,959-character always-loaded file. Files already over the line on 2026-07-31 are grandfathered
-  by name in `check_conformance.py` at their measured size and may shrink, never grow.
+  by name in `check_conformance.py` at their measured size and may shrink, never grow. Every
+  grandfathered entry also carries a dated shrink target, WARNs on every run, is counted on the
+  repo's summary line as `N grandfathered, M chars over target`, and FAILS once its target date
+  passes. A grandfather clause with no expiry is a permanent exemption with a reassuring name.
 - **Every relative path you name must resolve.** A shard pointer the agent cannot open is an
   instruction it cannot follow, and nothing surfaces it until a run needs that shard. Pointers
   resolve against the skill directory first, then the repo root.

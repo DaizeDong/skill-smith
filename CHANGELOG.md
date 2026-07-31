@@ -3,6 +3,42 @@
 All notable changes to this project are documented here (Keep a Changelog style).
 
 ## [Unreleased]
+### Fixed
+- **Three of the new gates were reassuring the reader, which is the failure mode they exist to
+  prevent.** All three were found by an independent pass over the run they had just shipped, and all
+  three were green for the wrong reason.
+  **`load_budget.py` measured nothing and called it a clean result.** It knew one repo shape,
+  `skills/<name>/SKILL.md`. Two repos here keep their single SKILL.md at the ROOT, and those two
+  hold two of the largest always-loaded files on the machine. In both it printed "no SKILL.md found,
+  nothing to measure" and exited on a code its own docstring called "a state, not a failure". It now
+  discovers both layouts (the same resolution `check_conformance.py` uses, deliberately identical),
+  and measuring nothing exits **3** and says FAIL. Exit 2 is retired rather than redefined, so a
+  caller that special-cased it as benign breaks loudly instead of quietly agreeing. Newly measured:
+  `self-evolve` clean, `small-cap-deepdive` BLOCK at 5.82% duplicated prose, both previously unseen.
+  **The size gate could not fail.** Its allowlist was seeded with exactly the five files over the
+  fail line, so the first fleet run produced zero FAIL rows over 17% of the SKILL.md files and 40%
+  of the always-loaded characters. The threshold was not the thing to move. Each entry now carries a
+  dated shrink target (all to the 16,000 fail line, staged 2026-08-31 through 2026-10-31), WARNs
+  every run with the arithmetic spelled out, is restated in a GRANDFATHERED ALWAYS-LOADED DEBT block,
+  is carried on the summary line as `N grandfathered, M chars over target`, and **FAILS once its
+  target date passes**. A grandfather clause with no expiry is a permanent exemption with a
+  reassuring name.
+  **`budget_check.py` could not see the actual harm.** Four installed skills were past the observed
+  truncation cutoff and invisible to the model, and the tool exited 1 for an unrelated reason: two of
+  OUR descriptions were long. Trimming those two would have turned it green with four skills still
+  missing from the prompt, which is exactly what happened while this change was being written. Being
+  invisible is a capability loss whoever authored the description, so the CONDITION now fails
+  regardless of tier. The operator still never edits a third-party description; the message names the
+  two levers that exist, uninstalling one or trimming ours, because the cutoff is a running total.
+  Only the per-skill description CAP stays limited to our tier.
+- **The retrofit lint said "across N file(s)" where N was the number of files SCANNED**, so 8 markers
+  in 5 files read as "8 retrofit marker(s) across 10 file(s)". It now reports both counts.
+- **`fleet_check.py` double-counted the truncated skills** because it derived the count by grepping
+  `budget_check.py`'s stdout for the phrases that name a victim, and those phrases now also appear in
+  the FAIL list: four truncated skills were reported as eight. `budget_check.py` prints one
+  machine-readable `TRUNCATED: N` line, unconditionally including the zero, and `fleet_check.py`
+  reads it.
+
 ### Added
 - **Three SKILL.md checks in `check_conformance.py`, and a WARN status to carry them.** The gate
   asked whether files EXIST and never what the always-loaded file costs or whether it keeps its

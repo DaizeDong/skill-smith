@@ -82,15 +82,23 @@ python skills/skill-smith/scripts/fleet_check.py                             # w
 invocation of the skill: **warn above 12,000 characters, fail above 16,000**, every relative path it
 names must resolve on disk, and instruction text must state the rule rather than which iteration
 added it. Files already over the size line on 2026-07-31 are grandfathered by name at their measured
-size and may shrink, never grow, so the allowlist can only get shorter.
+size and may shrink, never grow, so the allowlist can only get shorter. Each entry also carries a
+**dated shrink target**: it WARNs loudly on every run with the arithmetic spelled out, the per-repo
+summary line states `N grandfathered, M chars over target`, and once the target date passes with the
+file still over target the entry FAILS. The allowlist was seeded with exactly the five files over the
+line, so without that the gate's first fleet run had zero FAIL rows over 17% of the files and 40% of
+the always-loaded characters, and a run with no failures reads as "the fleet is within budget".
 
 `budget_check.py` answers the one question whose failure is invisible by construction: past a budget
 the loader silently drops skill descriptions, so a skill keeps existing and simply never fires. It
 reports three tiers separately (ours, other user skills, plugin skills), reads the plugin tier from
 `installed_plugins.json` rather than globbing the cache (which holds 2 to 4 stale versions per
 plugin), prints both the documented 15,000-char budget and the ~20,000-char cutoff actually observed
-on this machine, and names the skills past it. Only **our** tier can fail: a third-party description
-over budget is real, is printed, and is not the operator's to edit.
+on this machine, and names the skills past it. A skill **past the cutoff FAILS whatever tier it is
+in**, because a skill the agent cannot see is a capability loss no matter who wrote its description;
+the tool names the two levers that actually exist (uninstall one, or trim ours, since the cutoff is a
+running total). Only the per-skill description **cap** stays limited to our tier, because third-party
+wording is genuinely not the operator's to edit.
 
 `fleet_check.py` is the driver the linter above never had. It fans `check_conformance.py` over every
 plugin repo and adds what nothing else checks: skill junctions resolve, a repo marked PUBLIC carries
