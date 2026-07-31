@@ -98,10 +98,20 @@ THE FIVE CHECKS
               Visibility comes from LIVE gh, with the map as a bounded-age offline fallback: see
               VisibilityOracle for why the reverse order made the whole check defeatable by one
               stale line of JSON.
-  ci          EVERY guard workflow found on the remote is actually GREEN ON THE DEFAULT BRANCH,
-              reported one row per (repo, workflow) so a red dash-guard cannot hide behind a green
-              pii-guard. "CI is the authority" is the load-bearing sentence of the whole doctrine and
-              nothing observed whether that authority was passing. Degrades to UNKNOWN (never FAIL,
+  ci          EVERY workflow found on the remote is actually GREEN ON THE DEFAULT BRANCH, reported
+              one row per (repo, workflow) so a red dash-guard cannot hide behind a green pii-guard.
+              "CI is the authority" is the load-bearing sentence of the whole doctrine and nothing
+              observed whether that authority was passing.
+              EVERY is literal, and it was not until 2026-07-31. This check used to interrogate the
+              two names in GUARD_WORKFLOWS, so every other workflow the fleet authors (gate,
+              heartbeat, test, memory health) was invisible to the fleet report, and repos that are
+              PRIVATE were not interrogated at all. That is how a report can print "34 of 34 green"
+              on a day when a repo's own gate workflow is concluding success over a log that reads
+              "RESULT: BLOCK". Rows are now CLASSIFIED, not filtered: guard (mandated) or other
+              (anything else we wrote), and a red run FAILS the row in both tiers. The only escape
+              is CI_WARN_ONLY, one named workflow on one named repo, with a reason printed every
+              run. See its note for why a severity tier would just rebuild the hiding place.
+              Degrades to UNKNOWN (never FAIL,
               never blocking) when gh is missing, unauthenticated, rate limited, or the workflow has
               no run on the default branch -- GitHub expires run history, so "no runs" is an absence
               of evidence, not evidence of absence. The presence question is the workflow check's
@@ -171,6 +181,38 @@ EVALUATED = (PASS, FAIL, WARN)
 # the local tree. This check asserts the same pair actually reached GitHub, which is the only place
 # the assertion has teeth.
 GUARD_WORKFLOWS = ("pii-guard", "dash-guard")
+
+# GUARD_WORKFLOWS is a PRESENCE policy: these two must EXIST on every public remote. It is not, and
+# must never again be, the list of workflows whose RESULT gets read. Until 2026-07-31 check_ci
+# interrogated exactly this pair, so every other workflow the fleet authors was invisible to the
+# fleet report: market-intel's `gate`, the `heartbeat` jobs, `Test`, `memory-health-guard`. On
+# 2026-07-31 that printed "34 of 34 green" while market-intel's gate workflow was concluding success
+# over a log that said "RESULT: BLOCK (3 blocking issue(s))". The name filter was the reason nobody
+# could see it. check_ci now reads EVERY workflow on each public remote and CLASSIFIES it.
+#
+# The classification has two tiers and both of them FAIL on red. The tiers differ only in what the
+# row is called, because the operator reading the report needs to know whether a red row breaches
+# fleet policy or is just a broken job:
+#
+#   guard  a workflow named in GUARD_WORKFLOWS. Red = a mandated guard is down.
+#   other  anything else this fleet wrote. Red = a workflow we authored, in a repo we own, is
+#          failing.
+#
+# WHY "other" FAILS RATHER THAN WARNS. WARN in this file means "evaluated, not clean, and no edit
+# available today makes it clean" (see the PASS/FAIL/WARN note above). That does not describe a red
+# workflow in a repo we control: there is always an edit available, namely fix it or delete it. If
+# a non-guard red only warned, then the exact defect this change exists to close, a real gate going
+# red without anything going red, would be rebuilt one layer down: instead of hiding behind a name
+# filter it would hide behind a severity tier. So redness fails, whoever wrote the workflow.
+#
+# The escape hatch is deliberately narrow, per workflow and per repo, never per tier: an entry in
+# CI_WARN_ONLY downgrades one named workflow on one named repo to WARN, and it has to carry a
+# reason that gets printed in the row. Empty means no exemptions exist, which is the intended
+# steady state. Anyone adding one is stating in writing which specific job they have chosen to stop
+# believing, and the report keeps saying so on every run.
+CI_WARN_ONLY = {
+    # ("owner/repo", "workflow-file.yml"): "why this job's redness is not actionable here",
+}
 
 
 # --- tiny helpers --------------------------------------------------------------------------------
@@ -444,10 +486,18 @@ def check_workflow(visibility_path, slugs, code_root, timeout=30, offline=False)
     The result is hung on the Check as .remote_workflows so the CI check can ask about exactly the
     workflows that were observed to exist, instead of guessing a name and reading the resulting
     "no such workflow" error as a shrug.
+
+    Two listings are hung on the Check, and they answer different questions:
+      .remote_workflows      the GUARD subset, which is what this check's own PASS/FAIL is about.
+      .all_remote_workflows  every workflow file observed on the remote default branch, which is
+                             what check_ci reads. The full listing was always fetched here and then
+                             thrown away; keeping it is what lets the CI check stop being a
+                             hardcoded pair of names.
     """
     c = Check("workflow", "visibility PUBLIC implies %s on the REMOTE default branch"
               % " + ".join(GUARD_WORKFLOWS))
     c.remote_workflows = {}
+    c.all_remote_workflows = {}
     try:
         with open(visibility_path, encoding="utf-8") as f:
             vis = json.load(f)
@@ -469,6 +519,7 @@ def check_workflow(visibility_path, slugs, code_root, timeout=30, offline=False)
             continue
         found = guards_present(names)
         c.remote_workflows[slug] = found
+        c.all_remote_workflows[slug] = list(names)
         missing = [g for g in GUARD_WORKFLOWS if g not in found]
         if missing:
             c.add(FAIL, slug, "PUBLIC but the remote default branch has no %s (remote workflows: %s)"
@@ -872,8 +923,54 @@ def default_branch(gh, slug, timeout, cache):
     return cache[slug]
 
 
+def ci_targets(wf_check, visibility_path, slugs, timeout, offline=False):
+    """[(slug, names_or_None, why, visibility)] for EVERY repo of ours that has a clone here.
+
+    check_workflow only walks the PUBLIC entries, because guard PRESENCE is a public-remote policy.
+    CI greenness is not, and at least one PRIVATE repo here carries a real guard workflow that no
+    fleet report has ever read. A private repo's CI going red is exactly as much a broken thing as a
+    public one's, so the listing is fetched for the private repos too rather than reusing a set that
+    was assembled to answer a different question.
+
+    Listings already obtained by check_workflow are reused verbatim, so the public repos cost no
+    extra API calls.
+    """
+    seen = getattr(wf_check, "all_remote_workflows", {}) or {}
+    try:
+        with open(visibility_path, encoding="utf-8") as f:
+            vis = {k: str(v).upper() for k, v in json.load(f).items()}
+    except (OSError, ValueError) as e:
+        out = [(s, n, "", "PUBLIC") for s, n in sorted(seen.items())]
+        out.append(("(visibility map)", None,
+                    "unreadable: %s; only PUBLIC repos were enumerated" % e, "UNKNOWN"))
+        return out
+    out = [(s, n, "", vis.get(s, "UNKNOWN")) for s, n in sorted(seen.items())]
+    for slug in sorted(vis):
+        if slug in seen:
+            continue
+        path = slugs.get(slug)
+        if path is None:
+            continue                      # no clone here: not ours to interrogate, and check_workflow
+                                          # already records the SKIP for the public ones
+        names, why = remote_workflow_files(slug, path, timeout, offline=offline)
+        out.append((slug, names, why, vis.get(slug, "UNKNOWN")))
+    return out
+
+
+def workflow_tier(filename):
+    """"guard" if this workflow file is one of GUARD_WORKFLOWS, else "other". Never filters."""
+    return "guard" if os.path.splitext(filename)[0].lower() in GUARD_WORKFLOWS else "other"
+
+
 def check_ci(targets, timeout):
-    """targets: [(slug, [workflow names observed on that slug's remote]), ...].
+    """targets: [(slug, names_or_None, why, visibility), ...] as built by ci_targets().
+
+    names is the FULL workflow listing observed on that slug's remote default branch, or None when
+    the listing could not be observed, in which case `why` says so and the repo gets an UNKNOWN row
+    rather than vanishing.
+
+    EVERY workflow in the listing is read; see the CI_WARN_ONLY note at the top of this file for
+    why a red non-guard workflow fails the row exactly like a red guard does.
 
     One row per (repo, workflow). The predecessor asked only about pii-guard and titled itself "the
     guard CI is green", so promotion-assistant printed a single confident PASS on 2026-07-30 while
@@ -896,25 +993,47 @@ def check_ci(targets, timeout):
     workflow that has only ever fired on topic branches has not yet said anything about the branch
     being asked about, and inventing an answer from the wrong ref is how this started.
     """
-    c = Check("ci", "every guard workflow is GREEN ON THE DEFAULT BRANCH (%s)"
-              % ", ".join(GUARD_WORKFLOWS))
+    c = Check("ci", "EVERY workflow on EVERY repo of ours is GREEN ON THE DEFAULT BRANCH")
     gh = shutil.which("gh")
     if not gh:
         c.note = "gh not on PATH; CI state unobserved (infrastructure, non-failing)"
         c.add(UNKNOWN, "gh", "not installed")
         return c
-    c.note = ("only runs whose head ref IS the remote default branch are counted; UNKNOWN means the "
-              "answer could not be OBSERVED and never fails the run, a red run that WAS observed is "
-              "a FAIL, and a guard missing from the remote entirely is a FAIL in the workflow check "
-              "above, not a shrug here")
+    c.note = ("every workflow file on every remote default branch is read, not a hardcoded list, and "
+              "PRIVATE repos are read too (a private repo here carries a guard workflow no report "
+              "ever saw); rows are tagged guard (%s, mandated) or other (any workflow this fleet wrote), and BOTH "
+              "fail on red. Only runs whose head ref IS the remote default branch are counted; "
+              "UNKNOWN means the answer could not be OBSERVED and never fails the run; a guard "
+              "MISSING from a remote is a FAIL in the workflow check above, not a shrug here"
+              % ", ".join(GUARD_WORKFLOWS))
     if not targets:
-        c.add(UNKNOWN, "(nothing to ask)", "no public repo reported a guard workflow on its remote")
+        c.add(UNKNOWN, "(nothing to ask)", "no repo reported any workflow on its remote")
         return c
     branches = {}
-    for slug, workflows in sorted(targets):
+    for slug, workflows, listing_why, visibility in sorted(targets, key=lambda t: t[0]):
+        if workflows is None:
+            c.add(UNKNOWN, slug, "workflow listing not observed: %s" % (listing_why or "no reason given"))
+            continue
+        if not workflows:
+            # An answered listing that is empty is a FACT, not a gap. Which fact depends on who owns
+            # the repo: a PRIVATE companion data repo is supposed to have no CI (guard presence is a
+            # public-remote policy), so it is a SKIP that names itself rather than eight permanent
+            # WARN rows an operator learns to scroll past. A PUBLIC repo with no workflows at all is
+            # a different animal and stays a WARN here; check_workflow above is already FAILing it
+            # for the missing mandated guards, so this row is the corroborating detail, not the
+            # verdict. Either way the repo is NAMED, which is the part the old name filter got
+            # wrong.
+            if visibility == "PRIVATE":
+                c.add(SKIP, slug, "PRIVATE companion repo with no workflows; CI is not mandated here")
+            else:
+                c.add(WARN, slug, "%s repo has NO workflow files on its remote default branch"
+                      % visibility)
+            continue
         branch, why = default_branch(gh, slug, timeout, branches)
         for wf in sorted(workflows):
-            name = "%s [%s]" % (slug, wf)
+            tier = workflow_tier(wf)
+            name = "%s [%s:%s]" % (slug, tier, wf)
+            exempt = CI_WARN_ONLY.get((slug, wf))
             if not branch:
                 # Without the default branch there is no question to ask. Reporting the newest run
                 # on any ref instead is exactly the bug this arm replaced.
@@ -946,7 +1065,13 @@ def check_ci(targets, timeout):
             elif concl in GREEN:
                 c.add(PASS, name, when)
             elif concl in RED:
-                c.add(FAIL, name, "last run %s (%s)" % (concl, when))
+                detail = "last run %s (%s)" % (concl, when)
+                if exempt:
+                    # Named, per workflow, per repo, and the reason is printed every single run so
+                    # the exemption cannot quietly become the norm.
+                    c.add(WARN, name, "%s [CI_WARN_ONLY: %s]" % (detail, exempt))
+                else:
+                    c.add(FAIL, name, detail)
             else:
                 c.add(UNKNOWN, name, "last run %s (%s)" % (concl or "no conclusion", when))
     return c
@@ -1120,17 +1245,17 @@ def main(argv=None):
                                       repos=repos, offline=a.offline, timeout=a.gh_timeout))
 
     if a.offline:
-        c = Check("ci", "every guard workflow is GREEN ON THE DEFAULT BRANCH (%s)"
-                  % ", ".join(GUARD_WORKFLOWS))
+        c = Check("ci", "EVERY workflow on EVERY repo of ours is GREEN ON THE DEFAULT BRANCH")
         c.note = "skipped (--offline)"
         c.add(UNKNOWN, "(all public repos)", "offline: CI state unobserved")
         checks.append(c)
     else:
-        # Ask about exactly the guard workflows we OBSERVED on each remote. Note this includes repos
-        # that FAILED above for missing one of the pair: a repo with pii-guard but no dash-guard
-        # still gets its pii-guard run state read, because dropping it would let a red run hide
-        # behind an unrelated failure.
-        targets = [(slug, found) for slug, found in wf.remote_workflows.items() if found]
+        # Ask about EVERY workflow on EVERY repo of ours, not the guard subset of the public ones.
+        # Note this includes repos that FAILED above for missing one of the mandated pair: a repo
+        # with pii-guard but no dash-guard still gets everything it does have read, because dropping
+        # it would let a red run hide behind an unrelated failure.
+        targets = ci_targets(wf, os.path.abspath(os.path.expanduser(a.visibility)), slugs,
+                             timeout=a.gh_timeout, offline=a.offline)
         checks.append(check_ci(targets, a.gh_timeout))
 
     elapsed = time.time() - t0

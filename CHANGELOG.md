@@ -4,6 +4,26 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 ### Changed
+- **`fleet_check`'s `ci` check read two workflow names and called that "the CI is green".** It
+  interrogated `GUARD_WORKFLOWS` (`pii-guard`, `dash-guard`) and nothing else, so every other
+  workflow this fleet authors was invisible to the fleet report: a repo's own anti-regression
+  `gate`, the `heartbeat` jobs, `test`, and the memory-health guard living in a PRIVATE repo, which
+  the check never walked at all because it reused a repo set assembled to answer the PUBLIC guard
+  PRESENCE question. On 2026-07-31 that printed "34 of 34 green" on a day when a real gate workflow
+  was concluding success over a log whose last line read `RESULT: BLOCK (3 blocking issue(s))`. The
+  workflow was not red at that moment, which is the point: nothing in the report could ever have
+  said so if it had been.
+  Rows are now CLASSIFIED rather than filtered. Every workflow file observed on every remote default
+  branch gets a row tagged `guard` (mandated by policy) or `other` (anything else we wrote), and a
+  red run FAILS the row in **both** tiers. `other` fails rather than warns because WARN in this tool
+  means "no edit available today makes this clean", which is never true of a workflow in a repo we
+  own: fix it or delete it. Downgrading non-guard redness to a warning would have rebuilt the same
+  hiding place one layer down, behind a severity tier instead of a name filter. The single escape
+  hatch is `CI_WARN_ONLY`, keyed on one named workflow of one named repo, carrying a reason that is
+  printed on every run; it ships empty. An unobservable listing stays `UNKNOWN` and a repo with no
+  workflows at all is still NAMED (`WARN` when public, `SKIP` when it is a private companion repo
+  where CI is not mandated), because disappearing from the report is the failure being fixed.
+  Coverage went from 34 guard rows to 42 evaluated rows plus 8 named skips.
 - **`fleet_check`'s `databoundary` check asked the wrong question, and the wrong question condemned
   the right answer.** It asserted "the resolved real-run data dir is not inside a git worktree".
   That implements "must not reach a public repo" as "must not be in git", and those are different

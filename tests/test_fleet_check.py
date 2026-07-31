@@ -572,7 +572,7 @@ def _ci_with_gh(monkeypatch, rc, stdout, stderr="", targets=None, default="main"
         return rc, stdout, stderr
 
     monkeypatch.setattr(fc, "run", fake)
-    return fc.check_ci(targets or [("owner/repo", ["pii-guard"])], 5)
+    return fc.check_ci(targets or [("owner/repo", ["pii-guard.yml"], "", "PUBLIC")], 5)
 
 
 def _runs(conclusion, status="completed", branch="main"):
@@ -601,12 +601,13 @@ def test_ci_checks_every_guard_and_names_each_one(monkeypatch):
         if "api" in args:
             return 0, "main\n", ""
         wf = args[args.index("-w") + 1]
-        return 0, _runs("success" if wf == "pii-guard" else "failure"), ""
+        return 0, _runs("success" if wf == "pii-guard.yml" else "failure"), ""
 
     monkeypatch.setattr(fc, "run", fake_run)
-    c = fc.check_ci([("owner/repo", ["pii-guard", "dash-guard"])], 5)
+    c = fc.check_ci([("owner/repo", ["pii-guard.yml", "dash-guard.yml"], "", "PUBLIC")], 5)
     got = {n: s for s, n, _d in c.rows}
-    assert got == {"owner/repo [pii-guard]": fc.PASS, "owner/repo [dash-guard]": fc.FAIL}
+    assert got == {"owner/repo [guard:pii-guard.yml]": fc.PASS,
+                   "owner/repo [guard:dash-guard.yml]": fc.FAIL}
 
 
 # --- the CI probe must judge the DEFAULT BRANCH, not whatever ref ran last -----------------------
@@ -627,7 +628,7 @@ def test_ci_asks_only_about_the_default_branch(monkeypatch):
         return 0, _runs("success", branch="master"), ""
 
     monkeypatch.setattr(fc, "run", fake_run)
-    fc.check_ci([("owner/repo", ["pii-guard"])], 5)
+    fc.check_ci([("owner/repo", ["pii-guard.yml"], "", "PUBLIC")], 5)
     a = seen["args"]
     assert "-b" in a and a[a.index("-b") + 1] == "master"
 
@@ -645,7 +646,7 @@ def test_ci_does_not_report_a_topic_branch_run_as_the_default_branch(monkeypatch
         return 0, _runs("success", branch="feat/topic"), ""
 
     monkeypatch.setattr(fc, "run", fake_run)
-    c = fc.check_ci([("owner/repo", ["pii-guard"])], 5)
+    c = fc.check_ci([("owner/repo", ["pii-guard.yml"], "", "PUBLIC")], 5)
     assert [s for s, _n, _d in c.rows] == [fc.FAIL]
     assert "master" in c.rows[0][2]
 
@@ -662,7 +663,7 @@ def test_ci_no_run_on_the_default_branch_is_unknown_not_a_topic_branch_run(monke
         return 0, _runs("success", branch="feat/topic"), ""
 
     monkeypatch.setattr(fc, "run", fake_run)
-    c = fc.check_ci([("owner/repo", ["pii-guard"])], 5)
+    c = fc.check_ci([("owner/repo", ["pii-guard.yml"], "", "PUBLIC")], 5)
     assert [s for s, _n, _d in c.rows] == [fc.UNKNOWN]
     assert "default branch main" in c.rows[0][2]
 
@@ -686,7 +687,7 @@ def test_ci_default_branch_is_looked_up_once_per_repo(monkeypatch):
         return 0, _runs("success"), ""
 
     monkeypatch.setattr(fc, "run", fake_run)
-    fc.check_ci([("owner/repo", ["pii-guard", "dash-guard"])], 5)
+    fc.check_ci([("owner/repo", ["pii-guard.yml", "dash-guard.yml"], "", "PUBLIC")], 5)
     assert len(api_calls) == 1
 
 
@@ -715,7 +716,7 @@ def test_ci_in_progress_is_unknown(monkeypatch):
 
 def test_ci_without_gh_is_unknown(monkeypatch):
     monkeypatch.setattr(fc.shutil, "which", lambda _n: None)
-    c = fc.check_ci([("owner/repo", ["pii-guard"])], 5)
+    c = fc.check_ci([("owner/repo", ["pii-guard.yml"], "", "PUBLIC")], 5)
     assert c.count(fc.FAIL) == 0
     assert c.count(fc.UNKNOWN) == 1
 
@@ -725,6 +726,97 @@ def test_ci_with_no_targets_says_so_instead_of_printing_nothing(monkeypatch):
     monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
     c = fc.check_ci([], 5)
     assert c.count(fc.UNKNOWN) == 1
+
+
+# --- the CI probe reads EVERY workflow, not a hardcoded pair of names ----------------------------
+#
+# WHY (2026-07-31): check_ci interrogated GUARD_WORKFLOWS only, so a repo's own gate workflow was
+# invisible to the fleet report. That is how "34 of 34 green" was printed on a day when a real gate
+# workflow was concluding success over a log reading "RESULT: BLOCK (3 blocking issue(s))". The
+# workflow was not red at the time, but nothing in the report could ever have said so if it were.
+def test_ci_reads_a_non_guard_workflow_at_all(monkeypatch):
+    c = _ci_with_gh(monkeypatch, 0, _runs("success"),
+                    targets=[("owner/repo", ["gate.yml"], "", "PUBLIC")])
+    assert [n for _s, n, _d in c.rows] == ["owner/repo [other:gate.yml]"]
+
+
+def test_ci_red_non_guard_workflow_fails_the_row(monkeypatch):
+    """A red workflow we authored is a failure whoever wrote it. See CI_WARN_ONLY's note."""
+    c = _ci_with_gh(monkeypatch, 0, _runs("failure"),
+                    targets=[("owner/repo", ["gate.yml"], "", "PUBLIC")])
+    assert [s for s, _n, _d in c.rows] == [fc.FAIL]
+
+
+def test_ci_rows_are_tagged_by_tier_so_a_reader_can_tell_them_apart(monkeypatch):
+    c = _ci_with_gh(monkeypatch, 0, _runs("success"),
+                    targets=[("owner/repo", ["gate.yml", "pii-guard.yml"], "", "PUBLIC")])
+    assert {n for _s, n, _d in c.rows} == {"owner/repo [other:gate.yml]",
+                                           "owner/repo [guard:pii-guard.yml]"}
+
+
+def test_ci_warn_only_downgrades_exactly_one_named_workflow_and_prints_the_reason(monkeypatch):
+    monkeypatch.setitem(fc.CI_WARN_ONLY, ("owner/repo", "gate.yml"), "upstream API is flaky")
+    c = _ci_with_gh(monkeypatch, 0, _runs("failure"),
+                    targets=[("owner/repo", ["gate.yml", "pii-guard.yml"], "", "PUBLIC")])
+    got = {n: (s, d) for s, n, d in c.rows}
+    assert got["owner/repo [other:gate.yml]"][0] == fc.WARN
+    assert "upstream API is flaky" in got["owner/repo [other:gate.yml]"][1]
+    # the exemption is per workflow, never per tier: the guard beside it still fails
+    assert got["owner/repo [guard:pii-guard.yml]"][0] == fc.FAIL
+
+
+def test_ci_unobserved_listing_is_unknown_and_still_names_the_repo(monkeypatch):
+    """A repo whose workflow listing could not be read must not just vanish from the report."""
+    c = _ci_with_gh(monkeypatch, 0, _runs("success"),
+                    targets=[("owner/repo", None, "gh could not reach it", "PUBLIC")])
+    assert [s for s, _n, _d in c.rows] == [fc.UNKNOWN]
+    assert "gh could not reach it" in c.rows[0][2]
+
+
+def test_ci_public_repo_with_no_workflows_at_all_is_warned_not_silent(monkeypatch):
+    c = _ci_with_gh(monkeypatch, 0, _runs("success"),
+                    targets=[("owner/repo", [], "", "PUBLIC")])
+    assert [s for s, _n, _d in c.rows] == [fc.WARN]
+
+
+def test_ci_private_companion_repo_with_no_workflows_is_a_named_skip(monkeypatch):
+    """CI is not mandated on a private data repo, but the row still names it."""
+    c = _ci_with_gh(monkeypatch, 0, _runs("success"),
+                    targets=[("owner/repo-config", [], "", "PRIVATE")])
+    assert [(s, n) for s, n, _d in c.rows] == [(fc.SKIP, "owner/repo-config")]
+
+
+def test_workflow_tier_classifies_by_name_and_never_filters():
+    assert fc.workflow_tier("pii-guard.yml") == "guard"
+    assert fc.workflow_tier("DASH-Guard.YAML") == "guard"      # case and extension agnostic
+    assert fc.workflow_tier("gate.yml") == "other"
+    assert fc.workflow_tier("heartbeat.yml") == "other"
+
+
+# --- ci_targets: PRIVATE repos are interrogated too ----------------------------------------------
+def test_ci_targets_includes_private_repos_check_workflow_never_walked(tmp_path, monkeypatch):
+    """check_workflow only walks PUBLIC entries; a private repo's red CI is just as broken."""
+    wf = fc.Check("workflow", "t")
+    wf.all_remote_workflows = {"owner/public-repo": ["pii-guard.yml"]}
+    vis = _vis_map(tmp_path, {"owner/public-repo": "PUBLIC", "owner/private-repo": "PRIVATE"})
+    monkeypatch.setattr(fc, "remote_workflow_files",
+                        lambda *_a, **_k: (["memory-health.yml"], ""))
+    got = {slug: (names, visibility)
+           for slug, names, _why, visibility in fc.ci_targets(wf, vis, {"owner/private-repo": "p"}, 5)}
+    assert got["owner/private-repo"] == (["memory-health.yml"], "PRIVATE")
+    assert got["owner/public-repo"] == (["pii-guard.yml"], "PUBLIC")
+
+
+def test_ci_targets_reuses_the_public_listings_without_refetching(tmp_path, monkeypatch):
+    """The public repos were already listed by check_workflow; asking twice doubles the API cost."""
+    calls = []
+    wf = fc.Check("workflow", "t")
+    wf.all_remote_workflows = {"owner/public-repo": ["pii-guard.yml"]}
+    vis = _vis_map(tmp_path, {"owner/public-repo": "PUBLIC"})
+    monkeypatch.setattr(fc, "remote_workflow_files",
+                        lambda *a, **k: (calls.append(a), ([], ""))[1])
+    fc.ci_targets(wf, vis, {"owner/public-repo": "p"}, 5)
+    assert calls == []
 
 
 # --- checks must not report a clean sheet by looking at nothing -----------------------------------
