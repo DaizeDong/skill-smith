@@ -323,11 +323,20 @@ DATACLASS_TMPL = """{
     "content scanner can see it (a ticker with an entry price has no email or phone in it).",
     "",
     "data_sealed = a path that HELD real data, was purged, and must stay dead. Checked like data,",
-    "exempt from the .example schema requirement."
+    "exempt from the .example schema requirement.",
+    "",
+    "An EMPTY declaration is not a free pass and it is not a place for an argument: check 4 reads",
+    "the tracked file list, not this manifest, and fails any file wearing the shape of real-run",
+    "output (a jsonl under metrics/, a runs/ tree, a dated file under an output dir, a live-ledger",
+    "filename, a database). Six repos once shipped a careful paragraph here concluding they had",
+    "nothing to declare, and a verifier committed metrics/live-runs.jsonl into every one of them",
+    "with the boundary check still exiting 0. `tool` is that check's per-path allowlist, for a",
+    "hand-written TOOL file that happens to wear the shape; write the reason next to it."
   ],
   "data": [],
   "data_sealed": [],
   "fixture": [],
+  "tool": [],
   "_data_home": "~/.%(name)s-config/data/   (override with $%(env)s)"
 }
 """
