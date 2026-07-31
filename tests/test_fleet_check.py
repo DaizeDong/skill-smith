@@ -220,23 +220,89 @@ def test_guards_present_matches_by_stem():
 
 
 # --- check 4: the inverse data boundary ---------------------------------------------------------
-def test_data_dir_inside_a_git_worktree_fails(tmp_path, monkeypatch):
-    """The one check that would have caught the 2026-07 leak from the other end."""
+#
+# THE PREDICATE THIS BLOCK PINS DOWN (changed 2026-07-31)
+# ------------------------------------------------------
+# The old assertion was "the resolved data dir is not inside a git worktree", and it condemned the
+# shape the fleet is supposed to have. Real-run output LIVES IN the private companion repo,
+# versioned. Implementing "must not reach a public repo" as "must not be in git" made the correct
+# answer red, which is how a live ledger got moved out to a loose unversioned directory to appease
+# a checker. What follows pins the RIGHT predicate: PUBLIC fails, UNKNOWN fails closed, PRIVATE
+# passes and the row names the repo so an approving row cannot be mistaken for a skipped one.
+def _vis_map(tmp_path, mapping):
+    p = tmp_path / "visibility.json"
+    p.write_text(json.dumps(mapping), encoding="utf-8")
+    return str(p)
+
+
+def _companion(tmp_path, name, origin):
+    """A real git worktree standing in for a companion config repo."""
+    d = tmp_path / name
+    (d / "data").mkdir(parents=True)
+    assert git("init", "-q", cwd=d).returncode == 0
+    if origin:
+        assert git("remote", "add", "origin", origin, cwd=d).returncode == 0
+    return d
+
+
+def test_data_dir_inside_a_public_repo_fails(tmp_path, monkeypatch):
+    """The harm the check exists for: real-run output resolving somewhere the world can read."""
     root = tmp_path / "code"
     root.mkdir()
     make_repo(root, "leaky", datadir=True)
+    comp = _companion(tmp_path, "pub-repo", "git@github.com:Owner/pub-repo.git")
+    monkeypatch.setenv("LEAKY_DATA_DIR", str(comp / "data"))
 
-    worktree = tmp_path / "some-repo"
-    (worktree / "data").mkdir(parents=True)
-    assert git("init", "-q", cwd=worktree).returncode == 0
-    monkeypatch.setenv("LEAKY_DATA_DIR", str(worktree / "data"))
-
-    c = fc.check_data_boundary({"leaky": str(root / "leaky")})
+    vis = _vis_map(tmp_path, {"owner/pub-repo": "PUBLIC"})
+    c = fc.check_data_boundary(vis, repos={"leaky": str(root / "leaky")}, offline=True)
     assert [s for s, _n, _d in c.rows] == [fc.FAIL]
-    assert "inside git worktree" in c.rows[0][2]
+    assert "PUBLIC repo owner/pub-repo" in c.rows[0][2]
+
+
+def test_data_dir_inside_a_private_repo_passes_and_names_it(tmp_path, monkeypatch):
+    """A PASS must be legible as "examined and approved", not indistinguishable from a skip."""
+    root = tmp_path / "code"
+    root.mkdir()
+    make_repo(root, "tidy", datadir=True)
+    comp = _companion(tmp_path, "priv-repo", "git@github.com:Owner/priv-repo.git")
+    monkeypatch.setenv("TIDY_DATA_DIR", str(comp / "data"))
+
+    vis = _vis_map(tmp_path, {"owner/priv-repo": "PRIVATE"})
+    c = fc.check_data_boundary(vis, repos={"tidy": str(root / "tidy")}, offline=True)
+    assert [s for s, _n, _d in c.rows] == [fc.PASS]
+    detail = c.rows[0][2]
+    assert "owner/priv-repo" in detail and "PRIVATE" in detail
+
+
+def test_data_dir_in_repo_of_unknown_visibility_fails_closed(tmp_path, monkeypatch):
+    """Same rule the PII gate uses: an unanswerable question is gated, never waved through."""
+    root = tmp_path / "code"
+    root.mkdir()
+    make_repo(root, "murky", datadir=True)
+    comp = _companion(tmp_path, "who-knows", "git@github.com:Owner/who-knows.git")
+    monkeypatch.setenv("MURKY_DATA_DIR", str(comp / "data"))
+
+    vis = _vis_map(tmp_path, {})               # empty map, offline: nothing can answer
+    c = fc.check_data_boundary(vis, repos={"murky": str(root / "murky")}, offline=True)
+    assert [s for s, _n, _d in c.rows] == [fc.FAIL]
+    assert "failing closed" in c.rows[0][2]
+
+
+def test_data_dir_in_repo_with_no_origin_fails_closed(tmp_path, monkeypatch):
+    """No remote is not "safe by default": it is a repo whose destination nobody has stated."""
+    root = tmp_path / "code"
+    root.mkdir()
+    make_repo(root, "orphan", datadir=True)
+    comp = _companion(tmp_path, "no-origin", None)
+    monkeypatch.setenv("ORPHAN_DATA_DIR", str(comp / "data"))
+
+    c = fc.check_data_boundary(_vis_map(tmp_path, {}),
+                               repos={"orphan": str(root / "orphan")}, offline=True)
+    assert [s for s, _n, _d in c.rows] == [fc.FAIL]
 
 
 def test_data_dir_outside_git_passes(tmp_path, monkeypatch):
+    """A plain directory clears the check, and the row says out loud that it is unversioned."""
     root = tmp_path / "code"
     root.mkdir()
     make_repo(root, "clean", datadir=True)
@@ -244,8 +310,31 @@ def test_data_dir_outside_git_passes(tmp_path, monkeypatch):
     store.mkdir()
     monkeypatch.setenv("CLEAN_DATA_DIR", str(store))
 
-    c = fc.check_data_boundary({"clean": str(root / "clean")})
+    c = fc.check_data_boundary(_vis_map(tmp_path, {}),
+                               repos={"clean": str(root / "clean")}, offline=True)
     assert [s for s, _n, _d in c.rows] == [fc.PASS]
+    assert "unversioned" in c.rows[0][2]
+
+
+def test_resolver_refusal_is_a_failure_not_an_unknown(tmp_path, monkeypatch):
+    """datadir.py refuses a data dir inside its OWN repo. That is a finding, not a blind spot.
+
+    Filing a caught violation under "could not observe" is the exact rounding that lets a red fleet
+    print a clean sheet, so the refusal has to survive the trip through the driver as a FAIL.
+    """
+    root = tmp_path / "code"
+    root.mkdir()
+    d = make_repo(root, "selfref")
+    (d / "tools").mkdir(exist_ok=True)
+    (d / "tools" / "datadir.py").write_text(
+        "class DataDirInsideOwnRepo(RuntimeError):\n    pass\n"
+        "def resolve_data_dir(skill, create=False):\n"
+        "    raise DataDirInsideOwnRepo('data dir is INSIDE its own repo')\n", encoding="utf-8")
+
+    c = fc.check_data_boundary(_vis_map(tmp_path, {}),
+                               repos={"selfref": str(d)}, offline=True)
+    assert [s for s, _n, _d in c.rows] == [fc.FAIL]
+    assert "INSIDE its own repo" in c.rows[0][2]
 
 
 def test_uninitialized_data_dir_skips(tmp_path, monkeypatch):
@@ -255,7 +344,8 @@ def test_uninitialized_data_dir_skips(tmp_path, monkeypatch):
     make_repo(root, "fresh", datadir=True)
     monkeypatch.delenv("FRESH_DATA_DIR", raising=False)
 
-    c = fc.check_data_boundary({"fresh": str(root / "fresh")})
+    c = fc.check_data_boundary(_vis_map(tmp_path, {}),
+                               repos={"fresh": str(root / "fresh")}, offline=True)
     assert [s for s, _n, _d in c.rows] == [fc.SKIP]
     assert c.count(fc.FAIL) == 0
 
@@ -264,7 +354,8 @@ def test_repo_without_datadir_is_not_reported(tmp_path):
     root = tmp_path / "code"
     root.mkdir()
     make_repo(root, "plain")
-    assert fc.check_data_boundary({"plain": str(root / "plain")}).rows == []
+    assert fc.check_data_boundary(_vis_map(tmp_path, {}),
+                                  repos={"plain": str(root / "plain")}, offline=True).rows == []
 
 
 def test_data_boundary_is_unknown_when_git_cannot_run(tmp_path, monkeypatch):
@@ -281,9 +372,25 @@ def test_data_boundary_is_unknown_when_git_cannot_run(tmp_path, monkeypatch):
     monkeypatch.setenv("CLEAN_DATA_DIR", str(store))
     monkeypatch.setattr(fc, "run", lambda *_a, **_k: (None, "", "git: command not found"))
 
-    c = fc.check_data_boundary({"clean": str(root / "clean")})
+    c = fc.check_data_boundary(_vis_map(tmp_path, {}),
+                               repos={"clean": str(root / "clean")}, offline=True)
     assert [s for s, _n, _d in c.rows] == [fc.UNKNOWN]
     assert c.count(fc.PASS) == 0
+
+
+def test_visibility_map_is_never_written_back(tmp_path, monkeypatch):
+    """Read-only contract. A checker that mutates the map to answer its own question is a checker
+    whose second run tests something different from its first."""
+    root = tmp_path / "code"
+    root.mkdir()
+    make_repo(root, "tidy", datadir=True)
+    comp = _companion(tmp_path, "priv-repo", "git@github.com:Owner/priv-repo.git")
+    monkeypatch.setenv("TIDY_DATA_DIR", str(comp / "data"))
+    vis = _vis_map(tmp_path, {"owner/priv-repo": "PRIVATE"})
+    before = open(vis, encoding="utf-8").read()
+
+    fc.check_data_boundary(vis, repos={"tidy": str(root / "tidy")}, offline=True)
+    assert open(vis, encoding="utf-8").read() == before
 
 
 def test_in_git_worktree_tristate(tmp_path, monkeypatch):
@@ -310,7 +417,8 @@ def test_data_boundary_nonexistent_resolved_dir_is_unknown(tmp_path, monkeypatch
         "def resolve_data_dir(skill, create=False):\n"
         "    return Path(r'%s')\n" % str(ghost), encoding="utf-8")
 
-    c = fc.check_data_boundary({"drifted": str(d)})
+    c = fc.check_data_boundary(_vis_map(tmp_path, {}),
+                               repos={"drifted": str(d)}, offline=True)
     assert [s for s, _n, _d in c.rows] == [fc.UNKNOWN]
 
 

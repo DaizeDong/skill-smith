@@ -15,7 +15,7 @@
     "",
     "Enforced by tools/data_boundary.py in .githooks and in CI."
   ],
-  "_audited": "2026-07-13 -- swept for real-run output written back into this repo (every open(...,'a'), json.dump, write_text; every tracked *.jsonl / state / cache / report). This skill's writers all resolve OUTSIDE the repo, or it has no writers. No DATA-class path found. An empty list here is a CONCLUSION, not a default: it distinguishes 'audited, nothing to declare' from 'nobody has looked'.",
+  "_audited": "2026-07-31 RE-AUDIT (supersedes the 2026-07-13 sweep, which recorded an empty declaration for this repo). The earlier sweep asked only whether shipped code appends to a TRACKED file here. That question is too narrow: it clears every path that is gitignored, and .gitignore is advisory -- `git add -f` walks straight through it, which is the whole reason declarations exist. This pass asked instead whether shipped code or shipped docs can put REAL-RUN OUTPUT at a repo-relative path at all. ANSWER: it produces real-run output -- fleet-check-status.json carries repo names, resolved machine paths and failure text -- and fleet_check.py's DEFAULT_STATUS is ~/.skill-smith-data/fleet-check-status.json, outside every repo, with --status-json for a caller that wants it filed elsewhere. scaffold_skill.py and trim_descriptions.py write into the skill or repo they are POINTED AT, which is the tool's whole job and is that target's declaration to make, not this one's. scratchpad/ is scratch space, not run output. Nothing to declare.",
   "data": [],
   "data_sealed": [],
   "fixture": [],

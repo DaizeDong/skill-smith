@@ -3,6 +3,39 @@
 All notable changes to this project are documented here (Keep a Changelog style).
 
 ## [Unreleased]
+### Changed
+- **`fleet_check`'s `databoundary` check asked the wrong question, and the wrong question condemned
+  the right answer.** It asserted "the resolved real-run data dir is not inside a git worktree".
+  That implements "must not reach a public repo" as "must not be in git", and those are different
+  predicates. Real-run output LIVES IN the private companion repo, versioned: that is what the
+  doctrine says and what the operator confirmed on 2026-07-31. The old predicate failed
+  `market-intel` for keeping its ledger exactly there, an agent then moved the live ledger out to a
+  loose unversioned directory to turn the row green, and all the while `daily-hotspots` kept a
+  51-entry tracked ledger in ITS private companion repo and nothing objected, because the check
+  could not see it at all. Two contradictory shapes in one fleet, endorsed inconsistently.
+  The predicate is now the one that matches the harm: **PUBLIC fails, UNKNOWN fails closed** (the
+  same treatment the PII gate gives an unknown remote), and **PRIVATE passes and the row names the
+  repo**, so a reader can tell "the control examined this and approved it" from "the control
+  skipped it". A dir outside every worktree still passes, and the row says out loud that it is
+  unversioned. Visibility is resolved from the machine's map first and live `gh` on a miss, using a
+  borrowed token per child process rather than `gh auth switch`, because this tool is read-only and
+  a checker that mutates machine state to answer its own question is a checker whose second run
+  tests something different from its first.
+  Proven, not asserted: a throwaway fleet root was built with a fake skill pointed in turn at a
+  PUBLIC companion, a PRIVATE one, one absent from the map, and one with no origin at all. FAIL,
+  PASS, FAIL, FAIL. The online path was exercised separately against a real public repo missing
+  from the map and correctly reported PUBLIC via `gh`.
+- **`tools/datadir.py` now follows the same pointer the skills follow**, which is what made the
+  check blind in the first place. Several companion repos are pinned with `$<SKILL>_CONFIG` outside
+  the dotfile path; the resolver knew only the dotfile path, answered `None`, and downstream that
+  is indistinguishable from "this skill has no data". `daily-hotspots` was reported "not
+  initialized" for months over a ledger that grew every day. It also refuses a data dir inside the
+  skill's own repo, a check deliberately narrow enough to need no map, no `gh` and no network so it
+  still works on a stranger's fresh clone.
+- **`tools/test_datadir.py` is new and ships fleet-wide**, run by the `pii-guard` workflow. The
+  resolver is the pipe every byte of real-run output travels down, and no downstream scanner can
+  see a leak that has nothing to smell.
+
 ### Fixed
 - **Three of the new gates were reassuring the reader, which is the failure mode they exist to
   prevent.** All three were found by an independent pass over the run they had just shipped, and all
