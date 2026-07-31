@@ -536,9 +536,21 @@ def check_budget(skills_dir, code_root, timeout):
     lines = [ln.strip() for ln in (so or "").splitlines() if ln.strip()]
     status_line = next((ln for ln in lines if ln.startswith("STATUS:")), "")
     ends_at = next((ln for ln in lines if ln.startswith("user tier ends at")), "")
-    past = [ln for ln in lines if "past the high bound" in ln or "inside the uncertain band" in ln]
+    # Read the COUNT off budget_check.py's own machine-readable line. Deriving it by grepping for
+    # the phrases that name a victim double-counted the moment those phrases also appeared in the
+    # FAIL list, and reported "8 skill(s) past the cutoff" over four skills. A caller that infers a
+    # number from prose is a caller that will eventually infer the wrong one.
+    n_past = 0
+    for ln in lines:
+        if ln.startswith("TRUNCATED:"):
+            try:
+                n_past = int(ln.split(":", 1)[1].strip().split()[0])
+            except (IndexError, ValueError):
+                n_past = 0
+            break
+    past = n_past > 0
     detail = " | ".join(x for x in (status_line, ends_at,
-                                    "%d skill(s) past the cutoff" % len(past) if past else "") if x)
+                                    "%d skill(s) past the cutoff" % n_past if n_past else "") if x)
     if rc is None:
         c.add(UNKNOWN, "library", se or "no result")
     elif rc == 2:

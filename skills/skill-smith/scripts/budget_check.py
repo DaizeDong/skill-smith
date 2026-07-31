@@ -298,6 +298,13 @@ def main():
     else:
         print("\n  Nothing is past the observed cutoff.")
 
+    # One machine-readable line carrying the count, printed unconditionally (including the zero).
+    # It exists because the caller used to derive the count by grepping stdout for the phrases that
+    # name a victim, and the moment those phrases also appeared in the FAIL list the caller reported
+    # double. A number a caller needs is a number this tool should state once, not a shape for it to
+    # infer from prose that is free to change.
+    print("  TRUNCATED: %d skill(s) past the observed cutoff" % (len(past_high) + len(past_low)))
+
     # Load order is the listing order, which is what was observed. It is not a documented contract,
     # so say so rather than let a reader assume the victim list is authoritative.
     print("  (Victims are named in listing order, which is what was observed to be load order. The"
