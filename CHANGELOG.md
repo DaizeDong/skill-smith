@@ -17,10 +17,10 @@ All notable changes to this project are documented here (Keep a Changelog style)
   same treatment the PII gate gives an unknown remote), and **PRIVATE passes and the row names the
   repo**, so a reader can tell "the control examined this and approved it" from "the control
   skipped it". A dir outside every worktree still passes, and the row says out loud that it is
-  unversioned. Visibility is resolved from the machine's map first and live `gh` on a miss, using a
-  borrowed token per child process rather than `gh auth switch`, because this tool is read-only and
-  a checker that mutates machine state to answer its own question is a checker whose second run
-  tests something different from its first.
+  unversioned. Visibility is resolved from live `gh` (see the next entry, which had to undo the
+  map-first order this one shipped with), using a borrowed token per child process rather than
+  `gh auth switch`, because this tool is read-only and a checker that mutates machine state to
+  answer its own question is a checker whose second run tests something different from its first.
   Proven, not asserted: a throwaway fleet root was built with a fake skill pointed in turn at a
   PUBLIC companion, a PRIVATE one, one absent from the map, and one with no origin at all. FAIL,
   PASS, FAIL, FAIL. The online path was exercised separately against a real public repo missing
@@ -37,6 +37,47 @@ All notable changes to this project are documented here (Keep a Changelog style)
   see a leak that has nothing to smell.
 
 ### Fixed
+- **The data-boundary control could be defeated by one stale line of JSON, and the file it trusted
+  had nothing refreshing it.** The visibility oracle read `~/.pii-guard/visibility.json` FIRST and
+  asked `gh` only on a miss, so a cached answer outvoted GitHub unconditionally. Poisoning a copy of
+  the map with `{"daizedong/skill-smith": "PRIVATE"}` -- a genuinely PUBLIC repo -- made the check
+  print `PASS ... [PRIVATE per visibility map]` over a data dir sitting in a public repo. The map
+  had last been written on 2026-07-30 and nothing on the machine rewrites it, so a repo flipped from
+  private to PUBLIC on GitHub -- precisely the event this control exists to survive -- would have
+  read as PRIVATE indefinitely.
+  Three fixes were on the table and the trade was made deliberately. A TTL alone is cheapest and
+  does not close it: a freshly written entry is inside any window, so the poisoned copy still
+  passes. Scheduling a refresh narrows the drift but leaves a window, and puts correctness back on
+  "remember to run the script", which is the design `visibility_of.py` already learned not to trust.
+  So the ORDER was inverted: `gh` is asked live, and the map is consulted only when `gh` cannot
+  answer. The cost, accepted knowingly, is one `gh repo view` per DISTINCT slug the check actually
+  reaches -- on this fleet that is 2 calls, not the 119 keys in the map, because only initialized
+  data dirs inside a worktree ever ask. The offline fallback is bounded so the property holds with
+  no network at all: the map may vote only while it is younger than 7 days, measured from a
+  `_refreshed` stamp `refresh_visibility.py` now writes into it, and an unstamped map, a stamp in
+  the future, or an expired one all behave as UNKNOWN, which already fails closed. When `gh` and the
+  map disagree the live answer wins and the row says the map is STALE, because the disagreement is
+  itself the finding.
+  Proven the way the hole was found, against real repos and real GitHub: the poisoned map now FAILS
+  and names the map as stale; the same map offline with a fresh stamp still PASSES; the same map
+  offline with a 30-day-old stamp, and the same map with no stamp at all, both FAIL closed; a
+  genuinely PRIVATE repo visible to only one of the two identities still PASSES via the borrowed
+  token; and a reverse-poisoned map claiming a private repo is PUBLIC is overruled the same way.
+- **The CI check reported a topic branch's run as the default branch's status.** The query was
+  `gh run list -w <wf> --limit 1`, the newest run on ANY ref, while the sentence it printed -- "the
+  guard CI is green" -- is a claim about the branch the world clones. On 2026-07-31, 2 of its 34
+  green rows were runs from `feat/login-handoff-and-depth-gate` on `shopping-aggregator`, reported
+  as if they described `main`. That was survivable only by luck: on 2026-07-22 `daily-hotspots` had
+  a GREEN `pii-guard` run on a topic branch while `master`'s own newest `pii-guard` run was a
+  FAILURE. It now filters on the repo's default branch, resolved once per repo, and prints which ref
+  the evidence came from. **"No run on the default branch" is UNKNOWN**, not a silent fallback to
+  whatever run exists: a workflow that has only ever fired on topic branches has said nothing yet
+  about the branch being asked about.
+  Proven against real GitHub history rather than a fixture, by running both versions of the check
+  with the clock pinned to the moment in question: at `2026-07-22T06:55Z` on `daily-hotspots`
+  `pii-guard`, before = **PASS**, after = **FAIL** naming `master`'s failing run; at
+  `2026-06-01T08:40Z` on `market-intel` `gate`, whose first run ever was on `refresh/2026-06-01`,
+  before = **PASS**, after = **UNKNOWN**.
 - **Three of the new gates were reassuring the reader, which is the failure mode they exist to
   prevent.** All three were found by an independent pass over the run they had just shipped, and all
   three were green for the wrong reason.
