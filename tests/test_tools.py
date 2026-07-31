@@ -177,34 +177,117 @@ def test_scaffold_refuses_without_force(tmp_path):
 
 
 # ===========================================================================
-# 3. budget_check: correct totals + case-insensitive dedupe (no double count)
+# 3. budget_check: three tiers, only ours can fail, and the plugin tier is
+#    read from installed_plugins.json rather than globbed out of the cache
 # ===========================================================================
 
+def empty_plugins(tmp_path):
+    """An installed_plugins.json with nothing in it, so a test measures only the user tier."""
+    p = tmp_path / "installed_plugins.json"
+    p.write_text(json.dumps({"version": 2, "plugins": {}}), encoding="utf-8")
+    return str(p)
+
+
+def squeeze(text):
+    """Collapse runs of spaces, so an assertion tests the report's CONTENT, not its column widths."""
+    return " ".join(text.split())
+
+
 def test_budget_totals(tmp_path):
+    """Cost is the listing line, "- name: desc\\n", so 5 chars of framing per skill."""
     lib = str(tmp_path / "lib")
-    # name "alpha"(5) + desc(38) + 12 = 55 ; name "beta"(4) + desc(43) + 12 = 59
-    make_skill(lib, "alpha", "parse pdf invoices and extract totals.")   # 38 chars
-    make_skill(lib, "beta", "parse pdf invoices and extract totals fast.")  # 43 chars
-    r = run([BUDGET, "--skills-dir", lib, "--max-chars", "15000"])
+    make_skill(lib, "alpha", "parse pdf invoices and extract totals.")       # 5 + 38 + 5 = 48
+    make_skill(lib, "beta", "parse pdf invoices and extract totals fast.")   # 4 + 43 + 5 = 52
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", empty_plugins(tmp_path)])
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "2 skills" in r.stdout, r.stdout
-    assert "total 114 chars" in r.stdout, "expected 55+59=114:\n%s" % r.stdout
+    assert "TOTAL 2 skills 100 chars" in squeeze(r.stdout), r.stdout
 
 
-def test_budget_over_budget_exit1(tmp_path):
+def test_budget_tiers_are_reported_separately(tmp_path):
+    """A skill resolving under the code root is OURS; anything else is not."""
+    code_root = tmp_path / "code"
+    lib = code_root / "lib"                       # inside the code root -> tier "ours"
+    make_skill(str(lib), "mine", "short one.")
+    outside = tmp_path / "outside"
+    make_skill(str(outside), "theirs", "short two.")
+    # Point the scan at a dir holding both by scanning the outside dir with a code root that
+    # cannot contain it, then again with one that can.
+    r = run([BUDGET, "--skills-dir", str(lib), "--code-root", str(code_root),
+             "--installed-plugins", empty_plugins(tmp_path)])
+    assert "tier ours 1 skills" in squeeze(r.stdout), r.stdout
+    assert "tier other 0 skills" in squeeze(r.stdout), r.stdout
+    r2 = run([BUDGET, "--skills-dir", str(outside), "--code-root", str(code_root),
+              "--installed-plugins", empty_plugins(tmp_path)])
+    assert "tier ours 0 skills" in squeeze(r2.stdout), r2.stdout
+    assert "tier other 1 skills" in squeeze(r2.stdout), r2.stdout
+
+
+def test_budget_per_skill_cap_fails_only_for_ours(tmp_path):
+    """The 180-char per-skill cap is a FAIL for our tier and a printed note for anyone else."""
+    code_root = tmp_path / "code"
+    lib = code_root / "lib"
+    make_skill(str(lib), "fat", "x" * 200)
+    ours = run([BUDGET, "--skills-dir", str(lib), "--code-root", str(code_root),
+                "--installed-plugins", empty_plugins(tmp_path)])
+    assert ours.returncode == 1, "our own over-cap description must fail:\n%s" % ours.stdout
+    assert "over the 180 per-skill cap" in ours.stdout
+    # Identical library, but now nothing resolves under the code root.
+    theirs = run([BUDGET, "--skills-dir", str(lib), "--code-root", str(tmp_path / "elsewhere"),
+                  "--installed-plugins", empty_plugins(tmp_path)])
+    assert theirs.returncode == 0, "a third-party description is not ours to fail on:\n%s" % theirs.stdout
+    assert "not ours to edit" in theirs.stdout
+
+
+def test_budget_plugin_tier_comes_from_installed_plugins(tmp_path):
+    """Active installPaths are counted once; a stale record is NAMED, never silently dropped.
+
+    The cache on a real machine holds 2 to 4 versions of each plugin plus scratch clones, so a
+    glob reports a library many times larger than the one that is loaded.
+    """
+    cache = tmp_path / "cache"
+    active = cache / "demo" / "2.0.0"
+    stale = cache / "demo" / "1.0.0"
+    make_skill(str(active / "skills"), "demo-skill", "the active one.")
+    make_skill(str(stale / "skills"), "demo-skill", "the stale one that must not be counted.")
+    inst = tmp_path / "installed_plugins.json"
+    inst.write_text(json.dumps({"version": 2, "plugins": {
+        # two records for one plugin: the same skill must be counted once
+        "demo@market": [{"installPath": str(active)}, {"installPath": str(active)}],
+        "ghost@market": [{"installPath": str(cache / "ghost" / "9.9.9")}],
+    }}), encoding="utf-8")
     lib = str(tmp_path / "lib")
-    make_skill(lib, "big", "x" * 200)
-    r = run([BUDGET, "--skills-dir", lib, "--max-chars", "100"])
-    assert r.returncode == 1, "over budget must exit 1:\n%s" % r.stdout
-    assert "OVER BUDGET" in r.stdout
+    make_skill(lib, "user-one", "a user skill.")
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", str(inst)])
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "tier plugin 1 skills" in squeeze(r.stdout), "stale version or duplicate record counted:\n%s" % r.stdout
+    assert "the stale one" not in r.stdout, r.stdout
+    assert "UNRESOLVABLE plugin records" in r.stdout and "ghost@market" in r.stdout, \
+        "a plugin whose installPath is gone must be named, not treated as zero:\n%s" % r.stdout
+
+
+def test_budget_reports_both_cutoffs_and_names_the_truncated(tmp_path):
+    """The documented constant and the observed cutoff disagree; print both, name the victims."""
+    lib = str(tmp_path / "lib")
+    for i in range(40):
+        make_skill(lib, "skill%02d" % i, "y" * 700)      # ~28k chars total, well past the cutoff
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", empty_plugins(tmp_path)])
+    assert "documented budget : 15000 chars" in squeeze(r.stdout), r.stdout
+    assert "OBSERVED cutoff : between 19943 and 20231" in squeeze(r.stdout), r.stdout
+    assert "PAST THE CUTOFF" in r.stdout, r.stdout
+    assert "certainly truncated" in r.stdout, r.stdout
 
 
 def test_budget_extra_candidate(tmp_path):
     lib = str(tmp_path / "lib")
     make_skill(lib, "one", "abc")
-    base = run([BUDGET, "--skills-dir", lib, "--max-chars", "15000"])
+    base = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+                "--installed-plugins", empty_plugins(tmp_path)])
     assert base.returncode == 0
-    withx = run([BUDGET, "--skills-dir", lib, "--max-chars", "15000", "--extra", "y" * 50])
+    withx = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+                 "--installed-plugins", empty_plugins(tmp_path), "--extra", "y" * 50])
     assert withx.returncode == 0
     assert "candidate description" in withx.stdout
 
@@ -217,9 +300,11 @@ def test_budget_bom_tolerant(tmp_path):
     """
     lib = str(tmp_path / "lib")
     make_skill(lib, "withbom", "parse pdf invoices and extract totals.", bom=True)
-    r = run([BUDGET, "--skills-dir", lib, "--max-chars", "15000"])
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", empty_plugins(tmp_path)])
     assert r.returncode == 0, r.stdout + r.stderr
-    assert "1 skills" in r.stdout, "BOM'd SKILL.md was dropped (under-count):\n%s" % r.stdout
+    assert "TOTAL 1 skills" in squeeze(r.stdout), \
+        "BOM'd SKILL.md was dropped (under-count):\n%s" % r.stdout
 
 
 # ===========================================================================
@@ -255,6 +340,145 @@ def test_dedup_desc_candidate_mode(tmp_path):
     r2 = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4",
               "--desc", "render 3d terrain meshes from gis elevation rasters", "--name", "cand2"])
     assert r2.returncode == 0, "distinct candidate must exit 0:\n%s" % r2.stdout
+
+
+# ===========================================================================
+# 5. check_conformance, the three SKILL.md checks added 2026-07-31:
+#    always-loaded size, shard pointers resolve, rules not version deltas
+# ===========================================================================
+
+def make_repo(root, skill="demo", body="body\n", repo_name=None):
+    """The minimum a repo needs for the SKILL.md checks to run over it.
+
+    The other conformance checks will FAIL on this skeleton, which is fine: every assertion below
+    reads the specific row it is about, never the exit code alone.
+    """
+    d = root if repo_name is None else os.path.join(root, repo_name)
+    write_utf8(os.path.join(d, "skills", skill, "SKILL.md"),
+               "---\nname: %s\ndescription: x\n---\n%s" % (skill, body))
+    return d
+
+
+def row(stdout, needle):
+    for ln in stdout.splitlines():
+        if needle in ln:
+            return ln.strip()
+    return ""
+
+
+def test_size_gate_warns_then_fails(tmp_path):
+    small = make_repo(str(tmp_path / "a"), body="x" * 100)
+    r = run([CONFORM, small])
+    assert "[PASS] SKILL.md size" in r.stdout, row(r.stdout, "SKILL.md size")
+
+    mid = make_repo(str(tmp_path / "b"), body="x" * 13000)
+    r = run([CONFORM, mid])
+    assert "[WARN] SKILL.md size" in r.stdout, row(r.stdout, "SKILL.md size")
+    assert "over the 12000 warn line" in r.stdout
+
+    big = make_repo(str(tmp_path / "c"), body="x" * 17000)
+    r = run([CONFORM, big])
+    assert "[FAIL] SKILL.md size" in r.stdout, row(r.stdout, "SKILL.md size")
+    assert r.returncode == 1
+
+
+def test_size_gate_ratchet_allows_shrink_and_blocks_growth(tmp_path):
+    """A grandfathered file may shrink freely and may not grow by a character.
+
+    The allowlist is keyed by "<repo dir>/<path>", so a temp repo named after a real entry
+    exercises the real table rather than a test-only copy of it.
+    """
+    ceiling = 41959                                  # the 2026-07-31 measurement in the table
+    under = make_repo(str(tmp_path / "shrunk"), skill="orchestrator",
+                      repo_name="buy-me-a-car")
+    head = len(open(os.path.join(under, "skills", "orchestrator", "SKILL.md"),
+                    encoding="utf-8").read())
+    write_utf8(os.path.join(under, "skills", "orchestrator", "SKILL.md"),
+               "---\nname: orchestrator\ndescription: x\n---\n" + "x" * (ceiling - head + 4))
+    r = run([CONFORM, under])
+    assert "[WARN] SKILL.md size" in r.stdout, row(r.stdout, "SKILL.md size")
+    assert "grandfathered at 41959" in r.stdout, r.stdout
+
+    write_utf8(os.path.join(under, "skills", "orchestrator", "SKILL.md"),
+               "---\nname: orchestrator\ndescription: x\n---\n" + "x" * (ceiling - head + 200))
+    r = run([CONFORM, under])
+    assert "[FAIL] SKILL.md size" in r.stdout, "a grandfathered file that GREW must fail:\n%s" % r.stdout
+    assert "may shrink, never grow" in r.stdout
+
+
+def test_shard_pointer_resolves_against_skill_dir_then_repo_root(tmp_path):
+    d = make_repo(str(tmp_path / "r"),
+                  body="load `reference/shard.md` and `tools/thing.py`\n")
+    write_utf8(os.path.join(d, "skills", "demo", "reference", "shard.md"), "s\n")
+    write_utf8(os.path.join(d, "tools", "thing.py"), "t\n")
+    r = run([CONFORM, d])
+    # The count is in the row LABEL on purpose: details print only for non-PASS rows, so a check
+    # that verified two pointers and one that found none would otherwise read identically.
+    assert "[PASS] shard pointers resolve (2)" in r.stdout, row(r.stdout, "shard pointers")
+
+
+def test_shard_pointer_dangling_in_an_existing_dir_fails(tmp_path):
+    d = make_repo(str(tmp_path / "r"), body="load `reference/gone.md`\n")
+    write_utf8(os.path.join(d, "skills", "demo", "reference", "other.md"), "o\n")
+    r = run([CONFORM, d])
+    assert "[FAIL] shard pointers resolve" in r.stdout, row(r.stdout, "shard pointers")
+    assert "is right there, the file is not" in r.stdout
+
+
+def test_shard_pointer_moved_file_fails(tmp_path):
+    d = make_repo(str(tmp_path / "r"), body="load `domains/auction.md`\n")
+    write_utf8(os.path.join(d, "skills", "demo", "reference", "domains", "auction.md"), "a\n")
+    r = run([CONFORM, d])
+    assert "[FAIL] shard pointers resolve" in r.stdout, row(r.stdout, "shard pointers")
+    assert "moved?" in r.stdout
+
+
+def test_shard_pointer_uncorroborated_only_warns(tmp_path):
+    """A runtime output path, or a path in someone else's repo, must not go red.
+
+    Verified on the fleet: of six unresolved pointers, the three with no corroboration were all
+    correct by design (an archive file a run writes, a path in the user's private companion repo,
+    a shard named in a sibling skill's repo).
+    """
+    d = make_repo(str(tmp_path / "r"), body="writes `archive/report.md` on each run\n")
+    r = run([CONFORM, d])
+    assert "[WARN] shard pointers resolve" in r.stdout, row(r.stdout, "shard pointers")
+    assert "fine if they name a runtime output" in r.stdout
+
+
+def test_shard_pointer_ignores_urls_and_placeholders(tmp_path):
+    d = make_repo(str(tmp_path / "r"),
+                  body="see [docs](https://example.com/a/b.md), `<slug>/thing.md`, `~/abs/x.md`\n")
+    r = run([CONFORM, d])
+    assert "[PASS] shard pointers resolve" in r.stdout, row(r.stdout, "shard pointers")
+
+
+def test_retrofit_marker_warns_and_fences_are_exempt(tmp_path):
+    d = make_repo(str(tmp_path / "r"), body="Phase 5 adds a modifier to the score.\n")
+    r = run([CONFORM, d])
+    assert "[WARN] instruction text states rules" in r.stdout, \
+        row(r.stdout, "instruction text states rules")
+    assert "retrofit marker" in r.stdout
+    # exit code must be untouched by a WARN
+    fenced = make_repo(str(tmp_path / "f"),
+                       body="```text\nbad: Phase 5 adds a modifier to the score.\n```\n")
+    r2 = run([CONFORM, fenced])
+    assert "[PASS] instruction text states rules" in r2.stdout, \
+        "an example inside a fence is not a retrofit:\n%s" % row(r2.stdout, "instruction text")
+
+
+def test_warn_does_not_change_the_exit_code(tmp_path):
+    """A WARN is printed, counted on the summary line, and never blocks."""
+    d = make_repo(str(tmp_path / "r"), body="x" * 13000)
+    r = run([CONFORM, d])
+    warn_line = [ln for ln in r.stdout.splitlines() if "passed" in ln][-1]
+    assert "WARN" in warn_line, "the summary line must carry the WARN count:\n%s" % warn_line
+    # This skeleton repo fails plenty of OTHER checks, so assert on the reason rather than on rc:
+    # no FAIL row may come from the three checks under test here.
+    for ln in r.stdout.splitlines():
+        if ln.strip().startswith("[FAIL]"):
+            assert "SKILL.md size" not in ln and "shard pointers" not in ln \
+                and "instruction text" not in ln, ln
 
 
 if __name__ == "__main__":

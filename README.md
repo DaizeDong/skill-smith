@@ -73,19 +73,33 @@ python skills/skill-smith/scripts/scaffold_skill.py my-skill \
 
 python skills/skill-smith/scripts/check_conformance.py ~/CodesClaude/my-skill   # Spec v1 linter
 python skills/skill-smith/scripts/bump_version.py ~/CodesClaude/my-skill --level patch  # all 5 sites
-python skills/skill-smith/scripts/budget_check.py                            # library token budget
+python skills/skill-smith/scripts/budget_check.py                            # library prompt budget
 python skills/skill-smith/scripts/dedup_check.py                             # description overlap
 python skills/skill-smith/scripts/fleet_check.py                             # whole fleet, read only
 ```
 
+`check_conformance.py` also measures the SKILL.md itself, because that file is paid for on **every**
+invocation of the skill: **warn above 12,000 characters, fail above 16,000**, every relative path it
+names must resolve on disk, and instruction text must state the rule rather than which iteration
+added it. Files already over the size line on 2026-07-31 are grandfathered by name at their measured
+size and may shrink, never grow, so the allowlist can only get shorter.
+
+`budget_check.py` answers the one question whose failure is invisible by construction: past a budget
+the loader silently drops skill descriptions, so a skill keeps existing and simply never fires. It
+reports three tiers separately (ours, other user skills, plugin skills), reads the plugin tier from
+`installed_plugins.json` rather than globbing the cache (which holds 2 to 4 stale versions per
+plugin), prints both the documented 15,000-char budget and the ~20,000-char cutoff actually observed
+on this machine, and names the skills past it. Only **our** tier can fail: a third-party description
+over budget is real, is printed, and is not the operator's to edit.
+
 `fleet_check.py` is the driver the linter above never had. It fans `check_conformance.py` over every
 plugin repo and adds what nothing else checks: skill junctions resolve, a repo marked PUBLIC carries
-every guard workflow (`pii-guard` **and** `dash-guard`) **on its remote default branch**, a resolved
-real-run data directory is not inside a git worktree, and that each of those guard workflows is
-actually green, one row per repo and workflow. It is **read-only, with no `--fix`** and no `git
-fetch`, exits nonzero on any FAIL, and writes a UTC-stamped status JSON so a scheduled caller can
-tell "the run happened" apart from "the run passed". Add `--offline` to skip the network-backed
-probes.
+every guard workflow (`pii-guard` **and** `dash-guard`) **on its remote default branch**, the
+installed library still fits in the system prompt, a resolved real-run data directory is not inside a
+git worktree, and each of those guard workflows is actually green, one row per repo and workflow. It
+is **read-only, with no `--fix`** and no `git fetch`, exits nonzero on any FAIL, and writes a
+UTC-stamped status JSON so a scheduled caller can tell "the run happened" apart from "the run
+passed". Add `--offline` to skip the network-backed probes.
 
 The remote is the subject of that workflow check on purpose. It used to stat the local clone, so a
 guard workflow that was committed but never pushed scored PASS for a PUBLIC repo whose remote carried
@@ -94,6 +108,13 @@ no guard at all. `UNKNOWN` now means one thing only, "this run could not observe
 exit code; a definitive negative from a remote that did answer is a `FAIL`. Unobserved rows are
 printed under their own `UNOBSERVED` heading and listed in the status JSON, because a fleet nobody
 could look at must not read like a clean one.
+
+Every run ends with one **VERDICT** line carrying a coverage fraction, and a caller is meant to quote
+that line rather than build its own sentence out of the counts. On 2026-07-30 the nightly digest
+turned "pass 86, fail 0, skip 82" into the words "all green" while every defect the next day's audit
+found was already in the fleet: nearly half the checked surface was never evaluated and the report
+still read as a clean sheet. `GREEN` may now mean only "nothing that was evaluated failed", `AMBER`
+means there are findings that no edit fixes today, and the same line says how much was looked at.
 
 `bump_version.py` moves the version at all five sites at once (plugin.json, both README badges,
 ROADMAP, CHANGELOG). It refuses on an already-drifted repo instead of papering over the drift, and

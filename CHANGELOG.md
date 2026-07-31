@@ -4,6 +4,44 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 ### Added
+- **Three SKILL.md checks in `check_conformance.py`, and a WARN status to carry them.** The gate
+  asked whether files EXIST and never what the always-loaded file costs or whether it keeps its
+  promises, so the fleet drifted with nothing to notice: a 41,959-char SKILL.md paid for on every
+  invocation, three shard pointers naming files that are not on disk, and instruction text telling
+  the reader which iteration added a rule instead of what the rule is.
+  **Size:** warn above 12,000 chars, fail above 16,000. These were not chosen so the fleet passes:
+  measured 2026-07-31, five of thirty SKILL.md files are over the fail line and four more are in the
+  warn band. Those five are grandfathered BY NAME at their measured size, which they may shrink below
+  and may not exceed by a character, so the allowlist can only ever get shorter and an already
+  oversized file cannot quietly keep growing.
+  **Shard pointers:** every relative path a SKILL.md names must resolve, against the skill directory
+  first and the repo root second. It only FAILS when something corroborates that the file was meant
+  to be here (its parent directory exists under the skill root, or its basename exists exactly once
+  elsewhere in the repo); anything else WARNs, because a runtime output path and a path in the user's
+  private companion repo are both legitimate. Measured before shipping: 225 pointers resolved, 3
+  FAILs all hand-verified as genuinely dangling, 3 WARNs all verified correct by design.
+  **Retrofit markers:** an iteration marker next to a rule verb ("Phase 5 adds ...") is a WARN. The
+  first draft of this lint matched seven patterns and hit 261 times across 48 files, three of them
+  ordinary English; it was cut to the retrofit syntax alone and measured at 8 hits in 5 files, all
+  genuine, before shipping. Fenced code blocks are exempt so a doc can show the bad shape.
+- **`scripts/budget_check.py` rewritten around what the loader actually does.** It globbed
+  `~/.claude/skills` and compared the total to a hardcoded 15,000, which was wrong in three ways at
+  once. It now reads the plugin tier from `installed_plugins.json` (the cache holds 2 to 4 stale
+  versions per plugin plus scratch clones, so a glob over it finds 1,431 SKILL.md where 88 are
+  actually loaded), reports our tier, other user skills and plugin skills separately, and fails only
+  on OURS, since a third-party description over budget is real and is not the operator's to edit. It
+  prints the documented 15,000-char budget AND the cutoff observed on this machine, which is not the
+  same number: the last skill to keep its description sat at a running total of 19,943 chars and the
+  next four appeared with no description at all despite having one in their SKILL.md. Those four are
+  named in the output, because a truncation is invisible by construction. Adds a 180-char per-skill
+  cap for our tier.
+- **A VERDICT line, and an escalation for RED.** `fleet_check.py` ends every run with one line
+  carrying a verdict and a coverage fraction, mirrored into the status JSON (`schema` 2) as
+  `verdict`, `digest` and `coverage`. The nightly caller now quotes that line instead of composing
+  its own adjective from the counts, which is how "pass 86, fail 0, skip 82" came to be reported as
+  "all green" on the night before an audit found every one of these defects already present. A RED
+  verdict additionally sends its own notification and makes the nightly job exit nonzero, the same
+  escalation the config-drift check already used, so a red gate cannot be a line nobody reads.
 - **`scripts/fleet_check.py`, the driver `check_conformance.py` never had.** The linter has been
   correct and complete for weeks and surfaced nothing, because nothing ever ran it: a gate with no
   driver does not exist. This fans it over every repo carrying `.claude-plugin/plugin.json` and adds

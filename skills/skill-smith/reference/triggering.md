@@ -6,8 +6,24 @@ leverage line in the skill.
 
 ## Body (progressive disclosure)
 
-- Keep `SKILL.md` thin: overview, when-to-use, core steps, hard rules. Push anything large into
-  `reference/<shard>.md` loaded on demand. (Mirror this repo's own structure.)
+- **`SKILL.md` is measured, not "thin".** Budget: **warn above 12,000 characters, fail above
+  16,000**, enforced by `check_conformance.py`. This file is paid for on every invocation of the
+  skill, so it holds overview, when-to-use, core steps and hard rules only. Everything else goes in
+  `reference/<shard>.md`, loaded on demand. (Mirror this repo's own structure.)
+  "Thin" is what the rule used to say, and because nothing could measure it, the fleet drifted to a
+  41,959-character always-loaded file. Files already over the line on 2026-07-31 are grandfathered
+  by name in `check_conformance.py` at their measured size and may shrink, never grow.
+- **Every relative path you name must resolve.** A shard pointer the agent cannot open is an
+  instruction it cannot follow, and nothing surfaces it until a run needs that shard. Pointers
+  resolve against the skill directory first, then the repo root.
+- **State the rule, not the version delta.** A sentence shaped like the first line below tells the
+  reader what changed, not what to do, and assumes they know which iteration they are in. Write the
+  second. The history belongs in `CHANGELOG.md`.
+
+  ```text
+  bad:  Phase 5 adds a catalyst modifier to the score.
+  good: A T1-evidenced catalyst adds one modifier point to the score.
+  ```
 - One job, ≤3 modules (P5). If it sprawls, split into a set (-> `batch.md`).
 
 ## Triggering description, two complementary methods

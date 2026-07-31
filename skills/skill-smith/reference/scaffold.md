@@ -19,7 +19,7 @@ python scripts/scaffold_skill.py <name> \
   --tagline "Verb-first, quantified, one line." \
   --description "When to trigger + what it does + scope, one paragraph (this is the trigger text)." \
   --topics "domain-a,domain-b" \
-  --out-dir ~/CodesSelf            # default; the source-of-truth location
+  --out-dir ~/CodesClaude            # default; the source-of-truth location
 ```
 
 It emits the **必备 7 files** + `PHILOSOPHY.md`, all version-synced to `0.1.0`:
@@ -81,8 +81,8 @@ init/verify scripts are generic (they auto-detect the skill from `plugin.json`) 
 After scaffolding, immediately verify:
 
 ```bash
-python scripts/check_conformance.py ~/CodesSelf/<name>          # G6 Spec v1
-python scripts/check_config_conformance.py ~/CodesSelf/<name>   # G8 (auto-skips if not config-bearing)
+python scripts/check_conformance.py ~/CodesClaude/<name>          # G6 Spec v1
+python scripts/check_config_conformance.py ~/CodesClaude/<name>   # G8 (auto-skips if not config-bearing)
 ```
 
 Conformance is part of the acceptance gate (Step 5), a non-conformant repo is not shippable, and a
