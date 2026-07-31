@@ -98,7 +98,8 @@ plugin 那层从 `installed_plugins.json` 读而不是 glob 缓存目录(缓存�
 `fleet_check.py` 是上面那个检查器一直缺的 driver。它把 `check_conformance.py` 铺到每个 plugin 仓上,
 再补上没人查的五件事: skill junction 能否解析、标为 PUBLIC 的仓**在远端默认分支上**是否带齐每个 guard
 workflow(`pii-guard` **和** `dash-guard`)、已安装的库是否还塞得进系统提示词、解析出的真实运行数据目录
-是否落在某个 git 工作区里、以及这些 guard workflow 到底绿没绿(每个仓每个 workflow 各出一行)。
+是否落在某个 **PUBLIC 或可见性未知**的仓里(落在私有伴生仓里是**正确形态**, 该行 PASS 并写明是哪个仓)、
+以及这些 guard workflow 到底绿没绿(每个仓每个 workflow 各出一行)。
 它**只读, 没有 `--fix`**, 也从不 `git fetch`, 任一项 FAIL 即非零退出, 并写一份带 UTC 时间戳的状态 JSON,
 让定时调用方能把"这轮真跑了"和"这轮通过了"分开判断。加 `--offline` 可跳过需要联网的探针。
 
