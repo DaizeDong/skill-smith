@@ -20,15 +20,26 @@ WHAT IS BEING PREVENTED, AND WHY IT IS INVISIBLE
     printed. The observed one is what actually silences a skill; the documented one is what the
     written rule says, and where they disagree the code does not get to pick silently.
 
-THE THREE TIERS, AND WHY ONLY ONE CAN FAIL
+THE THREE TIERS, AND WHAT EACH ONE IS ALLOWED TO FAIL FOR
     ours    skills under the user skills dir that resolve into the fleet code root. The operator
-            writes these descriptions, so these are the ones an exit code can usefully complain
-            about.
-    other   third-party skills installed in the same user skills dir. They occupy the SAME budget
-            and can push ours past the cutoff, so they are counted and printed, but they are not
-            ours to edit and never fail the run.
-    plugin  skills shipped by installed plugins, read from installed_plugins.json. Counted and
-            printed, never failing, same reason.
+            writes these descriptions, so an over-length description here is a one-edit fix and
+            fails the run.
+    other   third-party skills installed in the same user skills dir. They occupy the SAME budget.
+            Their WORDING is not ours to edit, so a long third-party description never fails.
+    plugin  skills shipped by installed plugins, read from installed_plugins.json. Same rule.
+
+    FAIL ON THE CONDITION, NOT ON THE AUTHOR
+    Those tiers used to gate the whole verdict, and the result was a check that could not see the
+    only harm it exists to detect. On 2026-07-31 four installed skills were sitting past the
+    observed truncation cutoff, invisible to the model, and this tool exited 1 for an entirely
+    different reason: two of OUR descriptions were over the per-skill cap. Had those two been
+    trimmed, the tool would have gone green with four skills still silently missing from the prompt.
+    A skill the agent cannot see is a capability loss regardless of who wrote its description, so
+    "a skill is currently past the truncation cutoff" is now a FAILURE whoever owns it.
+    That does not hand the operator someone else's file to edit, because editing the third-party
+    description was never the lever. The levers are: uninstall or remove a third-party skill from
+    the user skills dir, or trim OURS, since the cutoff is a RUNNING TOTAL and every character cut
+    anywhere ahead of a victim pulls it back under. The failure message says exactly that.
 
 WHY installed_plugins.json AND NOT A GLOB
     The plugin cache keeps 2 to 4 stale versions per plugin (superpowers 6.1.1 + 6.2.0 + a sha,
@@ -297,27 +308,43 @@ def main():
         for p in problems:
             print("    %s" % p)
 
-    # --- verdict. Only OUR tier can fail. -------------------------------------------------------
+    # --- verdict ---------------------------------------------------------------------------------
+    # Two different failure classes with two different owners:
+    #   description WORDING over the per-skill cap -> only OURS, because only ours is ours to edit.
+    #   a skill PAST THE CUTOFF                    -> any tier, because an invisible skill is a
+    #                                                 capability loss no matter who wrote it, and the
+    #                                                 lever (uninstall, or trim ours) is the
+    #                                                 operator's either way.
     fails = []
     long_ours = [(n, len(d)) for t, n, d, _p in per_tier[OURS] if len(d) > a.per_skill_max]
     for n, ln in sorted(long_ours, key=lambda x: -x[1]):
         fails.append("%s: description is %d chars, over the %d per-skill cap"
                      % (n, ln, a.per_skill_max))
-    ours_truncated = [n for tier, n, _at in past_high + past_low if tier == OURS]
-    for n in ours_truncated:
-        fails.append("%s: OUR skill is past the observed truncation cutoff, so it is invisible" % n)
+    for band, group in (("past the high bound, certainly truncated", past_high),
+                        ("inside the uncertain band", past_low)):
+        for tier, n, at in group:
+            fails.append("%s [%s]: %s at running total %d, so its description is dropped from the "
+                         "prompt and the agent cannot see this skill at all" % (n, tier, band, at))
 
     print("-" * 78)
     other_long = sum(1 for t, _n, d, _p in rows if t != OURS and len(d) > a.per_skill_max)
     if other_long:
-        print("  note: %d skill(s) outside our tier are over the %d-char per-skill cap. They occupy"
+        print("  note: %d skill(s) outside our tier are over the %d-char per-skill cap. Their"
               % (other_long, a.per_skill_max))
-        print("        the same budget and are counted above, but they are not ours to edit, so"
-              "\n        they never fail this check.")
+        print("        WORDING is not ours to edit, so length alone never fails this check. Being"
+              "\n        past the cutoff does fail it, for any tier: see below.")
     if fails:
-        print("  STATUS: FAIL (our tier)")
+        truncated = len(past_high) + len(past_low)
+        print("  STATUS: FAIL")
         for f in fails:
             print("    - %s" % f)
+        if truncated:
+            print("  THE LEVER for a skill past the cutoff is NOT editing its description if it is")
+            print("  not ours. The cutoff is a RUNNING TOTAL, so either lever works on any victim:")
+            print("    1. uninstall a plugin, or remove a third-party skill from %s" % skills_dir)
+            print("    2. trim OUR descriptions; every character cut ahead of a victim in load")
+            print("       order pulls that victim back under the cutoff")
+            print("  Doing neither leaves %d skill(s) installed, described, and invisible." % truncated)
         return 1
     ratio = running / float(OBSERVED_CUTOFF_LOW)
     if ratio >= WARN_RATIO:

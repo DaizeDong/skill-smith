@@ -16,6 +16,7 @@ THREE STATUSES, AND THE LINE BETWEEN THEM
     this very linter died the first time. WARN is the seam between those two failure modes, and
     every check below states which side it sits on and why.
 """
+import datetime
 import glob
 import json
 import os
@@ -63,18 +64,38 @@ def read(path):
 #     entry that drops back under the FAIL line is reported as retirable, and a repo cannot quietly
 #     keep expanding an already-oversized always-loaded file. Growth on a grandfathered file is a
 #     FAIL, not a WARN: the whole point of a ratchet is that it does not turn.
+#
+# WHY THE ALLOWLIST ALSO CARRIES A DATED TARGET
+#     The allowlist as first shipped held exactly the five files over the FAIL line, which meant the
+#     gate's first run over the fleet produced zero FAIL rows: 5 of 30 always-loaded files (17% of
+#     the files, 40% of the always-loaded characters) were simply exempt, and a run with no FAIL rows
+#     reads as "the fleet is within budget". It is not. It is 59,007 characters over, paid on every
+#     invocation.
+#     The threshold is not the thing to move. The honesty is. So each entry now names a SHRINK TARGET
+#     and a DATE by which it must be met; the entries WARN on every single run with the arithmetic
+#     spelled out rather than passing quietly; the per-repo summary line carries "N grandfathered,
+#     M chars over target" so no run can present itself as clean; and once the target date passes
+#     with the file still over target, the entry FAILS. A grandfather clause with no expiry is not a
+#     plan to fix anything, it is a permanent exemption with a reassuring name.
 SKILL_MD_WARN = 12000
 SKILL_MD_FAIL = 16000
 
 # key: "<repo-dir-name>/<path relative to the repo root, forward slashes>"
-# value: (chars measured, date measured)
+# value: (ceiling chars, date measured, target chars, target date)
+#   ceiling  the size measured on that date. The file may never exceed it: that is the ratchet.
+#   target   what it must come down to, and by when. Targets are all SKILL_MD_FAIL, because the
+#            allowlist exists to buy time to reach the line everyone else already meets, not to
+#            install a second, softer line. The dates are staged by how far each file has to travel.
 SKILL_MD_GRANDFATHERED = {
-    "buy-me-a-car/skills/orchestrator/SKILL.md":                  (41959, "2026-07-31"),
-    "shopping-aggregator/skills/shopping-aggregator/SKILL.md":    (29955, "2026-07-31"),
-    "small-cap-deepdive/SKILL.md":                                (25288, "2026-07-31"),
-    "market-intel/skills/market-intel/SKILL.md":                  (24653, "2026-07-31"),
-    "buy-me-a-car/skills/close-day-checklist/SKILL.md":           (17078, "2026-07-31"),
+    "buy-me-a-car/skills/orchestrator/SKILL.md":                  (41959, "2026-07-31", 16000, "2026-10-31"),
+    "shopping-aggregator/skills/shopping-aggregator/SKILL.md":    (29955, "2026-07-31", 16000, "2026-10-31"),
+    "small-cap-deepdive/SKILL.md":                                (25288, "2026-07-31", 16000, "2026-09-30"),
+    "market-intel/skills/market-intel/SKILL.md":                  (24653, "2026-07-31", 16000, "2026-09-30"),
+    "buy-me-a-car/skills/close-day-checklist/SKILL.md":           (17078, "2026-07-31", 16000, "2026-08-31"),
 }
+
+# Filled in by check_skill_md_size() so the summary line can state the debt instead of a bare pass.
+GRANDFATHER_DEBT = {"entries": 0, "over_target": 0, "overdue": 0, "rows": []}
 
 
 def skill_md_paths(root):
@@ -91,6 +112,15 @@ def grandfather_key(root, path):
     return "%s/%s" % (os.path.basename(os.path.abspath(root)), rel)
 
 
+def _days_until(datestr):
+    """Whole days from today to datestr (negative once the date has passed). None if unparseable."""
+    try:
+        d = datetime.datetime.strptime(datestr, "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+    return (d - datetime.date.today()).days
+
+
 def check_skill_md_size(root):
     for p in skill_md_paths(root):
         text = read(p) or ""
@@ -99,15 +129,40 @@ def check_skill_md_size(root):
         label = "SKILL.md size (%d chars): %s" % (n, os.path.relpath(p, root).replace(os.sep, "/"))
         gf = SKILL_MD_GRANDFATHERED.get(key)
         if gf:
-            ceiling, when = gf
+            ceiling, when, target, by = gf
+            over_target = max(0, n - target)
+            left = _days_until(by)
+            overdue = left is not None and left < 0 and over_target > 0
+            # Record the debt whatever the verdict below turns out to be. The summary line has to be
+            # able to say how much is being carried even in the run where every row happens to be a
+            # WARN, because that is exactly the run a reader would otherwise call clean.
+            GRANDFATHER_DEBT["entries"] += 1
+            GRANDFATHER_DEBT["over_target"] += over_target
+            GRANDFATHER_DEBT["overdue"] += 1 if overdue else 0
+            GRANDFATHER_DEBT["rows"].append(
+                "%s: %d chars, target %d by %s (%s), over target by %d"
+                % (os.path.relpath(p, root).replace(os.sep, "/"), n, target, by,
+                   "OVERDUE" if overdue else ("%d days left" % left if left is not None
+                                              else "unparseable date"),
+                   over_target))
             if n > ceiling:
                 check(label, False,
                       "%d chars, above its %s grandfathered ceiling of %d. Grandfathered files may "
                       "shrink, never grow." % (n, when, ceiling))
+            elif overdue:
+                # The date was the whole point. An allowlist entry that sails past its own deadline
+                # and keeps warning is the permanent exemption this design exists to prevent.
+                check(label, False,
+                      "%d chars, still %d over its %d target, which was due %s. The grandfather "
+                      "clause has EXPIRED: cut the file or argue for a new dated target in the "
+                      "allowlist." % (n, over_target, target, by))
             elif n > SKILL_MD_FAIL:
                 check(label, WARN,
-                      "%d chars, over the %d fail line but grandfathered at %d on %s. Cut it: this "
-                      "is paid on every invocation." % (n, SKILL_MD_FAIL, ceiling, when))
+                      "GRANDFATHERED DEBT: %d chars, %d over the %d target due %s (%s). Ceiling %d "
+                      "set %s. Paid on every single invocation of this skill."
+                      % (n, over_target, target, by,
+                         "%d days left" % left if left is not None else "unparseable date",
+                         ceiling, when))
             else:
                 check(label, True,
                       "%d chars, now under the %d line. Retire its allowlist entry."
@@ -303,17 +358,24 @@ def check_retrofit_markers(root):
         targets += sorted(glob.glob(os.path.join(os.path.dirname(p), "reference", "**", "*.md"),
                                     recursive=True))
     hits = []
+    hit_files = set()
     for t in targets:
         for ln, frag in retrofit_hits(t):
             hits.append("%s:%d %r" % (os.path.relpath(t, root).replace(os.sep, "/"), ln, frag))
+            hit_files.add(t)
     if not targets:
         return
     if hits:
         shown = "; ".join(hits[:4])
         more = "" if len(hits) <= 4 else " (+%d more)" % (len(hits) - 4)
+        # "across %d file(s)" used to be handed len(targets), the number of files SCANNED, so
+        # small-cap-deepdive's 8 markers in 5 files read as "8 markers across 10 files". Both
+        # numbers are worth having and they answer different questions, so both are named: how many
+        # files CARRY a marker, and how many were looked at.
         check("instruction text states rules, not version deltas", WARN,
-              "%d retrofit marker(s) across %d file(s) -> %s%s. State the rule; the history belongs "
-              "in CHANGELOG.md." % (len(hits), len(targets), shown, more))
+              "%d retrofit marker(s) in %d of %d file(s) scanned -> %s%s. State the rule; the "
+              "history belongs in CHANGELOG.md."
+              % (len(hits), len(hit_files), len(targets), shown, more))
     else:
         check("instruction text states rules, not version deltas (%d files scanned)" % len(targets),
               True)
@@ -456,15 +518,34 @@ def main(root):
         if detail and tag != PASS:
             line += "  -> %s" % detail
         print(line)
+    # The grandfathered always-loaded debt, restated on its own, every run, whatever the verdict.
+    # It is printed here and not only as WARN rows because the rows scroll and this is the number
+    # that decides whether "the fleet is within budget" is a true sentence.
+    if GRANDFATHER_DEBT["entries"]:
+        print("-" * 60)
+        print("  GRANDFATHERED ALWAYS-LOADED DEBT (carried, not fixed):")
+        for r in GRANDFATHER_DEBT["rows"]:
+            print("    %s" % r)
     print("-" * 60)
     total = len(results)
     # This summary line is what fleet_check.py lifts into the nightly digest, so the WARN count has
     # to be ON it. A warning that only exists in the full log is a warning nobody reads.
+    #
+    # The grandfather clause has to be on it for the same reason and a stronger one: the allowlist
+    # was seeded with exactly the files over the fail line, so without this the very first fleet run
+    # printed "N/N passed" over 59,007 characters of exempted always-loaded debt. A summary that can
+    # say "passed" while carrying an exemption it does not mention is the gate reassuring its reader,
+    # which is the one thing this file is not allowed to do.
     tail = []
     if n_fail:
         tail.append("%d FAIL" % n_fail)
     if n_warn:
         tail.append("%d WARN" % n_warn)
+    if GRANDFATHER_DEBT["entries"]:
+        tail.append("%d grandfathered, %d chars over target%s"
+                    % (GRANDFATHER_DEBT["entries"], GRANDFATHER_DEBT["over_target"],
+                       ", %d OVERDUE" % GRANDFATHER_DEBT["overdue"]
+                       if GRANDFATHER_DEBT["overdue"] else ""))
     print("%d/%d passed%s" % (total - n_fail - n_warn, total,
                               "" if not tail else "  (%s)" % ", ".join(tail)))
     return 0 if n_fail == 0 else 1

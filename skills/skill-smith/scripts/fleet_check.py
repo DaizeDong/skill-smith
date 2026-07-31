@@ -78,8 +78,11 @@ THE FIVE CHECKS
   budget      budget_check.py, the one check that is about the LIBRARY rather than any repo: do the
               installed skill descriptions still fit in the system prompt. Past the cutoff they are
               truncated silently, so a skill keeps existing, keeps having a description, and simply
-              stops being visible to the agent. Only OUR tier can fail it; a third-party or plugin
-              description over budget is real, is printed, and is not the operator's to edit.
+              stops being visible to the agent. A skill past that cutoff FAILS whatever tier it
+              belongs to: invisibility is a capability loss no matter who wrote the description, and
+              the lever (uninstall one, or trim ours, since the cutoff is a running total) is the
+              operator's in both cases. Only the per-skill description CAP stays limited to our
+              tier, because third-party wording is genuinely not ours to edit.
   databoundary the INVERSE data-boundary assertion, which is the one check that would have caught
               the 2026-07 leak: data_boundary.py proves the REPO holds no real-run output, and this
               proves the reverse, that the resolved real-run output directory is not itself inside a
@@ -506,17 +509,28 @@ def check_budget(skills_dir, code_root, timeout):
     prompt with no error anywhere, so the skill simply never fires and nothing says why.
 
     Exit-code contract of budget_check.py:
-      0  our tier is clean (the tier may still be over the cutoff; that part is not ours to edit)
-      1  our tier has a finding
+      0  nothing is past the cutoff and no description of ours is over the per-skill cap
+      1  a finding: either one of OUR descriptions is too long, or SOME skill (any tier) is past
+         the truncation cutoff and therefore invisible to the agent
       2  nothing to measure, which is a state and not a failure
+
+    WHY THE TIER NO LONGER DECIDES THE VERDICT
+    Until 2026-07-31 only OUR tier could fail this, which meant the one harm the check exists to
+    find could not turn it red: four third-party skills were past the cutoff and invisible, and the
+    tool exited 1 only because two of our own descriptions were long. Trimming those two would have
+    turned the check green with four skills still missing from the prompt. Being invisible is a
+    capability loss whoever authored the description, so the CONDITION fails now regardless of tier.
+    The operator still never edits a third-party description; the lever is uninstalling one or
+    trimming ours, and budget_check.py prints exactly that.
     """
     c = Check("budget", "installed skill descriptions still fit in the system prompt (G3)")
     if not os.path.isfile(BUDGET):
         c.note = "budget_check.py not found next to this script"
         c.add(UNKNOWN, "budget_check.py", BUDGET)
         return c
-    c.note = ("only OUR tier can fail: a third-party or plugin description over budget is real, is "
-              "printed by the tool, and is not the operator's to edit")
+    c.note = ("a skill past the truncation cutoff FAILS whatever tier it is in, because it is "
+              "invisible to the agent; only the per-skill description CAP is limited to our tier, "
+              "since third-party wording is not the operator's to edit")
     rc, so, se = run([sys.executable, BUDGET, "--skills-dir", skills_dir, "--code-root", code_root],
                      timeout=timeout)
     lines = [ln.strip() for ln in (so or "").splitlines() if ln.strip()]
@@ -530,9 +544,9 @@ def check_budget(skills_dir, code_root, timeout):
     elif rc == 2:
         c.add(UNKNOWN, "library", detail or "nothing to measure")
     elif rc == 0:
-        # Our tier is clean, but skills ARE being truncated right now. That is a real, observed,
-        # currently-happening loss, and printing it as a plain PASS is the same rounding this file
-        # was rewritten to stop.
+        # rc==0 is now supposed to imply nothing is past the cutoff. The WARN arm stays as a
+        # disagreement detector: if the tool ever exits 0 while its own output names a truncated
+        # skill, the two have drifted and this must not round up to PASS.
         c.add(WARN if past else PASS, "library", detail or "within budget")
     else:
         c.add(FAIL, "library", detail or first_line(se) or "exit %s" % rc)
