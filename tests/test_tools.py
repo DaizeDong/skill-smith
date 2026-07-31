@@ -280,6 +280,40 @@ def test_budget_reports_both_cutoffs_and_names_the_truncated(tmp_path):
     assert "certainly truncated" in r.stdout, r.stdout
 
 
+def test_budget_fails_when_any_tier_is_past_the_cutoff(tmp_path):
+    """A skill past the truncation cutoff fails the check no matter who wrote its description.
+
+    The regression: the verdict used to be gated on tier, so the only harm this tool exists to find
+    could not turn it red. Every description here is UNDER the per-skill cap and NONE of them is
+    ours, so truncation is the sole possible reason for a nonzero exit. Under the old rule this
+    library exited 0 with dozens of skills silently missing from the prompt.
+    """
+    lib = str(tmp_path / "lib")
+    for i in range(130):
+        make_skill(lib, "skill%03d" % i, "y" * 150)      # under the 180 cap, past the cutoff
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", empty_plugins(tmp_path)])
+    assert r.returncode == 1, "a truncated third-party skill must fail:\n%s" % r.stdout[-2000:]
+    assert "over the 180 per-skill cap" not in r.stdout, \
+        "no description here is over the cap, so the cap must not be the reason:\n%s" % r.stdout[-2000:]
+    assert "the agent cannot see this skill at all" in r.stdout, r.stdout[-2000:]
+    # The operator is told the lever, and told that editing someone else's description is not it.
+    assert "THE LEVER" in r.stdout, r.stdout[-2000:]
+    assert "uninstall a plugin" in r.stdout, r.stdout[-2000:]
+    assert "trim OUR descriptions" in r.stdout, r.stdout[-2000:]
+
+
+def test_budget_ok_when_nothing_is_truncated(tmp_path):
+    """The companion assertion: the condition above is what fails, not merely having other tiers."""
+    lib = str(tmp_path / "lib")
+    for i in range(5):
+        make_skill(lib, "skill%02d" % i, "y" * 150)
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", empty_plugins(tmp_path)])
+    assert r.returncode == 0, r.stdout[-2000:]
+    assert "Nothing is past the observed cutoff." in r.stdout, r.stdout[-2000:]
+
+
 def test_budget_extra_candidate(tmp_path):
     lib = str(tmp_path / "lib")
     make_skill(lib, "one", "abc")
@@ -397,13 +431,67 @@ def test_size_gate_ratchet_allows_shrink_and_blocks_growth(tmp_path):
                "---\nname: orchestrator\ndescription: x\n---\n" + "x" * (ceiling - head + 4))
     r = run([CONFORM, under])
     assert "[WARN] SKILL.md size" in r.stdout, row(r.stdout, "SKILL.md size")
-    assert "grandfathered at 41959" in r.stdout, r.stdout
+    assert "Ceiling 41959 set 2026-07-31" in r.stdout, r.stdout
 
     write_utf8(os.path.join(under, "skills", "orchestrator", "SKILL.md"),
                "---\nname: orchestrator\ndescription: x\n---\n" + "x" * (ceiling - head + 200))
     r = run([CONFORM, under])
     assert "[FAIL] SKILL.md size" in r.stdout, "a grandfathered file that GREW must fail:\n%s" % r.stdout
     assert "may shrink, never grow" in r.stdout
+
+
+def test_grandfathered_entry_states_a_dated_target_and_never_passes_quietly(tmp_path):
+    """The allowlist may not produce a silent pass, and the summary line must carry the debt.
+
+    Regression for the honesty defect: the allowlist was seeded with exactly the files over the FAIL
+    line, so the gate's first fleet run produced zero FAIL rows and a reader could conclude the fleet
+    was within budget. Three things must be true on every run for a grandfathered file:
+      it WARNs (never PASSes) while it is over the fail line,
+      its row names the target and the date it is due, and
+      the summary line states how many entries are carried and how many chars over target they are.
+    """
+    ceiling = 41959
+    d = make_repo(str(tmp_path / "gf"), skill="orchestrator", repo_name="buy-me-a-car")
+    head = len(open(os.path.join(d, "skills", "orchestrator", "SKILL.md"), encoding="utf-8").read())
+    write_utf8(os.path.join(d, "skills", "orchestrator", "SKILL.md"),
+               "---\nname: orchestrator\ndescription: x\n---\n" + "x" * (ceiling - head + 4))
+    r = run([CONFORM, d])
+    line = row(r.stdout, "SKILL.md size")
+    assert "[WARN]" in line, line
+    assert "GRANDFATHERED DEBT" in line, line
+    assert "target due 2026-10-31" in line, line
+    assert "over the 16000 target" in line, line
+    # The summary line is what fleet_check.py lifts into the nightly digest.
+    summary = row(r.stdout, "passed")
+    assert "1 grandfathered" in summary, summary
+    assert "chars over target" in summary, summary
+    assert "GRANDFATHERED ALWAYS-LOADED DEBT" in r.stdout, r.stdout
+
+
+def test_grandfathered_entry_fails_once_its_target_date_passes(tmp_path):
+    """A grandfather clause with no expiry is a permanent exemption with a friendly name.
+
+    Exercised in-process because the real allowlist's dates are all in the future by design; the
+    thing under test is the expiry rule, not today's table.
+    """
+    sys.path.insert(0, _SCRIPTS)
+    import importlib
+    cc = importlib.import_module("check_conformance")
+    importlib.reload(cc)
+    key = "expired-repo/SKILL.md"
+    cc.SKILL_MD_GRANDFATHERED[key] = (30000, "2020-01-01", 16000, "2020-06-30")
+    d = str(tmp_path / "expired-repo")
+    write_utf8(os.path.join(d, "SKILL.md"),
+               "---\nname: x\ndescription: y\n---\n" + "x" * 25000)
+    cc.results[:] = []
+    cc.GRANDFATHER_DEBT.update(entries=0, over_target=0, overdue=0, rows=[])
+    cc.check_skill_md_size(d)
+    verdicts = [(nm, ok, detail) for nm, ok, detail in cc.results if "SKILL.md size" in nm]
+    assert verdicts, cc.results
+    _nm, ok, detail = verdicts[0]
+    assert ok is False, "an overdue grandfather entry must FAIL, got %r (%s)" % (ok, detail)
+    assert "EXPIRED" in detail, detail
+    assert cc.GRANDFATHER_DEBT["overdue"] == 1, cc.GRANDFATHER_DEBT
 
 
 def test_shard_pointer_resolves_against_skill_dir_then_repo_root(tmp_path):
@@ -459,6 +547,10 @@ def test_retrofit_marker_warns_and_fences_are_exempt(tmp_path):
     assert "[WARN] instruction text states rules" in r.stdout, \
         row(r.stdout, "instruction text states rules")
     assert "retrofit marker" in r.stdout
+    # The file count must be the number of files CARRYING a marker, not the number scanned. It was
+    # handed the scanned count, so 8 markers in 5 files read as "8 markers across 10 files".
+    assert "1 retrofit marker(s) in 1 of 1 file(s) scanned" in r.stdout, \
+        row(r.stdout, "instruction text states rules")
     # exit code must be untouched by a WARN
     fenced = make_repo(str(tmp_path / "f"),
                        body="```text\nbad: Phase 5 adds a modifier to the score.\n```\n")
