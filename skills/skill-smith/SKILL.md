@@ -69,8 +69,8 @@ is that driver: **read-only, no `--fix` and never one**, it fans the linter over
 adds what nothing else checks (skill junctions resolve, visibility PUBLIC implies every guard
 workflow -- `pii-guard` and `dash-guard` -- is on the repo's REMOTE default branch, the installed
 library still fits in the system prompt, a resolved real-run data dir is not inside a PUBLIC or
-UNKNOWN repo, and each of those guard workflows is actually green ON THE REMOTE DEFAULT BRANCH, one
-row per repo and workflow). It exits nonzero
+UNKNOWN repo, and EVERY workflow on EVERY repo of ours, public and private alike, is actually green
+ON THE REMOTE DEFAULT BRANCH, one row per repo and workflow). It exits nonzero
 on any FAIL and writes a UTC-stamped status JSON, so a scheduled caller checks the artifact's
 freshness to know the run HAPPENED rather than trusting an exit code that only says whether it
 PASSED. Run it by hand with `python scripts/fleet_check.py [--offline]`.
