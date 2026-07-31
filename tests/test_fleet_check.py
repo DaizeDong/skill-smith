@@ -434,19 +434,50 @@ def test_budget_maps_the_tools_exit_code(monkeypatch, rc, want):
 
 
 def test_budget_pass_with_truncation_is_a_warning(monkeypatch):
-    """Our tier clean while skills ARE being truncated is not a clean sheet.
+    """A tool that exits 0 while its own output names a truncated skill has drifted.
 
-    budget_check exits 0 when nothing of OURS is at fault, which is correct (a third-party
-    description is not the operator's to edit) and is exactly the shape that would let a
-    currently-happening loss print as a plain PASS.
+    budget_check now FAILS on truncation whatever the tier, so rc==0 with victims should be
+    impossible. This asserts the disagreement is caught rather than rounded up to PASS: a caller
+    that trusts an exit code over the report it just read is how the last clean sheet was produced.
     """
     out = ("user tier ends at : 20999 chars\n"
            "    training-check  other  running total 20617  (past the high bound: certainly truncated)\n"
+           "  TRUNCATED: 1 skill(s) past the observed cutoff\n"
            "STATUS: OK (our tier clean)\n")
     monkeypatch.setattr(fc, "run", lambda *_a, **_k: (0, out, ""))
     c = fc.check_budget("skills", "code", 30)
     assert c.rows[0][0] == fc.WARN, c.rows
     assert "1 skill(s) past the cutoff" in c.rows[0][2]
+
+
+def test_budget_truncation_count_comes_from_the_machine_readable_line(monkeypatch):
+    """The count is READ, not inferred from prose.
+
+    Regression: the count used to be derived by grepping stdout for the phrases that name a victim.
+    Once budget_check also repeated those phrases in its FAIL list, four truncated skills were
+    reported as eight. The victim names appear twice in this fixture on purpose.
+    """
+    out = ("user tier ends at : 20781 chars\n"
+           "    training-check  other  running total 20399  (past the high bound: certainly truncated)\n"
+           "    vast-gpu       other  running total 20591  (past the high bound: certainly truncated)\n"
+           "  TRUNCATED: 2 skill(s) past the observed cutoff\n"
+           "  STATUS: FAIL\n"
+           "    - training-check [other]: past the high bound, certainly truncated at running total 20399\n"
+           "    - vast-gpu [other]: past the high bound, certainly truncated at running total 20591\n")
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (1, out, ""))
+    c = fc.check_budget("skills", "code", 30)
+    assert c.rows[0][0] == fc.FAIL, c.rows
+    assert "2 skill(s) past the cutoff" in c.rows[0][2], c.rows[0][2]
+
+
+def test_budget_reports_no_count_when_nothing_is_truncated(monkeypatch):
+    out = ("user tier ends at : 5000 chars\n"
+           "  TRUNCATED: 0 skill(s) past the observed cutoff\n"
+           "  STATUS: OK (our tier clean; user tier at 25% of the observed cutoff).\n")
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (0, out, ""))
+    c = fc.check_budget("skills", "code", 30)
+    assert c.rows[0][0] == fc.PASS, c.rows
+    assert "past the cutoff" not in c.rows[0][2], c.rows[0][2]
 
 
 def test_budget_missing_tool_is_unknown_not_pass(monkeypatch):
