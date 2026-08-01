@@ -35,6 +35,35 @@ to quote that line rather than compose its own adjective from the counts. GREEN 
 only "nothing that was evaluated failed", and the same line says out loud how much was evaluated.
 Wording that hides a skip inside a green headline is the bug, not a formatting preference.
 
+And on 2026-08-01 that was still not enough, because the fraction was at the END of the line. The
+run read "VERDICT GREEN | pass 104 ... | coverage 56% (112 of 200 rows)" with 88 rows never
+evaluated, and a reader scanning for the word after VERDICT gets GREEN and stops. So the coverage
+clause is now glued to the verdict WORD, and it shouts when the sample is partial:
+
+    VERDICT GREEN OVER 56% OF ROWS (112 of 200; 88 NOT EVALUATED) | pass 104 ...
+
+The TOTAL line carries the same clause under its counts, because bare counts are the other thing a
+reader rounds into an adjective. A disclosure the reader never reaches is not a disclosure.
+
+WHY THIS FILE IS CONCURRENT, AND WHAT THAT IS NOT ALLOWED TO COST
+------------------------------------------------------------------
+Coverage grew on 2026-07-31 (live visibility per row, EVERY workflow on EVERY repo including the
+private ones) and the run went from 63s to 130s, because each remote question blocked the next. For
+a report a human runs by hand that is a correctness problem, not a comfort one: a two minute report
+gets started, abandoned and then not read, which is the same disease as a gate nobody runs.
+
+So the independent remote queries fan out over a thread pool (pmap) and every answer is memoized per
+distinct slug (Memo), which also killed ~25 duplicate `gh api repos/<slug>` calls per run where the
+workflow check and the CI check each resolved the same default branch. A whole-fleet run is ~28s.
+
+The two rules that make the speed honest, both enforced by test:
+  1. NEVER buy time by asking fewer questions. Every row interrogated before is interrogated now,
+     with the same query and the same arguments. Measured: the report body is byte-identical to the
+     serial version, in the clean case and in the deliberately-failed case alike.
+  2. ORDER IS PART OF THE ANSWER. pmap returns results in INPUT order and rows are emitted from the
+     same sorts as before, because a report whose rows shuffle run to run cannot be diffed against
+     yesterday's, and diffing against yesterday's is how a new offender gets noticed.
+
 THE ONE INVARIANT THAT MAKES THE STATUSES MEAN ANYTHING
 -------------------------------------------------------
     UNKNOWN means "this run could not OBSERVE the answer". It never means "the answer was bad."
@@ -142,6 +171,7 @@ Stdlib only.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures as futures
 import importlib.util
 import json
 import os
@@ -150,6 +180,7 @@ import stat
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -213,6 +244,83 @@ GUARD_WORKFLOWS = ("pii-guard", "dash-guard")
 CI_WARN_ONLY = {
     # ("owner/repo", "workflow-file.yml"): "why this job's redness is not actionable here",
 }
+
+
+# --- concurrency, and why a report's wall clock is a correctness property -------------------------
+# On 2026-08-01 this driver took 130s, up from 63s, because coverage grew: the visibility oracle
+# started asking gh live per row, and check_ci started reading EVERY workflow on EVERY repo instead
+# of two names on the public ones. Both of those were the right change. Doing them one blocking
+# round trip at a time was not.
+#
+# Wall clock is not cosmetic for a report a human runs by hand. A two minute report gets started,
+# abandoned, and then not read, which lands in exactly the same place as a gate nobody runs -- the
+# failure mode the whole top of this file is written against. install.py --check had the identical
+# disease and the identical cure in this same effort, going from 185s to 8s by moving its per-repo
+# `git ls-remote` round trips onto a thread pool.
+#
+# The rule this file follows: NEVER buy time by asking fewer questions. Every row that was
+# interrogated before is interrogated now, with the same query and the same arguments, so the
+# answers are identical. The only things removed are (a) waiting, and (b) asking the same question
+# twice.
+MAX_WORKERS = 8
+
+
+def pmap(fn, items, workers=MAX_WORKERS):
+    """Map fn over items concurrently, results in the ORIGINAL input order.
+
+    Order is the whole reason this is `ex.map` and not `as_completed`. A report whose rows shuffle
+    run to run cannot be diffed against yesterday's, and diffing against yesterday's is how a new
+    offender gets noticed. Concurrency is allowed to change how long the report takes and nothing
+    else about it.
+
+    The work here is network-bound child processes (gh, git), so threads are the right tool: the
+    GIL is released for the whole of subprocess.run.
+    """
+    items = list(items)
+    if not items:
+        return []
+    if len(items) == 1:
+        return [fn(items[0])]                # no pool for one item; keeps tracebacks readable
+    with futures.ThreadPoolExecutor(max_workers=max(1, min(workers, len(items)))) as ex:
+        return list(ex.map(fn, items))
+
+
+class Memo:
+    """Per-run answer cache keyed by anything hashable, safe to share across the pool.
+
+    Two properties matter and the naive dict has neither.
+
+    DEDUPLICATION IS THE POINT, NOT THE SPEEDUP. `gh api repos/<slug>` was issued once by the
+    workflow check to learn a default branch and then AGAIN by the CI check to learn the same
+    default branch for the same slug, roughly 25 duplicate round trips per run. `gh auth token
+    --user <acct>` was re-shelled once per account PER SLUG. Asking a question twice in one run is
+    not just slow, it is a way for one run to hold two different answers to the same question.
+
+    THE PER-KEY LOCK. A plain check-then-set under one global lock would let eight threads all miss
+    on the same key and all issue the same call. Each key gets its own lock, so concurrent askers of
+    the same question block on one another and exactly one call is made, while askers of DIFFERENT
+    questions never block on each other.
+    """
+
+    def __init__(self):
+        self._guard = threading.Lock()
+        self._vals = {}
+        self._keylocks = {}
+
+    def get(self, key, produce):
+        """Return the memoized value for key, calling produce() at most once per run."""
+        with self._guard:
+            if key in self._vals:
+                return self._vals[key]
+            lock = self._keylocks.setdefault(key, threading.Lock())
+        with lock:
+            with self._guard:
+                if key in self._vals:
+                    return self._vals[key]
+            val = produce()
+            with self._guard:
+                self._vals[key] = val
+            return val
 
 
 # --- tiny helpers --------------------------------------------------------------------------------
@@ -296,13 +404,21 @@ def local_repos(code_root):
 
 
 def repo_slugs(repos):
-    """{slug: path} for every local repo that has an origin remote."""
+    """{slug: path} for every local repo that has an origin remote.
+
+    Concurrent, but the RESULT is assembled by walking the repos in their original order, because
+    setdefault means the first path wins when two clones share a slug. Insertion order is part of
+    the answer here, so it is not allowed to depend on which thread finished first.
+    """
+    items = sorted(repos.items())
+
+    def ask(item):
+        _name, path = item
+        rc, so, _se = run(["git", "-C", path, "remote", "get-url", "origin"], timeout=20)
+        return slug_from_url(first_line(so)) if rc == 0 else None
+
     out = {}
-    for name, path in repos.items():
-        rc, so, _ = run(["git", "-C", path, "remote", "get-url", "origin"], timeout=20)
-        if rc != 0:
-            continue
-        slug = slug_from_url(first_line(so))
+    for (_name, path), slug in zip(items, pmap(ask, items)):
         if slug:
             out.setdefault(slug, path)
     return out
@@ -343,17 +459,45 @@ def _is_404(text):
     return "404" in e or "not found" in e
 
 
-def _remote_workflows_via_gh(gh, slug, timeout):
+# WHY THE MEMOS ARE PARAMETERS AND NOT MODULE GLOBALS
+# ---------------------------------------------------
+# The obvious shape is a module-level cache, and it is wrong. A memo's scope has to be ONE RUN. As a
+# global it is one PROCESS, and the difference bit immediately: the suite runs many independent
+# check_ci calls in a single interpreter, and a global memo served the first call's answers to the
+# fifth. Five tests went green while asserting nothing -- including the two that exist to prove the
+# branch filter is applied and that the branch is looked up once per repo. A speedup whose
+# bookkeeping blinds the tests that guard the behaviour has taken back more than it gave.
+#
+# So each memo is passed in, main() creates one of each and hands the SAME pair to every check
+# (which is what makes the cross-check deduplication real), and any caller that passes nothing gets
+# a fresh one and therefore the original, un-memoized behaviour.
+def branch_probe(gh, slug, timeout, memo=None):
+    """(branch, rc, stderr) for a slug's remote default branch. One gh call per slug per memo.
+
+    The raw rc and stderr are carried rather than a pre-baked sentence because the two callers
+    report a failure differently, and both wordings predate this memo and are worth keeping: the
+    workflow check distinguishes "could not reach" (rc nonzero) from "reached, but no default
+    branch" (rc zero, empty answer), and check_ci prints gh's own error verbatim.
+    """
+    memo = Memo() if memo is None else memo
+
+    def probe():
+        rc, so, se = run([gh, "api", "repos/%s" % slug, "--jq", ".default_branch"], timeout=timeout)
+        return (first_line(so) if rc == 0 else "", rc, first_line(se))
+
+    return memo.get(slug, probe)
+
+
+def _remote_workflows_via_gh(gh, slug, timeout, branches):
     """(names, reason). names is a list when OBSERVED (possibly empty), else None + why."""
     # Probe the repo first. A successful probe proves the remote is reachable AND that our token can
     # see this repo, which is what licenses reading a later 404 as "the directory is not there"
     # rather than "we were not allowed to look". GitHub returns 404 for both, so without this first
     # call the two are indistinguishable and a missing guard could be mistaken for a permission
     # problem (or, far worse, the other way around).
-    rc, so, se = run([gh, "api", "repos/%s" % slug, "--jq", ".default_branch"], timeout=timeout)
+    branch, rc, se = branch_probe(gh, slug, timeout, branches)
     if rc != 0:
-        return None, "gh could not reach %s: %s" % (slug, first_line(se) or "exit %s" % rc)
-    branch = first_line(so)
+        return None, "gh could not reach %s: %s" % (slug, se or "exit %s" % rc)
     if not branch:
         return None, "gh returned no default branch for %s" % slug
     rc, so, se = run([gh, "api", "repos/%s/contents/.github/workflows?ref=%s" % (slug, branch),
@@ -402,28 +546,43 @@ def _remote_workflows_via_git(path, timeout):
     return sorted(os.path.basename(ln.strip()) for ln in so.splitlines() if ln.strip()), ""
 
 
-def remote_workflow_files(slug, path, timeout, offline=False):
+def remote_workflow_files(slug, path, timeout, offline=False, memo=None, branches=None):
     """(names, reason) for .github/workflows on the REMOTE default branch.
 
     names is a list (possibly empty) when the remote answered, None when it could not be observed.
     Never consults the working tree: an unpushed file is not CI.
+
+    Memoized per DISTINCT (slug, path) when a memo is supplied. check_workflow already hands its
+    listings to ci_targets by hand, so that is belt and braces rather than the main saving -- but it
+    makes the reuse a property of the function instead of a discipline two call sites have to
+    remember, so a third caller cannot reintroduce the duplicate fetch by forgetting.
     """
     if offline:
         return None, "offline mode: the remote was not contacted"
-    reasons = []
-    gh = shutil.which("gh")
-    if gh:
-        names, why = _remote_workflows_via_gh(gh, slug, timeout)
+    memo = Memo() if memo is None else memo
+    branches = Memo() if branches is None else branches
+
+    def ask():
+        reasons = []
+        gh = shutil.which("gh")
+        if gh:
+            names, why = _remote_workflows_via_gh(gh, slug, timeout, branches)
+            if names is not None:
+                return names, ""
+            reasons.append(why)
+        else:
+            reasons.append("gh not on PATH")
+        names, why = _remote_workflows_via_git(path, timeout)
         if names is not None:
             return names, ""
         reasons.append(why)
-    else:
-        reasons.append("gh not on PATH")
-    names, why = _remote_workflows_via_git(path, timeout)
-    if names is not None:
-        return names, ""
-    reasons.append(why)
-    return None, "; ".join(r for r in reasons if r)
+        return None, "; ".join(r for r in reasons if r)
+
+    names, why = memo.get((slug, path), ask)
+    # Hand every caller its OWN list. The memo holds one object and these listings are passed
+    # around and stored on Check objects; a shared mutable would let one caller's sort or append
+    # rewrite another's evidence.
+    return (list(names) if names is not None else None), why
 
 
 def guards_present(names):
@@ -476,7 +635,8 @@ def check_junctions(skills_dir):
 
 
 # --- check 2: PUBLIC implies the guard workflows are ON THE REMOTE --------------------------------
-def check_workflow(visibility_path, slugs, code_root, timeout=30, offline=False):
+def check_workflow(visibility_path, slugs, code_root, timeout=30, offline=False,
+                   listings=None, branches=None):
     """Assert the guard workflows exist on the REMOTE default branch of every PUBLIC repo.
 
     The predecessor stat()ed the local clone, which answers a question nobody asked. A workflow file
@@ -507,12 +667,20 @@ def check_workflow(visibility_path, slugs, code_root, timeout=30, offline=False)
         return c
     c.note = ("the REMOTE is interrogated, never the working tree; entries with no clone under %s "
               "are skipped, a fork of someone else's repo is not ours to gate" % code_root)
-    for slug in sorted(k for k, v in vis.items() if str(v).upper() == "PUBLIC"):
+    public = sorted(k for k, v in vis.items() if str(v).upper() == "PUBLIC")
+    # Fetch every listing CONCURRENTLY, then emit the rows in the same sorted order as before. Each
+    # listing is two blocking gh round trips and there are ~17 of them with a clone here; serially
+    # that alone was over half a minute of this report's wall clock.
+    cloned = [s for s in public if slugs.get(s) is not None]
+    fetched = dict(zip(cloned, pmap(
+        lambda s: remote_workflow_files(s, slugs[s], timeout, offline=offline,
+                                        memo=listings, branches=branches), cloned)))
+    for slug in public:
         path = slugs.get(slug)
         if path is None:
             c.add(SKIP, slug, "no local clone")
             continue
-        names, why = remote_workflow_files(slug, path, timeout, offline=offline)
+        names, why = fetched[slug]
         if names is None:
             # Could not look. Say so; do not award a pass for a question never asked.
             c.add(UNKNOWN, slug, "remote not observed: %s" % why)
@@ -536,13 +704,23 @@ def check_conformance(repos, timeout):
         c.note = "check_conformance.py not found next to this script"
         c.add(UNKNOWN, "check_conformance.py", CONFORMANCE)
         return c
-    for name, path in sorted(repos.items()):
+    items = sorted(repos.items())
+    # Every invocation is an independent read-only subprocess over a different repo (verified: the
+    # linter opens nothing for writing), so they run CONCURRENTLY and the rows are emitted in the
+    # same sorted order afterwards. On this machine that is ~15 python interpreter startups plus
+    # ~15 tree walks that no longer happen end to end.
+    linted = [it for it in items
+              if os.path.isfile(os.path.join(it[1], ".claude-plugin", "plugin.json"))]
+    done = dict(zip([n for n, _p in linted],
+                    pmap(lambda it: run([sys.executable, CONFORMANCE, it[1]], timeout=timeout),
+                         linted)))
+    for name, path in items:
         if not os.path.isfile(os.path.join(path, ".claude-plugin", "plugin.json")):
             # Spec v1 does not apply, but say so. Silently dropping the repo means a plugin.json
             # that gets deleted or renamed removes the repo from coverage with no trace anywhere.
             c.add(SKIP, name, "no .claude-plugin/plugin.json")
             continue
-        rc, so, se = run([sys.executable, CONFORMANCE, path], timeout=timeout)
+        rc, so, se = done[name]
         tail = [ln.strip() for ln in so.splitlines() if "passed" in ln]
         score = tail[-1] if tail else ""
         warns = [ln.strip() for ln in so.splitlines() if ln.strip().startswith("[WARN]")]
@@ -766,7 +944,13 @@ class VisibilityOracle:
         self.max_age = self.MAX_MAP_AGE_S if max_age is None else max_age
         self.now = now              # epoch seconds; injectable so age is testable without sleeping
         self.error = ""
-        self.cache = {}
+        # Memo, not a plain dict: this oracle is now asked from a thread pool (see prefetch), and a
+        # cache that can be missed twice for the same slug would put the per-row gh cost straight
+        # back. The token cache below is the bigger of the two savings -- `gh auth token --user X`
+        # used to be re-shelled once per account PER SLUG, so the accounts loop cost up to two extra
+        # child processes on every single row it touched.
+        self.cache = Memo()
+        self.tokens = Memo()
         self.map = {}
         self.stamp = None
         try:
@@ -797,6 +981,12 @@ class VisibilityOracle:
         v = self.map.get(slug)
         return "PRIVATE" if v == "INTERNAL" else v
 
+    def _token(self, gh, acct):
+        """The stored token for one gh account, or "" if there is not one. Never logged."""
+        rc, tok, _se = run([gh, "auth", "token", "--user", acct], timeout=self.timeout)
+        tok = first_line(tok)
+        return tok if rc == 0 and tok else ""
+
     def _ask_gh(self, slug):
         """(visibility, how) from a live query, or (None, why-it-could-not-answer)."""
         if self.offline:
@@ -812,9 +1002,10 @@ class VisibilityOracle:
         for acct in (None,):
             env = None
             if acct:
-                rc, tok, _se = run([gh, "auth", "token", "--user", acct], timeout=self.timeout)
-                tok = first_line(tok)
-                if rc != 0 or not tok:
+                # Memoized per ACCOUNT, not per (account, slug): the token does not depend on which
+                # repo is being asked about, and re-deriving it per row was pure repetition.
+                tok = self.tokens.get(acct, lambda a=acct: self._token(gh, a))
+                if not tok:
                     continue
                 env = dict(os.environ, GH_TOKEN=tok)
             rc, so, _se = run([gh, "repo", "view", slug, "--json", "visibility",
@@ -837,21 +1028,31 @@ class VisibilityOracle:
                                % (gh_why, cached, trouble))
         return cached, "the visibility map, refreshed %s ago (%s)" % (human_age(age), gh_why)
 
-    def visibility(self, slug):
-        if not slug:
-            return "UNKNOWN", "no origin remote"
-        if slug in self.cache:
-            return self.cache[slug]
+    def _resolve(self, slug):
         live, how = self._ask_gh(slug)
         if live:
             cached = self._mapped(slug)
             if cached in ("PUBLIC", "PRIVATE") and cached != live:
                 how += "; the visibility map still says %s and is STALE" % cached
-            ans = (live, how)
-        else:
-            ans = self._from_map(slug, how)
-        self.cache[slug] = ans
-        return ans
+            return live, how
+        return self._from_map(slug, how)
+
+    def visibility(self, slug):
+        if not slug:
+            return "UNKNOWN", "no origin remote"
+        return self.cache.get(slug, lambda: self._resolve(slug))
+
+    def prefetch(self, slugs):
+        """Warm the cache for a set of slugs concurrently. Answers are unchanged, only their timing.
+
+        Callers still read every answer back through visibility(), one row at a time, in whatever
+        order they print in. This exists so the WAITING happens once in parallel rather than
+        strung out across a serial row loop; the memo is what makes the second read free, and
+        makes calling this optional rather than load bearing.
+        """
+        want = sorted({s for s in slugs if s})
+        if want:
+            pmap(self.visibility, want)
 
 
 def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
@@ -889,6 +1090,18 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
         age, trouble = oracle.map_age()
         c.note += (" | the map %s" % trouble if trouble
                    else " | the map was refreshed %s ago" % human_age(age))
+    # THREE PHASES, and the split is only about when the WAITING happens.
+    #
+    #   1. resolve, serially. Every step here is local, and load_datadir() exec's a module into
+    #      sys.modules, which is not something to do from eight threads at once for the sake of a
+    #      few milliseconds. Rows that need no remote answer are decided outright.
+    #   2. prefetch, concurrently. The gh visibility lookups, which are the only network in this
+    #      check and were previously one blocking round trip per row inside the loop.
+    #   3. emit, serially, in the same sorted order as before, reading the memo.
+    #
+    # A deferred row carries everything phase 3 needs, so phase 3 makes no decision phase 1 did not
+    # already make. The set of rows and their contents are identical to the single-loop version.
+    plan = []                            # ("row", status, name, detail) | ("vis", name, resolved, top, slug)
     for name, path in sorted(repos.items()):
         dd = os.path.join(path, "tools", "datadir.py")
         if not os.path.isfile(dd):
@@ -904,31 +1117,44 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
             # the in-repo fallback shape. Reporting that as UNKNOWN would file a caught violation
             # under "could not observe", which is the exact rounding this file exists to prevent.
             if type(e).__name__ == "DataDirInsideOwnRepo":
-                c.add(FAIL, name, first_line(str(e)) or str(e))
+                plan.append(("row", FAIL, name, first_line(str(e)) or str(e)))
             else:
-                c.add(UNKNOWN, name, "cannot load tools/datadir.py: %s" % e)
+                plan.append(("row", UNKNOWN, name, "cannot load tools/datadir.py: %s" % e))
             continue
         if resolved is None:
-            c.add(SKIP, name, "not initialized")
+            plan.append(("row", SKIP, name, "not initialized"))
             continue
         resolved = str(resolved)
         if not os.path.isdir(resolved):
             # resolve_data_dir() is supposed to return only existing dirs, so this means a vendored
             # copy has drifted. It matters because `git -C <missing>` exits nonzero, which the
             # worktree probe would otherwise read as a clean "outside any repo".
-            c.add(UNKNOWN, name, "resolver returned %s, which does not exist" % resolved)
+            plan.append(("row", UNKNOWN, name,
+                         "resolver returned %s, which does not exist" % resolved))
             continue
         inside, top = in_git_worktree(resolved)
         if inside is None:
-            c.add(UNKNOWN, name, "%s: %s" % (resolved, top))
+            plan.append(("row", UNKNOWN, name, "%s: %s" % (resolved, top)))
             continue
         if not inside:
             # A plain directory outside every worktree. Nothing can publish it, so it clears this
             # check -- but it is NOT the preferred shape: unversioned means no history and no
             # backup for the one artifact that records real runs.
-            c.add(PASS, name, "%s (outside any git worktree; unversioned)" % resolved)
+            plan.append(("row", PASS, name,
+                         "%s (outside any git worktree; unversioned)" % resolved))
             continue
-        slug = origin_slug(top, timeout=timeout)
+        plan.append(("vis", name, resolved, top, origin_slug(top, timeout=timeout)))
+
+    # Phase 2. One concurrent burst instead of one blocking gh call per deferred row.
+    oracle.prefetch(p[4] for p in plan if p[0] == "vis")
+
+    # Phase 3.
+    for entry in plan:
+        if entry[0] == "row":
+            _k, status, name, detail = entry
+            c.add(status, name, detail)
+            continue
+        _k, name, resolved, top, slug = entry
         vis, why = oracle.visibility(slug)
         where = "%s -> %s" % (resolved, slug or top)
         if vis == "PRIVATE":
@@ -948,16 +1174,19 @@ GREEN = ("success",)
 RED = ("failure", "timed_out", "cancelled", "startup_failure", "action_required")
 
 
-def default_branch(gh, slug, timeout, cache):
-    """(branch, why-not) for a slug's remote default branch, cached per run."""
-    if slug not in cache:
-        rc, so, se = run([gh, "api", "repos/%s" % slug, "--jq", ".default_branch"], timeout=timeout)
-        b = first_line(so) if rc == 0 else ""
-        cache[slug] = (b, "" if b else (first_line(se) or "gh exit %s" % rc))
-    return cache[slug]
+def default_branch(gh, slug, timeout, cache=None):
+    """(branch, why-not) for a slug's remote default branch.
+
+    Backed by the SAME memo the workflow check fills, so a slug whose default branch was already
+    established while listing its workflows costs nothing here. It also removes the possibility of
+    the two checks resolving different branches for one repo mid-run.
+    """
+    b, rc, se = branch_probe(gh, slug, timeout, cache)
+    return b, ("" if b else (se or "gh exit %s" % rc))
 
 
-def ci_targets(wf_check, visibility_path, slugs, timeout, offline=False):
+def ci_targets(wf_check, visibility_path, slugs, timeout, offline=False,
+               listings=None, branches=None):
     """[(slug, names_or_None, why, visibility)] for EVERY repo of ours that has a clone here.
 
     check_workflow only walks the PUBLIC entries, because guard PRESENCE is a public-remote policy.
@@ -979,14 +1208,16 @@ def ci_targets(wf_check, visibility_path, slugs, timeout, offline=False):
                     "unreadable: %s; only PUBLIC repos were enumerated" % e, "UNKNOWN"))
         return out
     out = [(s, n, "", vis.get(s, "UNKNOWN")) for s, n in sorted(seen.items())]
-    for slug in sorted(vis):
-        if slug in seen:
-            continue
-        path = slugs.get(slug)
-        if path is None:
-            continue                      # no clone here: not ours to interrogate, and check_workflow
-                                          # already records the SKIP for the public ones
-        names, why = remote_workflow_files(slug, path, timeout, offline=offline)
+    # The repos check_workflow never walked, chiefly the PRIVATE ones. Fetched CONCURRENTLY and
+    # appended in the same sorted order; pmap preserves input order, so `out` is byte-identical to
+    # what the serial loop produced.
+    extra = [s for s in sorted(vis)
+             if s not in seen and slugs.get(s) is not None]
+    #                             ^ no clone here: not ours to interrogate, and check_workflow
+    #                               already records the SKIP for the public ones
+    for slug, (names, why) in zip(extra, pmap(
+            lambda s: remote_workflow_files(s, slugs[s], timeout, offline=offline,
+                                            memo=listings, branches=branches), extra)):
         out.append((slug, names, why, vis.get(slug, "UNKNOWN")))
     return out
 
@@ -996,7 +1227,7 @@ def workflow_tier(filename):
     return "guard" if os.path.splitext(filename)[0].lower() in GUARD_WORKFLOWS else "other"
 
 
-def check_ci(targets, timeout):
+def check_ci(targets, timeout, branches=None):
     """targets: [(slug, names_or_None, why, visibility), ...] as built by ci_targets().
 
     names is the FULL workflow listing observed on that slug's remote default branch, or None when
@@ -1043,8 +1274,51 @@ def check_ci(targets, timeout):
     if not targets:
         c.add(UNKNOWN, "(nothing to ask)", "no repo reported any workflow on its remote")
         return c
-    branches = {}
-    for slug, workflows, listing_why, visibility in sorted(targets, key=lambda t: t[0]):
+
+    ordered = sorted(targets, key=lambda t: t[0])
+    # A fresh memo when the caller supplies none reproduces the old per-call `branches = {}` cache
+    # exactly: one lookup per repo, not one per workflow. main() passes the shared one so a branch
+    # already resolved by the workflow check is not resolved a second time here.
+    branches = Memo() if branches is None else branches
+
+    # --- the expensive part, and why it is shaped like this ---------------------------------------
+    # This check is the bulk of the report's wall clock: ~57 `gh run list` round trips on this
+    # machine, one per (repo, workflow), each one a second or so of pure waiting. Serially that is
+    # the difference between a report you run and a report you mean to run.
+    #
+    # ON BATCHING, which was considered and deliberately NOT done. GitHub does expose
+    # `repos/<slug>/actions/runs?branch=<b>&per_page=100`, which would collapse the ~57 calls into
+    # ~25, one per repo. It also silently changes the ANSWER: that endpoint returns the newest runs
+    # across all workflows, so on a repo where one chatty workflow fills the page, a quiet
+    # workflow's latest run falls off the end and the row degrades to "no run on the default
+    # branch" -- a red guard turning into a shrug because of someone else's commit volume. Paging
+    # until every workflow is accounted for gives the calls straight back on exactly the repos
+    # where it would have helped. The per-workflow query asks the precise question and cannot be
+    # crowded out, so it stays, and concurrency is what pays for it. Fewer questions was never the
+    # available trade.
+    #
+    # Both fan-outs preserve order (pmap does), and the emit loop below walks `ordered` and
+    # sorted(workflows) exactly as the serial version did, so the rows land in the same sequence.
+    branch_slugs = sorted({t[0] for t in ordered if t[1]})
+    pmap(lambda s: default_branch(gh, s, timeout, branches), branch_slugs)  # warm the branch memo
+
+    jobs = []
+    for slug, workflows, _why, _vis in ordered:
+        if not workflows:
+            continue
+        branch, _bwhy = default_branch(gh, slug, timeout, branches)
+        if not branch:
+            continue                       # emitted as UNKNOWN below; there is no query to make
+        jobs += [(slug, wf, branch) for wf in sorted(workflows)]
+
+    def ask_runs(job):
+        slug, wf, branch = job
+        return run([gh, "run", "list", "-w", wf, "-b", branch, "--limit", "1", "-R", slug,
+                    "--json", "conclusion,status,createdAt,headBranch"], timeout=timeout)
+
+    runs_by_job = dict(zip([(s, w) for s, w, _b in jobs], pmap(ask_runs, jobs)))
+
+    for slug, workflows, listing_why, visibility in ordered:
         if workflows is None:
             c.add(UNKNOWN, slug, "workflow listing not observed: %s" % (listing_why or "no reason given"))
             continue
@@ -1073,8 +1347,7 @@ def check_ci(targets, timeout):
                 # on any ref instead is exactly the bug this arm replaced.
                 c.add(UNKNOWN, name, "could not determine the default branch: %s" % why)
                 continue
-            rc, so, se = run([gh, "run", "list", "-w", wf, "-b", branch, "--limit", "1", "-R", slug,
-                              "--json", "conclusion,status,createdAt,headBranch"], timeout=timeout)
+            rc, so, se = runs_by_job[(slug, wf)]
             if rc != 0:
                 c.add(UNKNOWN, name, first_line(se) or "gh exit %s" % rc)
                 continue
@@ -1145,6 +1418,28 @@ def print_rows(rows):
         print(line.rstrip())
 
 
+# Below this fraction of rows evaluated, the verdict word is not allowed to stand on its own. 56%
+# of rows evaluated is not a description of the fleet, it is a description of a sample, and a
+# reader who stops after the first word must not come away with the wrong noun.
+FULL_COVERAGE_PCT = 95
+
+
+def coverage_of(tot):
+    """(evaluated, not_evaluated, total, percent) over every row in the run."""
+    ev = tot["pass"] + tot["fail"] + tot["warn"]
+    silent = tot["skip"] + tot["unknown"]
+    total = ev + silent
+    return ev, silent, total, ((100.0 * ev / total) if total else 0.0)
+
+
+def coverage_phrase(tot):
+    """The clause that has to travel WITH the verdict word, never further down the line."""
+    ev, silent, total, pct = coverage_of(tot)
+    if silent and round(pct) < FULL_COVERAGE_PCT:
+        return "OVER %d%% OF ROWS (%d of %d; %d NOT EVALUATED)" % (round(pct), ev, total, silent)
+    return "over %d%% of rows (%d of %d)" % (round(pct), ev, total)
+
+
 def digest_line(tot):
     """The single line a caller is meant to quote verbatim.
 
@@ -1152,15 +1447,23 @@ def digest_line(tot):
     "all green" for a run with 82 unevaluated rows. A verdict and a coverage fraction on one line
     leave no room for that: GREEN can only mean "nothing that was EVALUATED failed", and the same
     line says how much was evaluated.
+
+    WHY THE COVERAGE MOVED TO THE FRONT (2026-08-01)
+    ------------------------------------------------
+    Putting it on the line was not enough. It sat at the END, four pipe-separated fields after the
+    verdict, on a run where 88 of 200 rows -- nearly half the fleet -- were never evaluated. A
+    reader scanning for the word after "VERDICT" got "GREEN" and stopped, which is the same defect
+    as the old "all green", just with the correction printed further to the right where nobody
+    reached it. The verdict TOKEN and its scope are now one grammatical unit: the report cannot say
+    GREEN without saying what it is green over, in the same breath, and the clause shouts when the
+    sample is partial. `verdict` is still returned as the bare word for machines to switch on.
     """
-    ev = tot["pass"] + tot["fail"] + tot["warn"]
-    silent = tot["skip"] + tot["unknown"]
-    total = ev + silent
-    pct = (100.0 * ev / total) if total else 0.0
+    ev, silent, total, pct = coverage_of(tot)
     verdict = "RED" if tot["fail"] else ("AMBER" if tot["warn"] else "GREEN")
-    return ("VERDICT %s | pass %d fail %d warn %d | NOT EVALUATED %d (skip %d, unobserved %d) | "
+    return ("VERDICT %s %s | pass %d fail %d warn %d | NOT EVALUATED %d (skip %d, unobserved %d) | "
             "coverage %d%% (%d of %d rows)"
-            % (verdict, tot["pass"], tot["fail"], tot["warn"], silent, tot["skip"], tot["unknown"],
+            % (verdict, coverage_phrase(tot),
+               tot["pass"], tot["fail"], tot["warn"], silent, tot["skip"], tot["unknown"],
                round(pct), ev, total)), verdict
 
 
@@ -1180,6 +1483,14 @@ def print_report(checks, started, elapsed):
            for k in ("pass", "fail", "warn", "skip", "unknown")}
     print("TOTAL  pass %d  fail %d  warn %d  skip %d  unknown %d"
           % (tot["pass"], tot["fail"], tot["warn"], tot["skip"], tot["unknown"]))
+    # The counts alone are the thing a reader rounds into an adjective, so the scope is stapled
+    # directly underneath them rather than only appearing on the verdict line further down. "pass
+    # 104 fail 0" reads as a healthy fleet; "pass 104 fail 0, and 88 rows were never looked at"
+    # does not, and both sentences describe the same run.
+    _ev, _silent, _total, _pct = coverage_of(tot)
+    print("       these counts describe %d%% of the fleet: %d of %d rows evaluated, %d NOT "
+          "evaluated (skip %d, unobserved %d)"
+          % (round(_pct), _ev, _total, _silent, tot["skip"], tot["unknown"]))
     if tot["warn"]:
         print("\nWARNINGS (evaluated, not clean, not blocking)")
         for c in checks:
@@ -1268,10 +1579,18 @@ def main(argv=None):
     repos = local_repos(code_root)
     slugs = repo_slugs(repos)
 
+    # ONE pair of memos for the whole run, shared by every check that talks to a remote. This is
+    # what makes the deduplication cross-check rather than merely intra-check: the default branch
+    # the workflow listing needed is the same default branch the CI run filter needs, and before
+    # this it was fetched twice for ~25 repos. Their lifetime is exactly this function, so a second
+    # run in the same process (the test suite does this constantly) starts from nothing.
+    branches, listings = Memo(), Memo()
+
     skills_dir = os.path.abspath(os.path.expanduser(a.skills_dir))
     checks = [check_junctions(skills_dir)]
     wf = check_workflow(os.path.abspath(os.path.expanduser(a.visibility)), slugs, code_root,
-                        timeout=a.gh_timeout, offline=a.offline)
+                        timeout=a.gh_timeout, offline=a.offline,
+                        listings=listings, branches=branches)
     checks.append(wf)
     checks.append(check_conformance(repos, a.conformance_timeout))
     checks.append(check_budget(skills_dir, code_root, a.conformance_timeout))
@@ -1289,8 +1608,9 @@ def main(argv=None):
         # with pii-guard but no dash-guard still gets everything it does have read, because dropping
         # it would let a red run hide behind an unrelated failure.
         targets = ci_targets(wf, os.path.abspath(os.path.expanduser(a.visibility)), slugs,
-                             timeout=a.gh_timeout, offline=a.offline)
-        checks.append(check_ci(targets, a.gh_timeout))
+                             timeout=a.gh_timeout, offline=a.offline,
+                             listings=listings, branches=branches)
+        checks.append(check_ci(targets, a.gh_timeout, branches=branches))
 
     elapsed = time.time() - t0
     tot = print_report(checks, started_utc, elapsed)
