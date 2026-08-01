@@ -20,6 +20,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -94,7 +96,10 @@ def _vis(tmp_path, mapping):
 
 def _fake_remote(monkeypatch, table):
     """Stub the remote observation. table maps slug -> list of filenames, or None for unobservable."""
-    def fake(slug, path, timeout, offline=False):
+    # **_kw absorbs the per-run memo handles the real signature grew when the remote queries were
+    # moved onto a thread pool. The stub answers from `table` either way, so every assertion below
+    # is testing the same thing it was before.
+    def fake(slug, path, timeout, offline=False, **_kw):
         names = table.get(slug, [])
         if names is None:
             return None, "stubbed outage"
@@ -1036,3 +1041,131 @@ def test_there_is_no_fix_flag():
     p = subprocess.run([sys.executable, FLEET, "--fix"], capture_output=True, text=True, timeout=60)
     assert p.returncode != 0
     assert "unrecognized arguments" in (p.stderr or "")
+
+
+# --- concurrency: the answers must still be the answers ------------------------------------------
+# These exist because the remote queries were moved onto a thread pool for wall clock, and a report
+# that is fast and wrong is strictly worse than one that is slow and right. Every test above stubs
+# gh to return the SAME answer to every call, so none of them can see a result being attached to the
+# wrong row -- which is the one new way this refactor could fail: results now come back out of order
+# and are matched to rows through a (slug, workflow) key instead of being consumed in place.
+
+def test_ci_each_row_gets_its_own_run_result_not_a_neighbours(monkeypatch):
+    """Distinct answer per (repo, workflow); every row must carry ITS OWN.
+
+    Cross-talk is invisible to a uniform stub: if the fan-out mismatched results to rows, a fleet
+    where one workflow is red would print the red on some other workflow, or lose it entirely, and
+    every existing CI test would still pass. So each job here answers differently, and exactly the
+    one that is red is asserted to be the one that fails.
+    """
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+    # one red among many greens, plus a distinguishable timestamp per job
+    red = ("owner/beta", "dash-guard.yml")
+
+    def fake(args, **_k):
+        if "api" in args:
+            return 0, "main\n", ""
+        slug = args[args.index("-R") + 1]
+        wf = args[args.index("-w") + 1]
+        concl = "failure" if (slug, wf) == red else "success"
+        return 0, json.dumps([{"conclusion": concl, "status": "completed",
+                               "createdAt": "%s|%s" % (slug, wf), "headBranch": "main"}]), ""
+
+    monkeypatch.setattr(fc, "run", fake)
+    targets = [(s, ["pii-guard.yml", "dash-guard.yml", "test.yml"], "", "PUBLIC")
+               for s in ("owner/alpha", "owner/beta", "owner/gamma")]
+    c = fc.check_ci(targets, 5)
+
+    assert len(c.rows) == 9
+    # Every row carries the evidence generated for ITS OWN (slug, workflow), not another job's.
+    for status, name, detail in c.rows:
+        slug, _, rest = name.partition(" [")
+        wf = rest.rstrip("]").split(":", 1)[1]
+        assert "%s|%s" % (slug, wf) in detail, "row %s got another job's result: %s" % (name, detail)
+        assert status == (fc.FAIL if (slug, wf) == red else fc.PASS)
+    assert [n for s, n, _d in c.rows if s == fc.FAIL] == ["owner/beta [guard:dash-guard.yml]"]
+
+
+def test_ci_rows_are_in_a_deterministic_order_regardless_of_completion_order(monkeypatch):
+    """Row order must come from the sort, not from which thread finished first.
+
+    A report whose row order moves run to run cannot be diffed against yesterday's, and diffing it
+    against yesterday's is how a new offender gets noticed.
+    """
+    monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
+    delays = {"owner/alpha": 0.05, "owner/beta": 0.0, "owner/gamma": 0.025}
+
+    def fake(args, **_k):
+        if "api" in args:
+            return 0, "main\n", ""
+        time.sleep(delays[args[args.index("-R") + 1]])   # finish in the reverse of sorted order
+        return 0, _runs("success"), ""
+
+    monkeypatch.setattr(fc, "run", fake)
+    targets = [(s, ["b.yml", "a.yml"], "", "PUBLIC")
+               for s in ("owner/gamma", "owner/alpha", "owner/beta")]
+    names = [n for _s, n, _d in fc.check_ci(targets, 5).rows]
+    assert names == ["owner/alpha [other:a.yml]", "owner/alpha [other:b.yml]",
+                     "owner/beta [other:a.yml]", "owner/beta [other:b.yml]",
+                     "owner/gamma [other:a.yml]", "owner/gamma [other:b.yml]"]
+
+
+def test_workflow_rows_keep_their_own_listing_under_the_fan_out(monkeypatch, tmp_path):
+    """Same cross-talk question for the workflow check: the FAIL must name the right repo."""
+    _fake_remote(monkeypatch, {"owner/full": BOTH, "owner/half": ["pii-guard.yml"],
+                               "owner/none": []})
+    c = fc.check_workflow(_vis(tmp_path, {"owner/full": "PUBLIC", "owner/half": "PUBLIC",
+                                          "owner/none": "PUBLIC"}),
+                          {"owner/full": "/x", "owner/half": "/y", "owner/none": "/z"}, "/code")
+    assert {n: s for s, n, _d in c.rows} == {"owner/full": fc.PASS, "owner/half": fc.FAIL,
+                                            "owner/none": fc.FAIL}
+    detail = {n: d for _s, n, d in c.rows}
+    # owner/half is missing exactly dash-guard, and its row must say so and echo ITS listing.
+    assert "has no dash-guard" in detail["owner/half"]
+    assert "pii-guard.yml" in detail["owner/half"]
+    # owner/none is missing both, and must not have inherited a neighbour's listing.
+    assert "has no pii-guard, dash-guard" in detail["owner/none"]
+    assert "remote workflows: none" in detail["owner/none"]
+
+
+def test_memo_calls_the_producer_once_per_key_even_under_concurrency():
+    """The dedup has to hold when eight threads miss the same key at the same moment.
+
+    A plain check-then-set would let them all through and reissue the same gh call, which is how a
+    "memoized" run quietly costs what the unmemoized one did.
+    """
+    memo, calls = fc.Memo(), []
+    lock = threading.Lock()
+
+    def produce(key):
+        time.sleep(0.02)                      # widen the window a naive cache would race through
+        with lock:
+            calls.append(key)
+        return key.upper()
+
+    keys = ["a", "b", "a", "b", "a", "b", "a", "b"]
+    got = fc.pmap(lambda k: memo.get(k, lambda k=k: produce(k)), keys)
+    assert got == [k.upper() for k in keys]
+    assert sorted(calls) == ["a", "b"]
+
+
+def test_pmap_preserves_input_order():
+    out = fc.pmap(lambda n: (time.sleep((10 - n) / 200.0), n)[1], list(range(10)))
+    assert out == list(range(10))
+
+
+def test_coverage_is_stated_next_to_the_verdict_word_not_only_at_the_end():
+    """A reader who stops after the verdict must not come away with the wrong noun.
+
+    The coverage fraction was already on this line, four fields to the RIGHT of the verdict, on a
+    run where 88 of 200 rows were never evaluated. That is not far enough forward to do any work.
+    """
+    partial = {"pass": 104, "fail": 0, "warn": 0, "skip": 88, "unknown": 0}
+    line, verdict = fc.digest_line(partial)
+    assert verdict == "GREEN"                  # the machine-readable token is unchanged
+    head = line.split("|")[0]                  # ...but the word never travels alone
+    assert "GREEN" in head and "88" in head and "NOT EVALUATED" in head
+    assert line.index("54%") < line.index("pass 104")
+
+    full = {"pass": 200, "fail": 0, "warn": 0, "skip": 0, "unknown": 0}
+    assert "NOT EVALUATED" not in fc.digest_line(full)[0].split("|")[0]

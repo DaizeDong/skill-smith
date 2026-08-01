@@ -91,8 +91,16 @@ the exit code, while a definitive negative from a remote that did answer is a `F
 observed, not clean, and unfixable by any edit available today. And the run ends in one **VERDICT**
 line carrying a coverage fraction, which the caller quotes verbatim: the nightly digest once turned
 "pass 86, fail 0, skip 82" into the words "all green" over a fleet in which every defect of the next
-day's audit was already present. If you add a check here, put it on one side of those lines and say
-which.
+day's audit was already present. The coverage clause is glued to the verdict WORD rather than parked
+at the end of the line, because a fraction the reader never reaches is not a disclosure. If you add
+a check here, put it on one side of those lines and say which.
+
+The remote questions run CONCURRENTLY and every answer is memoized per distinct slug, which is why a
+whole-fleet run is ~28s and not ~128s. That is not a comfort feature: a report this slow gets
+abandoned halfway, which is the same outcome as a gate nobody runs. If you add a check that talks to
+a remote, fan it out with `pmap` (it preserves input order, so rows stay diffable against yesterday)
+and take the shared memos rather than opening your own connection budget. Never buy time by asking
+fewer questions: the coverage is the product.
 
 ## Progressive loading
 
