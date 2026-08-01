@@ -574,57 +574,91 @@ def check_budget(skills_dir, code_root, timeout):
     prompt with no error anywhere, so the skill simply never fires and nothing says why.
 
     Exit-code contract of budget_check.py:
-      0  nothing is past the cutoff and no description of ours is over the per-skill cap
-      1  a finding: either one of OUR descriptions is too long, or SOME skill (any tier) is past
-         the truncation cutoff and therefore invisible to the agent
-      2  nothing to measure, which is a state and not a failure
+      0  OK       library inside the observed capacity, no description of ours over the per-skill cap
+      1  FAIL     a finding closable tonight by editing: our description is over the cap, or the
+                  overflow is small enough that trimming user-tier descriptions would clear it
+      2           nothing to measure, which is a state and not a failure
+      3  BLOCKED  the library is over capacity and trimming cannot close the gap. Real, reported in
+                  full every run, mapped to WARN and not FAIL.
 
-    WHY THE TIER NO LONGER DECIDES THE VERDICT
-    Until 2026-07-31 only OUR tier could fail this, which meant the one harm the check exists to
-    find could not turn it red: four third-party skills were past the cutoff and invisible, and the
-    tool exited 1 only because two of our own descriptions were long. Trimming those two would have
-    turned the check green with four skills still missing from the prompt. Being invisible is a
-    capability loss whoever authored the description, so the CONDITION fails now regardless of tier.
-    The operator still never edits a third-party description; the lever is uninstalling one or
-    trimming ours, and budget_check.py prints exactly that.
+    WHY BLOCKED IS NOT RED
+    This row was red every night for a condition no edit could clear, which is how every gate in
+    this codebase has historically come to be ignored. Two separate errors produced that: the tool
+    named the wrong skills as victims, and it declared the tier those skills were in unfixable when
+    they were the operator's own files. Both are gone. What is left is a genuine overflow of about
+    32,000 chars that no amount of text editing can absorb, so the colour now follows the LEVER:
+    red when keystrokes close it, amber when the only remaining move is deciding what to stop
+    having. Amber is not a softer red. It is stated in full on every run, with the arithmetic and a
+    ranked, priced list of which plugin removals would clear it.
+
+    THE DIGEST LINE IS THE INTERFACE, AND ITS ABSENCE IS NOT A ZERO
+    Everything this function needs comes off one `BUDGET:` line. The count used to be grepped out
+    of prose and reported double the moment the same phrase appeared twice. A missing digest is
+    UNKNOWN, never PASS: the previous version defaulted the count to 0, so a budget_check that
+    printed nothing recognisable produced a clean green row.
+
+    `fp` fingerprints the finding KEYS, not the numbers, so it is stable night to night and moves
+    exactly when the finding SET moves: a new over-cap description, a newly installed plugin, an
+    overflow appearing or clearing. It is carried into the row detail so that answering "is
+    tonight's colour new?" needs no second tool and no memory of last night's char counts.
     """
     c = Check("budget", "installed skill descriptions still fit in the system prompt (G3)")
     if not os.path.isfile(BUDGET):
         c.note = "budget_check.py not found next to this script"
         c.add(UNKNOWN, "budget_check.py", BUDGET)
         return c
-    c.note = ("a skill past the truncation cutoff FAILS whatever tier it is in, because it is "
-              "invisible to the agent; only the per-skill description CAP is limited to our tier, "
-              "since third-party wording is not the operator's to edit")
+    c.note = ("colour follows the LEVER, not the severity: an overflow trimming can clear FAILS, an "
+              "overflow only a removal decision can clear is BLOCKED and warns, so a real condition "
+              "nobody can edit away stays visible without making the verdict red forever. The "
+              "per-skill CAP is limited to our tier, the only tier authored to Spec-v1. Same fp "
+              "means the same finding set as last night")
     rc, so, se = run([sys.executable, BUDGET, "--skills-dir", skills_dir, "--code-root", code_root],
                      timeout=timeout)
     lines = [ln.strip() for ln in (so or "").splitlines() if ln.strip()]
     status_line = next((ln for ln in lines if ln.startswith("STATUS:")), "")
-    ends_at = next((ln for ln in lines if ln.startswith("user tier ends at")), "")
-    # Read the COUNT off budget_check.py's own machine-readable line. Deriving it by grepping for
-    # the phrases that name a victim double-counted the moment those phrases also appeared in the
-    # FAIL list, and reported "8 skill(s) past the cutoff" over four skills. A caller that infers a
-    # number from prose is a caller that will eventually infer the wrong one.
-    n_past = 0
-    for ln in lines:
-        if ln.startswith("TRUNCATED:"):
-            try:
-                n_past = int(ln.split(":", 1)[1].strip().split()[0])
-            except (IndexError, ValueError):
-                n_past = 0
-            break
-    past = n_past > 0
-    detail = " | ".join(x for x in (status_line, ends_at,
-                                    "%d skill(s) past the cutoff" % n_past if n_past else "") if x)
+    digest = next((ln for ln in lines if ln.startswith("BUDGET:")), "")
+    body = digest[len("BUDGET:"):].split()
+    fields = {}
+    for tok in body[1:] if body else []:
+        k, _, v = tok.partition("=")
+        if v:
+            fields[k] = v
+    state = body[0] if body else ""
+
+    def num(key):
+        try:
+            return int(fields[key])
+        except (KeyError, ValueError):
+            return None
+
+    lost, overflow = num("min_lost"), num("overflow")
+    detail = " | ".join(x for x in (
+        status_line,
+        "%s chars over capacity" % fields["overflow"] if overflow else "",
+        ">=%d skill(s) have no description in the prompt" % lost if lost else "",
+        "lever=%s" % fields.get("lever", "?"),
+        "fp=%s" % fields.get("fp", "?")) if x)
+
     if rc is None:
         c.add(UNKNOWN, "library", se or "no result")
     elif rc == 2:
         c.add(UNKNOWN, "library", detail or "nothing to measure")
+    elif not digest:
+        # Fail closed. A run whose digest cannot be found has not been evaluated, and the previous
+        # version turned exactly that into a green row by defaulting the count to zero.
+        c.add(UNKNOWN, "library", "budget_check printed no BUDGET: digest line, so nothing was read")
+    elif rc == 3 or state == "BLOCKED":
+        # Real, and no edit closes it. Say so every run, in a colour that does not accuse the
+        # operator of leaving something undone. rc and state are OR-ed so a drift between the two
+        # lands here rather than being rounded to PASS.
+        c.add(WARN, "library",
+              "BLOCKED, no lever made of keystrokes: " + (detail or "see budget_check output")
+              + " | remedy is a removal decision, run budget_check.py --plugins for the ranking")
     elif rc == 0:
-        # rc==0 is now supposed to imply nothing is past the cutoff. The WARN arm stays as a
-        # disagreement detector: if the tool ever exits 0 while its own output names a truncated
-        # skill, the two have drifted and this must not round up to PASS.
-        c.add(WARN if past else PASS, "library", detail or "within budget")
+        # rc==0 is supposed to imply the library fits. The WARN arm stays as a disagreement
+        # detector: if the tool ever exits 0 while its own digest reports an overflow, the two have
+        # drifted and this must not round up to PASS.
+        c.add(WARN if overflow else PASS, "library", detail or "within budget")
     else:
         c.add(FAIL, "library", detail or first_line(se) or "exit %s" % rc)
     return c
