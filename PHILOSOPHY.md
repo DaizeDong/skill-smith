@@ -48,10 +48,16 @@ generation in the middle.
 ## P4, The real batch constraint is the *library* token budget, not the file
 
 - **Symptom patch:** "batch-create a series" == generate many SKILL.md files.
-- **Root cause:** the system prompt has a hard budget (~15k chars / ~4k tokens of skill
-  descriptions); past it, descriptions are **silently truncated and the skills become invisible**.
-  So a series is not "make N files," it is "fit the most valuable N within one global budget." The
-  batch manager ranks candidates by measured lift and prunes the rest, explicitly.
+- **Root cause:** the system prompt has a hard budget for skill descriptions (the written rule says
+  ~15k chars; measured 2026-08-01 on this machine, 21,565 chars survived out of 53,821 declared).
+  Past it, descriptions are **silently dropped and the skills become invisible**. So a series is not
+  "make N files," it is "fit the most valuable N within one global budget." The batch manager ranks
+  candidates by measured lift and prunes the rest, explicitly.
+- **The corollary that cost a day and a half:** the budget is shared with skills nobody in this repo
+  authored, so the gate can report a real condition with no fix available to its reader. An alarm
+  that is red by construction is how every gate here has historically come to be ignored, so the
+  verdict now follows the LEVER: red when keystrokes close it, amber when the only remaining move is
+  a decision, and the amber row carries the price of that decision rather than a shrug.
 - **Decision it produced:** `budget_check.py` is a *library-level* gate, and `batch.md` mandates a
   global library-budget manager, not a per-file loop.
 
