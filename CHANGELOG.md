@@ -4,6 +4,45 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 ### Changed
+- **`fleet_check.py` took over two minutes, and a report that takes over two minutes gets skipped.**
+  Measured on one machine in one network window: **129,978 ms**, reproduced at **127,940 ms** and
+  **127,610 ms**. Before this round's coverage work it was 62,977 ms, so the price of a 15% rise in
+  rows evaluated had been a 2.1x slowdown. That is the same disease as a gate nobody reads, arriving
+  by a different door: the run gets started, abandoned partway, and then not read.
+  The cause was serial network I/O. The visibility oracle asks `gh` live per row, and `check_ci`
+  resolved a default branch and listed runs per repo per workflow, roughly 110 blocking round trips
+  end to end. `install.py --check` had the identical disease and the identical cure earlier in this
+  same effort (185s to 8s), so the pattern was already proven here.
+  Independent remote queries now fan out over a thread pool and answers are memoized per distinct
+  slug: **29,328 ms**, a 4.4x speedup and **2.1x faster than the 62,977 ms pre-coverage baseline**.
+  Offline runs went 66,785 ms to 18,128 ms. Deduplication is a real part of that and not only a
+  speedup: `gh api repos/<slug>` was issued once by the workflow check to learn a default branch and
+  again by the CI check to learn the same one, ~25 duplicate calls per run and a standing chance of
+  the two checks disagreeing about which branch they were discussing. `gh auth token --user <acct>`
+  was re-shelled once per account **per slug**; it is now once per account.
+  **Nothing was bought by asking fewer questions,** which was the whole risk. Every row is still
+  interrogated with the same query and the same arguments. Verified rather than asserted: run
+  against a frozen copy of the visibility map, the report body is **byte-identical** to the serial
+  version, all six per-section counts unchanged (16/17/9+6/1/6/57), 200 rows unchanged. Batching the
+  ~57 `gh run list` calls into ~25 per-repo `actions/runs` calls was considered and **rejected**: it
+  changes the answer, because a chatty workflow can push a quiet workflow's latest run off the page
+  and turn a red guard into "no run on the default branch".
+  Detection was then proved by breaking it, not by watching it pass. A repo with no guard workflows
+  was declared `PUBLIC` in a doctored map: the concurrent run caught it (`exit 1`, `VERDICT RED`, the
+  `FAIL` row naming both missing guards) and its report is byte-identical to the serial run's on the
+  same input. Four sabotages of the new machinery were each caught by a new test: results keyed
+  without the slug (cross-talk between repos), `as_completed` in place of `map` (shuffled rows and a
+  misaligned zip, caught by four separate tests), a memo with no per-key lock, and the coverage
+  clause demoted back to the end of the verdict line.
+- **The verdict line printed a green total while skipping nearly half its rows.** `pass 104, fail 1,
+  warn 7, skip 88` over 200 rows is 56% coverage, and the fraction WAS on the line, four
+  pipe-separated fields to the right of the verdict word. That is not far enough forward to do any
+  work: a reader scanning for the word after `VERDICT` gets `GREEN` and stops. It was the same defect
+  the VERDICT line was introduced to fix, with the correction printed where nobody reached it.
+  The coverage clause is now glued to the verdict word and shouts when the sample is partial:
+  `VERDICT GREEN OVER 56% OF ROWS (112 of 200; 88 NOT EVALUATED)`. The `TOTAL` line carries the same
+  clause under its counts, because bare counts are the other thing a reader rounds into an adjective.
+  The machine-readable `verdict` key is unchanged, so callers that switch on the bare word still work.
 - **The `budget` row was red by construction, and the two reasons it was red were both wrong.** It
   reported "4 skill(s) past the truncation cutoff" every night, named four specific skills, and
   described the tier they were in as third-party and unfixable. An operator who acted on that row

@@ -150,6 +150,22 @@ found was already in the fleet: nearly half the checked surface was never evalua
 still read as a clean sheet. `GREEN` may now mean only "nothing that was evaluated failed", `AMBER`
 means there are findings that no edit fixes today, and the same line says how much was looked at.
 
+The coverage clause sits **immediately after the verdict word**, not at the end of the line, and it
+shouts when the sample is partial: `VERDICT GREEN OVER 56% OF ROWS (112 of 200; 88 NOT EVALUATED)`.
+Putting the fraction merely somewhere on the line was not enough. It sat four fields to the right of
+the verdict on a run where 88 of 200 rows were never evaluated, so a reader scanning for the word
+after `VERDICT` got `GREEN` and stopped, which is the old "all green" with the correction printed
+where nobody reached it. The `TOTAL` line carries the same clause underneath its counts. The
+machine-readable `verdict` key in the status JSON is still the bare word.
+
+The report is also **concurrent**. Its remote questions run on a thread pool and every answer is
+memoized per distinct slug, so a whole-fleet run takes about 28s rather than the 128s it cost when
+each `gh` round trip blocked the next. Wall clock is a correctness property for a report a human runs
+by hand: a two minute report gets abandoned, which lands in the same place as a gate nobody runs.
+Nothing was bought by asking less, and the rule is enforced by test: the row set, every per-section
+count and the whole report body are byte-identical to the serial version, in the clean case and in
+the failing case alike.
+
 `bump_version.py` moves the version at all five sites at once (plugin.json, both README badges,
 ROADMAP, CHANGELOG). It refuses on an already-drifted repo instead of papering over the drift, and
 it never commits or pushes: cutting a release stays a human decision.
