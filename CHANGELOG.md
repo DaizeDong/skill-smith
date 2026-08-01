@@ -4,6 +4,44 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 ### Changed
+- **The `budget` row was red by construction, and the two reasons it was red were both wrong.** It
+  reported "4 skill(s) past the truncation cutoff" every night, named four specific skills, and
+  described the tier they were in as third-party and unfixable. An operator who acted on that row
+  could not close it, and a colour that never changes stops being read, which is how every gate in
+  this codebase has historically come to be ignored.
+  A live skill listing was captured from a running session and diffed, entry by entry, against every
+  `SKILL.md` on disk. Of 163 file-backed skills, **79 carried a description into the prompt and 84
+  appeared as a bare name**; the surviving lines totalled 21,565 chars against a declared library of
+  53,821. That measurement retired three claims the tool was making:
+  - **The victim names were a model, not an observation.** The model said truncation takes a
+    contiguous tail in load order. The real loss was non-contiguous, 20 times larger than reported,
+    and one of the four named skills had its description intact. Named guesses are indistinguishable
+    from measurements to a reader, so the tool no longer makes them: without `--listing FILE` it
+    prints a FLOOR on how many skills must lose their description and says plainly that the names
+    are not derivable from disk. With a captured listing it MEASURES them.
+  - **The tier was not the issue and was mislabelled anyway.** 81 of the 84 losses were plugin
+    skills, while the running total was computed over the user tier alone, which is why the tool
+    reported zero plugin victims over the tier holding nearly all the loss. Separately, the middle
+    tier was renamed `other` -> `local` and its "not ours to edit" wording deleted: every loose
+    directory in the skills dir is the operator's own.
+  - **"Uninstalling a plugin moves the total by zero" was exactly backwards.** It is the largest
+    lever available. The previous version printed that sentence while deleting the remedy.
+  The verdict now follows the **lever**, computed each run and never assumed. Closable tonight by
+  editing (our description over the cap, or an overflow trimming would cover) -> `FAIL`, red, cuts
+  named. Not closable by any edit -> `BLOCKED`, exit 3, mapped to WARN, stated in full every run with
+  the arithmetic on both sides and a **ranked, priced** list of which plugin removals would clear it.
+  `--plugins` prints the full ranking. Amber is not a softer red: red is reserved for what keystrokes
+  close, and BLOCKED is unreachable while any trim headroom would still cover the gap.
+  Two adjacent fail-open paths were closed while in here. `check_budget` defaulted its count to 0
+  when it could not find the machine-readable digest, so a budget_check whose output drifted produced
+  a clean green row over an unmeasured library; a missing digest is now `UNKNOWN`. And the removal
+  pricing was printed only inside the BLOCKED branch, so a single over-cap description of ours would
+  flip the state to FAIL and the 32,000-char overflow would vanish from the report entirely; the
+  colour is decided by the lever, the reporting is unconditional.
+  The digest line is now `BUDGET: <state> total= capacity= overflow= trim_headroom= min_lost=
+  cap_over_ours= plugins= lever= fp=`, and `fp` fingerprints the finding KEYS rather than the
+  numbers, so it is stable night to night and moves exactly when the finding set moves. Same fp
+  means tonight's colour is last night's colour, which is the question the operator actually has.
 - **`fleet_check`'s `ci` check read two workflow names and called that "the CI is green".** It
   interrogated `GUARD_WORKFLOWS` (`pii-guard`, `dash-guard`) and nothing else, so every other
   workflow this fleet authors was invisible to the fleet report: a repo's own anti-regression

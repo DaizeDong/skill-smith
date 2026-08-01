@@ -861,58 +861,98 @@ def test_conformance_exit_zero_with_warnings_is_not_a_pass(tmp_path, monkeypatch
 
 
 # --- the library budget check --------------------------------------------------------------------
+def budget_digest(state, **kw):
+    """A minimal budget_check stdout carrying only the digest line, which is the whole interface."""
+    f = {"total": 1000, "capacity": 21565, "overflow": 0, "trim_headroom": 0, "min_lost": 0,
+         "cap_over_ours": 0, "plugins": 0, "lever": "n/a", "fp": "aaaaaaaa"}
+    f.update(kw)
+    return ("  STATUS: %s\n  BUDGET: %s %s\n"
+            % (state, state, " ".join("%s=%s" % kv for kv in f.items())))
+
+
 @pytest.mark.parametrize("rc,want", [(0, "PASS"), (1, "FAIL"), (2, "UNKNOWN"), (None, "UNKNOWN")])
 def test_budget_maps_the_tools_exit_code(monkeypatch, rc, want):
-    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (rc, "STATUS: OK\n", "boom"))
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (rc, budget_digest("OK"), "boom"))
     c = fc.check_budget("skills", "code", 30)
     assert c.rows[0][0] == want, c.rows
 
 
-def test_budget_pass_with_truncation_is_a_warning(monkeypatch):
-    """A tool that exits 0 while its own output names a truncated skill has drifted.
+def test_budget_blocked_is_amber_and_names_the_remedy(monkeypatch):
+    """The centre of the redesign, asserted at the caller.
 
-    budget_check now FAILS on truncation whatever the tier, so rc==0 with victims should be
-    impossible. This asserts the disagreement is caught rather than rounded up to PASS: a caller
-    that trusts an exit code over the report it just read is how the last clean sheet was produced.
+    A real overflow that no edit can close must be WARN, so the fleet verdict is not RED forever
+    for a condition nobody can act on. It must ALSO carry the numbers and point at the ranking,
+    because an amber row that just says "blocked" is the same dead signal one shade lighter.
     """
-    out = ("user tier ends at : 20999 chars\n"
-           "    training-check  other  running total 20617  (past the high bound: certainly truncated)\n"
-           "  TRUNCATED: 1 skill(s) past the observed cutoff\n"
-           "STATUS: OK (our tier clean)\n")
-    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (0, out, ""))
+    out = budget_digest("BLOCKED", overflow=32256, min_lost=83, trim_headroom=6774,
+                        plugins=7, lever="decision", fp="70719bc7")
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (3, out, ""))
     c = fc.check_budget("skills", "code", 30)
     assert c.rows[0][0] == fc.WARN, c.rows
-    assert "1 skill(s) past the cutoff" in c.rows[0][2]
+    detail = c.rows[0][2]
+    assert "32256 chars over capacity" in detail, detail
+    assert ">=83 skill(s) have no description in the prompt" in detail, detail
+    assert "--plugins" in detail, detail
+    assert "fp=70719bc7" in detail, detail
 
 
-def test_budget_truncation_count_comes_from_the_machine_readable_line(monkeypatch):
-    """The count is READ, not inferred from prose.
-
-    Regression: the count used to be derived by grepping stdout for the phrases that name a victim.
-    Once budget_check also repeated those phrases in its FAIL list, four truncated skills were
-    reported as eight. The victim names appear twice in this fixture on purpose.
-    """
-    out = ("user tier ends at : 20781 chars\n"
-           "    training-check  other  running total 20399  (past the high bound: certainly truncated)\n"
-           "    vast-gpu       other  running total 20591  (past the high bound: certainly truncated)\n"
-           "  TRUNCATED: 2 skill(s) past the observed cutoff\n"
-           "  STATUS: FAIL\n"
-           "    - training-check [other]: past the high bound, certainly truncated at running total 20399\n"
-           "    - vast-gpu [other]: past the high bound, certainly truncated at running total 20591\n")
+def test_budget_trimmable_overflow_stays_red(monkeypatch):
+    """The other half of the split. Amber must not absorb work the operator could do tonight."""
+    out = budget_digest("FAIL", overflow=800, min_lost=2, trim_headroom=6000, lever="trim",
+                        fp="deadbeef")
     monkeypatch.setattr(fc, "run", lambda *_a, **_k: (1, out, ""))
     c = fc.check_budget("skills", "code", 30)
     assert c.rows[0][0] == fc.FAIL, c.rows
-    assert "2 skill(s) past the cutoff" in c.rows[0][2], c.rows[0][2]
+    assert "lever=trim" in c.rows[0][2], c.rows[0][2]
 
 
-def test_budget_reports_no_count_when_nothing_is_truncated(monkeypatch):
-    out = ("user tier ends at : 5000 chars\n"
-           "  TRUNCATED: 0 skill(s) past the observed cutoff\n"
-           "  STATUS: OK (our tier clean; user tier at 25% of the observed cutoff).\n")
+def test_budget_pass_with_an_overflow_is_a_warning(monkeypatch):
+    """A tool exiting 0 while its own digest reports an overflow has drifted from its caller.
+
+    A caller that trusts an exit code over the report it just read is how the last clean sheet was
+    produced over a fleet with four unreported defects.
+    """
+    out = budget_digest("OK", overflow=900, min_lost=1)
     monkeypatch.setattr(fc, "run", lambda *_a, **_k: (0, out, ""))
     c = fc.check_budget("skills", "code", 30)
+    assert c.rows[0][0] == fc.WARN, c.rows
+
+
+def test_budget_reports_no_loss_count_when_the_library_fits(monkeypatch):
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (0, budget_digest("OK"), ""))
+    c = fc.check_budget("skills", "code", 30)
     assert c.rows[0][0] == fc.PASS, c.rows
-    assert "past the cutoff" not in c.rows[0][2], c.rows[0][2]
+    assert "over capacity" not in c.rows[0][2], c.rows[0][2]
+
+
+def test_budget_without_a_digest_is_unknown_not_pass(monkeypatch):
+    """Fail closed on an unreadable report.
+
+    Regression: the caller defaulted the count to 0 when it could not find the machine-readable
+    line, so a budget_check whose output format had drifted, or which printed nothing at all while
+    exiting 0, produced a clean green row over an unmeasured library.
+    """
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (0, "some prose and no digest at all\n", ""))
+    c = fc.check_budget("skills", "code", 30)
+    assert c.rows[0][0] == fc.UNKNOWN, c.rows
+    assert "no BUDGET: digest line" in c.rows[0][2], c.rows[0][2]
+
+
+def test_budget_state_and_exit_code_disagreeing_lands_on_the_blocked_arm(monkeypatch):
+    """rc and the printed state are OR-ed, so a drift between them cannot escape the amber arm.
+
+    Asserting only the colour is not enough here: an rc==0 BLOCKED run would come out WARN anyway
+    via the overflow cross-check, and the test would pass with the OR removed. What must hold is
+    that it is recognised AS blocked, and therefore carries the remedy text an operator needs, so
+    the assertion is on the detail and not just the colour.
+    """
+    out = budget_digest("BLOCKED", overflow=500, min_lost=1, lever="decision")
+    monkeypatch.setattr(fc, "run", lambda *_a, **_k: (0, out, ""))
+    c = fc.check_budget("skills", "code", 30)
+    assert c.rows[0][0] == fc.WARN, c.rows
+    assert "BLOCKED, no lever" in c.rows[0][2], \
+        "a BLOCKED report with a drifting exit code was not recognised as blocked:\n%s" \
+        % c.rows[0][2]
 
 
 def test_budget_missing_tool_is_unknown_not_pass(monkeypatch):

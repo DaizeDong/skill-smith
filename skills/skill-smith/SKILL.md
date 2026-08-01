@@ -40,11 +40,15 @@ description: Create, scaffold, or batch new Claude Code skills to a tested-real 
 2. **No skill is "accepted" without passing the full gate.** Eval lift vs baseline + held-out trigger
    rate + library token budget + dedup + security audit + spec conformance + single-responsibility.
    Failure is surfaced as an explicit gap, never a silent ship.
-3. **The token budget is library-wide, and it is already blown.** Past the cutoff the loader drops
-   descriptions silently, so the skill exists and never fires. The written rule says ~15k chars; the
-   cutoff OBSERVED on this machine 2026-07-31 is ~20k, and four installed skills are past it right
-   now. Run `budget_check.py`, believe the observed number, and never add without pruning. Our own
-   descriptions are capped at **180 chars** each, the part that is ours to fix.
+3. **The token budget is library-wide, and it is already blown by a factor of two.** Past the
+   capacity the loader drops descriptions silently, so the skill exists and never fires. The written
+   rule says ~15k chars. Measured 2026-08-01 against a live skill listing: 21,565 chars survived out
+   of 53,821 declared, and **84 of 163 file-backed skills carried no description at all**. Run
+   `budget_check.py`, believe the measurement, and never add without pruning. Our own descriptions
+   are capped at **180 chars** each, the part that is ours to fix; the rest is a removal decision,
+   priced by `--plugins`. The tool does not name which skills lost their description unless given a
+   captured listing, because the loss is not a contiguous tail in load order and guessing it wrong
+   is what made this gate ignorable.
 4. **One skill, one job (<=3 modules).** Sprawl is rejected and split.
 5. **Conform or it is not a DaizeDong skill, locally AND on the remote.** Output must pass
    `check_conformance.py` (G6: local files, 7 files, philosophy-first bilingual README, badge block,

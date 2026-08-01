@@ -205,26 +205,53 @@ def test_budget_totals(tmp_path):
 
 
 def test_budget_tiers_are_reported_separately(tmp_path):
-    """A skill resolving under the code root is OURS; anything else is not."""
+    """A skill resolving under the code root is OURS; a loose directory is LOCAL.
+
+    The middle tier is named `local`, not `other`, on purpose. Nothing installs into the user
+    skills dir automatically, so a loose directory there was put there by hand and is the
+    operator's to edit. It was called `other` and documented as third-party, which is how a
+    perfectly fixable overflow came to be reported as somebody else's problem.
+    """
     code_root = tmp_path / "code"
     lib = code_root / "lib"                       # inside the code root -> tier "ours"
     make_skill(str(lib), "mine", "short one.")
     outside = tmp_path / "outside"
-    make_skill(str(outside), "theirs", "short two.")
-    # Point the scan at a dir holding both by scanning the outside dir with a code root that
-    # cannot contain it, then again with one that can.
+    make_skill(str(outside), "loose", "short two.")
     r = run([BUDGET, "--skills-dir", str(lib), "--code-root", str(code_root),
              "--installed-plugins", empty_plugins(tmp_path)])
     assert "tier ours 1 skills" in squeeze(r.stdout), r.stdout
-    assert "tier other 0 skills" in squeeze(r.stdout), r.stdout
+    assert "tier local 0 skills" in squeeze(r.stdout), r.stdout
     r2 = run([BUDGET, "--skills-dir", str(outside), "--code-root", str(code_root),
               "--installed-plugins", empty_plugins(tmp_path)])
     assert "tier ours 0 skills" in squeeze(r2.stdout), r2.stdout
-    assert "tier other 1 skills" in squeeze(r2.stdout), r2.stdout
+    assert "tier local 1 skills" in squeeze(r2.stdout), r2.stdout
+
+
+def test_budget_no_tier_is_described_as_unfixable(tmp_path):
+    """The report must never tell the operator that a user-tier skill is not theirs to edit.
+
+    Regression, 2026-08-01. The middle tier's report text read "not ours to edit". On the only
+    machine this ever ran on, every skill in that tier was the operator's own and tracked in their
+    own config repo, so the sentence was false and it was the sentence that made the row look
+    permanently red. Wording that assigns blame to an absent third party is now a test failure.
+    """
+    lib = str(tmp_path / "lib")
+    make_skill(lib, "fat", "x" * 400)
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "elsewhere"),
+             "--installed-plugins", empty_plugins(tmp_path)])
+    for phrase in ("not ours to edit", "third-party", "third party"):
+        assert phrase not in r.stdout, \
+            "the report claims a user-tier skill belongs to someone else (%r):\n%s" % (phrase, r.stdout)
 
 
 def test_budget_per_skill_cap_fails_only_for_ours(tmp_path):
-    """The 180-char per-skill cap is a FAIL for our tier and a printed note for anyone else."""
+    """The 180-char cap is a FAIL for our tier and a printed note for the rest.
+
+    Not because the rest is unfixable, but because the cap is a Spec-v1 AUTHORING rule for skills
+    this repo produces. Applying it retroactively to skills that predate the spec would turn dozens
+    of rows red at once with no defect behind them, which is the same alarm-bleaching failure the
+    verdict split exists to prevent.
+    """
     code_root = tmp_path / "code"
     lib = code_root / "lib"
     make_skill(str(lib), "fat", "x" * 200)
@@ -232,11 +259,13 @@ def test_budget_per_skill_cap_fails_only_for_ours(tmp_path):
                 "--installed-plugins", empty_plugins(tmp_path)])
     assert ours.returncode == 1, "our own over-cap description must fail:\n%s" % ours.stdout
     assert "over the 180 per-skill cap" in ours.stdout
+    assert "cap_over_ours=1" in ours.stdout, ours.stdout
     # Identical library, but now nothing resolves under the code root.
-    theirs = run([BUDGET, "--skills-dir", str(lib), "--code-root", str(tmp_path / "elsewhere"),
-                  "--installed-plugins", empty_plugins(tmp_path)])
-    assert theirs.returncode == 0, "a third-party description is not ours to fail on:\n%s" % theirs.stdout
-    assert "not ours to edit" in theirs.stdout
+    loose = run([BUDGET, "--skills-dir", str(lib), "--code-root", str(tmp_path / "elsewhere"),
+                 "--installed-plugins", empty_plugins(tmp_path)])
+    assert loose.returncode == 0, "length alone outside our tier must not fail:\n%s" % loose.stdout
+    assert "Spec-v1 authoring rule" in loose.stdout
+    assert "cap_over_ours=0" in loose.stdout, loose.stdout
 
 
 def test_budget_plugin_tier_comes_from_installed_plugins(tmp_path):
@@ -267,51 +296,210 @@ def test_budget_plugin_tier_comes_from_installed_plugins(tmp_path):
         "a plugin whose installPath is gone must be named, not treated as zero:\n%s" % r.stdout
 
 
-def test_budget_reports_both_cutoffs_and_names_the_truncated(tmp_path):
-    """The documented constant and the observed cutoff disagree; print both, name the victims."""
+def test_budget_reports_both_the_documented_and_the_observed_number(tmp_path):
+    """The documented constant and the observed capacity disagree; print both, believe the latter."""
     lib = str(tmp_path / "lib")
     for i in range(40):
-        make_skill(lib, "skill%02d" % i, "y" * 700)      # ~28k chars total, well past the cutoff
+        make_skill(lib, "skill%02d" % i, "y" * 700)      # ~28k chars, well over capacity
     r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
              "--installed-plugins", empty_plugins(tmp_path)])
     assert "documented budget : 15000 chars" in squeeze(r.stdout), r.stdout
-    assert "OBSERVED cutoff : between 19943 and 20231" in squeeze(r.stdout), r.stdout
-    assert "PAST THE CUTOFF" in r.stdout, r.stdout
-    assert "certainly truncated" in r.stdout, r.stdout
+    assert "OBSERVED capacity : 21565 chars, measured 2026-08-01" in squeeze(r.stdout), r.stdout
 
 
-def test_budget_fails_when_any_tier_is_past_the_cutoff(tmp_path):
-    """A skill past the truncation cutoff fails the check no matter who wrote its description.
+def test_budget_never_names_a_victim_it_did_not_measure(tmp_path):
+    """Without --listing the tool must give a COUNT and a bound, and no names.
 
-    The regression: the verdict used to be gated on tier, so the only harm this tool exists to find
-    could not turn it red. Every description here is UNDER the per-skill cap and NONE of them is
-    ours, so truncation is the sole possible reason for a nonzero exit. Under the old rule this
-    library exited 0 with dozens of skills silently missing from the prompt.
+    Regression, 2026-08-01. The tool used to print four specific skills as truncated, derived from
+    a running-total-in-load-order model. Checked against a live listing, the real loss was
+    non-contiguous, 20 times larger, and fell mostly on a tier the tool reported as having zero
+    victims. Named guesses in a findings list are indistinguishable from measurements to the reader,
+    so the tool is no longer allowed to make them.
     """
     lib = str(tmp_path / "lib")
-    for i in range(130):
-        make_skill(lib, "skill%03d" % i, "y" * 150)      # under the 180 cap, past the cutoff
+    for i in range(180):                              # ~29k chars, comfortably over capacity
+        make_skill(lib, "skill%03d" % i, "y" * 150)
     r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
              "--installed-plugins", empty_plugins(tmp_path)])
-    assert r.returncode == 1, "a truncated third-party skill must fail:\n%s" % r.stdout[-2000:]
-    assert "over the 180 per-skill cap" not in r.stdout, \
-        "no description here is over the cap, so the cap must not be the reason:\n%s" % r.stdout[-2000:]
-    assert "the agent cannot see this skill at all" in r.stdout, r.stdout[-2000:]
-    # The operator is told the lever, and told that editing someone else's description is not it.
-    assert "THE LEVER" in r.stdout, r.stdout[-2000:]
-    assert "uninstall a plugin" in r.stdout, r.stdout[-2000:]
-    assert "trim OUR descriptions" in r.stdout, r.stdout[-2000:]
+    assert "AT LEAST" in r.stdout, r.stdout[-2000:]
+    assert "is not derivable from disk" in r.stdout, r.stdout[-2000:]
+    assert "min_lost=" in r.stdout, r.stdout[-2000:]
+    # No individual skill may be accused of being invisible when nothing observed it. Everything
+    # from the cutoff block onward is DIAGNOSIS, and diagnosis is exactly where a guessed name gets
+    # mistaken for a measured one. The inventory table above it lists every skill by name and is
+    # fine, because it claims nothing. Every description here is under the cap, so there is no trim
+    # plan in this run and no legitimate reason for any skill name to appear below the line.
+    diagnosis = r.stdout.split("documented budget")[-1]
+    named = [i for i in range(180) if ("skill%03d" % i) in diagnosis]
+    assert not named, \
+        "the report names %d skill(s) as losing their description without having observed it: %s\n%s" \
+        % (len(named), named[:5], diagnosis[:1500])
 
 
-def test_budget_ok_when_nothing_is_truncated(tmp_path):
-    """The companion assertion: the condition above is what fails, not merely having other tiers."""
+def test_budget_measures_losses_when_given_a_listing(tmp_path):
+    """With --listing the names stop being a model and start being an observation."""
+    lib = str(tmp_path / "lib")
+    make_skill(lib, "seen", "a description that survived.")
+    make_skill(lib, "lost", "a description that did not survive.")
+    listing = tmp_path / "listing.txt"
+    listing.write_text("- seen: a description that survived.\n- lost\n", encoding="utf-8")
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", empty_plugins(tmp_path), "--listing", str(listing)])
+    assert "MEASURED against" in r.stdout, r.stdout
+    assert "1 of 2 file-backed skills appear in the listing with NO" in squeeze(r.stdout), r.stdout
+    assert "lost" in r.stdout.split("MEASURED against")[1], r.stdout
+
+
+def test_budget_listing_parses_plugin_prefixed_names(tmp_path):
+    """`plugin:skill: description` must not be read as a skill called `plugin`.
+
+    Regression: partitioning on the FIRST colon made every plugin skill in the listing look absent
+    from disk, which printed as "the capture and the filesystem disagree" over 87 skills instead of
+    as the parser bug it was. The separator is a colon followed by whitespace.
+    """
+    cache = tmp_path / "cache" / "demo" / "1.0.0"
+    make_skill(str(cache / "skills"), "widget", "does a thing.")
+    inst = tmp_path / "installed_plugins.json"
+    inst.write_text(json.dumps({"version": 2, "plugins": {
+        "demo@market": [{"installPath": str(cache)}]}}), encoding="utf-8")
+    lib = str(tmp_path / "lib")
+    make_skill(lib, "solo", "a user skill.")
+    listing = tmp_path / "listing.txt"
+    listing.write_text("- solo: a user skill.\n- demo:widget\n", encoding="utf-8")
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", str(inst), "--listing", str(listing)])
+    assert "absent from the listing entirely" not in r.stdout, \
+        "a plugin-prefixed listing entry was not matched to its skill:\n%s" % r.stdout
+    assert "widget" in r.stdout.split("MEASURED against")[1], r.stdout
+
+
+def test_budget_ok_when_the_library_fits(tmp_path):
+    """The companion assertion: overflow is what fails, not merely having more than one tier."""
     lib = str(tmp_path / "lib")
     for i in range(5):
         make_skill(lib, "skill%02d" % i, "y" * 150)
     r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
              "--installed-plugins", empty_plugins(tmp_path)])
     assert r.returncode == 0, r.stdout[-2000:]
-    assert "Nothing is past the observed cutoff." in r.stdout, r.stdout[-2000:]
+    assert "The library fits inside the observed capacity" in r.stdout, r.stdout[-2000:]
+    assert "BUDGET: OK" in r.stdout and "lever=n/a" in r.stdout, r.stdout[-2000:]
+
+
+def test_budget_blocked_is_not_red_and_is_priced(tmp_path):
+    """The core of the redesign: real, unfixable-by-editing, amber, and quoted a price.
+
+    An overflow far larger than every trimmable char must exit 3, not 1. It must also NOT be quiet
+    about it: the run states the arithmetic on both sides and ranks the plugin removals that would
+    close it, because "uninstall a plugin" without a number is a shrug, not a lever.
+    """
+    cache = tmp_path / "cache" / "big" / "1.0.0"
+    for i in range(60):
+        make_skill(str(cache / "skills"), "plug%02d" % i, "z" * 600)   # ~36k chars of plugin
+    inst = tmp_path / "installed_plugins.json"
+    inst.write_text(json.dumps({"version": 2, "plugins": {
+        "big@market": [{"installPath": str(cache)}]}}), encoding="utf-8")
+    lib = str(tmp_path / "lib")
+    make_skill(lib, "mine", "y" * 100)                                  # nothing to trim
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", str(inst)])
+    assert r.returncode == 3, "an overflow no edit can clear must be BLOCKED, not FAIL:\n%s" \
+        % r.stdout[-2500:]
+    assert "BUDGET: BLOCKED" in r.stdout and "lever=decision" in r.stdout, r.stdout[-2500:]
+    assert "deliberately NOT red" in r.stdout, r.stdout[-2500:]
+    assert "big@market" in r.stdout.split("NO LEVER")[1], \
+        "the amber row must name and price the removal, not just describe the condition:\n%s" \
+        % r.stdout[-2500:]
+
+
+def test_budget_trimmable_overflow_is_red_not_blocked(tmp_path):
+    """BLOCKED must not be reachable while keystrokes would still close the gap.
+
+    Otherwise amber becomes a place to park work. The lever is computed from the arithmetic on
+    every run, never assumed from which tier the chars are in.
+    """
+    lib = str(tmp_path / "lib")
+    for i in range(24):
+        make_skill(lib, "fat%02d" % i, "y" * 1000)     # ~24k, and ~20k of it is trimmable
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", empty_plugins(tmp_path)])
+    assert r.returncode == 1, "trimming clears this, so it is red:\n%s" % r.stdout[-2000:]
+    assert "lever=trim" in r.stdout, r.stdout[-2000:]
+    assert "DO THIS: trim" in r.stdout, r.stdout[-2000:]
+
+
+def test_budget_our_cap_violation_does_not_swallow_the_overflow(tmp_path):
+    """Red for our own cap must not hide the larger amber condition underneath it.
+
+    An earlier shape printed the removal pricing only in the BLOCKED branch, so a single over-cap
+    description of ours would flip the state to FAIL and the 30,000-char overflow would vanish from
+    the report entirely. The colour is decided by the lever; the REPORTING is unconditional.
+    """
+    code_root = tmp_path / "code"
+    lib = code_root / "lib"
+    make_skill(str(lib), "ours-fat", "y" * 400)                       # over the 180 cap
+    cache = tmp_path / "cache" / "big" / "1.0.0"
+    for i in range(60):
+        make_skill(str(cache / "skills"), "plug%02d" % i, "z" * 600)
+    inst = tmp_path / "installed_plugins.json"
+    inst.write_text(json.dumps({"version": 2, "plugins": {
+        "big@market": [{"installPath": str(cache)}]}}), encoding="utf-8")
+    r = run([BUDGET, "--skills-dir", str(lib), "--code-root", str(code_root),
+             "--installed-plugins", str(inst)])
+    assert r.returncode == 1, "our own over-cap description is red:\n%s" % r.stdout[-2500:]
+    assert "cap_over_ours=1" in r.stdout, r.stdout[-2500:]
+    assert "NO LEVER" in r.stdout, \
+        "the overflow disappeared from the report because the run was red for another reason:\n%s" \
+        % r.stdout[-2500:]
+    assert "it will still be here, amber, once the red is gone" in r.stdout, r.stdout[-2500:]
+
+
+def test_budget_plugin_ranking_is_ordered_and_priced(tmp_path):
+    """--plugins is the amber row's lever, so it must rank and total, not merely list."""
+    cache = tmp_path / "cache"
+    make_skill(str(cache / "small" / "1.0" / "skills"), "s1", "a" * 100)
+    for i in range(10):
+        make_skill(str(cache / "large" / "1.0" / "skills"), "l%d" % i, "b" * 400)
+    inst = tmp_path / "installed_plugins.json"
+    inst.write_text(json.dumps({"version": 2, "plugins": {
+        "small@market": [{"installPath": str(cache / "small" / "1.0")}],
+        "large@market": [{"installPath": str(cache / "large" / "1.0")}],
+    }}), encoding="utf-8")
+    lib = str(tmp_path / "lib")
+    make_skill(lib, "user-one", "a user skill.")
+    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", str(inst), "--plugins"])
+    block = r.stdout.split("INSTALLED PLUGINS BY DESCRIPTION COST")[1]
+    assert block.index("large@market") < block.index("small@market"), \
+        "the ranking is not sorted by cost descending:\n%s" % block
+
+
+def test_budget_fingerprint_moves_only_when_the_finding_set_moves(tmp_path):
+    """The "is tonight's colour new?" answer. Same findings, same fp; new plugin, new fp."""
+    def fp_of(out):
+        return [t for t in out.split() if t.startswith("fp=")][0]
+    cache = tmp_path / "cache"
+    for i in range(60):
+        make_skill(str(cache / "big" / "1.0" / "skills"), "p%02d" % i, "z" * 600)
+    make_skill(str(cache / "extra" / "1.0" / "skills"), "e1", "z" * 600)
+    one = tmp_path / "one.json"
+    one.write_text(json.dumps({"version": 2, "plugins": {
+        "big@market": [{"installPath": str(cache / "big" / "1.0")}]}}), encoding="utf-8")
+    two = tmp_path / "two.json"
+    two.write_text(json.dumps({"version": 2, "plugins": {
+        "big@market": [{"installPath": str(cache / "big" / "1.0")}],
+        "extra@market": [{"installPath": str(cache / "extra" / "1.0")}]}}), encoding="utf-8")
+    lib = str(tmp_path / "lib")
+    make_skill(lib, "mine", "y" * 100)
+    a = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", str(one)])
+    b = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+             "--installed-plugins", str(one)])
+    cc = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+              "--installed-plugins", str(two)])
+    assert fp_of(a.stdout) == fp_of(b.stdout), "identical libraries fingerprinted differently"
+    assert fp_of(a.stdout) != fp_of(cc.stdout), \
+        "installing a plugin did not change the fingerprint, so a new condition reads as last "\
+        "night's:\n%s\n%s" % (fp_of(a.stdout), fp_of(cc.stdout))
 
 
 def test_budget_extra_candidate(tmp_path):

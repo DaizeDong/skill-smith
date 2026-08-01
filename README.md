@@ -91,14 +91,28 @@ the always-loaded characters, and a run with no failures reads as "the fleet is 
 
 `budget_check.py` answers the one question whose failure is invisible by construction: past a budget
 the loader silently drops skill descriptions, so a skill keeps existing and simply never fires. It
-reports three tiers separately (ours, other user skills, plugin skills), reads the plugin tier from
-`installed_plugins.json` rather than globbing the cache (which holds 2 to 4 stale versions per
-plugin), prints both the documented 15,000-char budget and the ~20,000-char cutoff actually observed
-on this machine, and names the skills past it. A skill **past the cutoff FAILS whatever tier it is
-in**, because a skill the agent cannot see is a capability loss no matter who wrote its description;
-the tool names the two levers that actually exist (uninstall one, or trim ours, since the cutoff is a
-running total). Only the per-skill description **cap** stays limited to our tier, because third-party
-wording is genuinely not the operator's to edit.
+reports three tiers separately (`ours`, `local` user skills, `plugin` skills), reads the plugin tier
+from `installed_plugins.json` rather than globbing the cache (which holds 2 to 4 stale versions per
+plugin), and prints both the documented 15,000-char budget and the capacity actually **measured** on
+2026-08-01 by diffing a live skill listing against every `SKILL.md` on disk: 79 of 163 file-backed
+skills kept their description, 84 appeared as a bare name, and the surviving lines totalled 21,565
+chars against a declared library of 53,821.
+
+That measurement retired three claims this tool used to make. Truncation is **not** a contiguous tail
+in load order, so the tool no longer guesses victim names: without `--listing FILE` it prints a
+**floor** on how many skills must lose their description and says the names are not derivable from
+disk; with one, it **measures** them. The loss is not confined to the user tier, it falls mostly on
+plugins. And uninstalling a plugin is not inert, it is the largest lever there is.
+
+The verdict follows the **lever**, not the severity. A finding closable tonight by editing (one of
+our descriptions over the 180-char cap, or an overflow small enough that trimming would clear it) is
+**FAIL**, red, with the specific cuts named. An overflow that no amount of editing can absorb is
+**BLOCKED**, amber, stated in full every run with the arithmetic on both sides and a ranked, priced
+list of which plugin removals would clear it, because "uninstall something" without a number is a
+shrug rather than a lever. Amber is not a softer red: it means the remaining move is a decision about
+what to stop having, and a colour that never changes stops being read. Only the per-skill description
+**cap** stays limited to our tier, because it is a Spec-v1 authoring rule for skills this repo
+produces, not a judgement about skills that predate it. Run `--plugins` for the full ranking.
 
 `fleet_check.py` is the driver the linter above never had. It fans `check_conformance.py` over every
 plugin repo and adds what nothing else checks: skill junctions resolve, a repo marked PUBLIC carries

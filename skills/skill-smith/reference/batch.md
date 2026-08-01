@@ -1,8 +1,10 @@
 # Step 7, Batch / series (P4: the library token budget is the real constraint)
 
 "Create a series of skills" is NOT "generate N SKILL.md files." The system prompt has a hard budget
-(~15k chars / ~4k tokens of skill descriptions); past it, descriptions are **silently truncated and
-the skills become invisible**. So a batch is "fit the most valuable skills within one global budget."
+for skill descriptions (the written rule says ~15k chars; measured 2026-08-01, 21,565 chars survived
+out of 53,821 declared on this machine). Past it, descriptions are **silently dropped and the skills
+become invisible**. So a batch is "fit the most valuable skills within one global budget," and on a
+library already over capacity every admission is a swap, not an addition.
 
 ## Pipeline
 
