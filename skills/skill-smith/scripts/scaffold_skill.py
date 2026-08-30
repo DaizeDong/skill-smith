@@ -337,6 +337,30 @@ DATACLASS_TMPL = """{
   "data_sealed": [],
   "fixture": [],
   "tool": [],
+  "_run_shape_probes": [],
+  "_probes_comment": [
+    "THIS MANIFEST IS DELIBERATELY INCOMPLETE, and the boundary check will say so until you fill",
+    "it. Two keys are yours to complete before this skill is published, and neither can be filled",
+    "at scaffold time because neither is knowable before the skill has run.",
+    "",
+    "_audited      why the `data` list above is empty, or what is in it. Not a paragraph for its",
+    "              own sake: name where this skill's real output actually goes and how you checked.",
+    "_run_shape_probes",
+    "              SCHEMATIC filenames naming what a real run of THIS skill writes. Check 4 objects",
+    "              only to what it RECOGNISES, so a shape list that recognises nothing prints",
+    "              exactly what a clean repo prints. Measured across the fleet on 2026-08-29: the",
+    "              shared shape list matched 16 of 54 real output names, and 7 of 18 repos scored",
+    "              zero, while every one of them writes output on every run.",
+    "",
+    "How to fill it: run the skill for real, take the listing of what it wrote (from OUTSIDE this",
+    "repo, where that output lives), and score the names with",
+    "    python tools/data_boundary.py --explain <name> <name> ...",
+    "Then rewrite each name into its SCHEMATIC form and commit that. A probe carrying a real",
+    "ticker, mailbox handle, channel id or counterparty name is private data in a public repo even",
+    "with no file behind it, which would reintroduce the leak under the banner of preventing it.",
+    "A probe that matches no shape is reported by name: that is a gap in the shared list, not a",
+    "reason to delete the probe."
+  ],
   "_data_home": "~/.%(name)s-config/data/   (override with $%(env)s)"
 }
 """
