@@ -987,6 +987,30 @@ class VisibilityOracle:
         tok = first_line(tok)
         return tok if rc == 0 and tok else ""
 
+    def _accounts(self, gh):
+        """Every gh account logged in on this machine, discovered at run time.
+
+        This used to be a hardcoded pair of logins. Two account names sitting next to a comment
+        that explains one machine holds both tokens states, in effect, that those accounts are
+        the same operator, and this repo is PUBLIC. A machine that runs several accounts keeps
+        that mapping in ~/.pii-guard/identities.conf, deliberately outside every worktree so it
+        is never vendored into a public repo; a literal list here walked straight around that.
+        Asking gh at run time works for anyone, with one account or five, and says nothing at
+        all about who is running it.
+        """
+        rc, so, se = run([gh, "auth", "status"], timeout=self.timeout)
+        found = []
+        for line in ((so or "") + "\n" + (se or "")).splitlines():
+            if " account " not in line:
+                continue
+            tail = line.split(" account ", 1)[1].strip()
+            if not tail:
+                continue
+            name = tail.split()[0].split("(")[0].strip()
+            if name and name not in found:
+                found.append(name)
+        return found
+
     def _ask_gh(self, slug):
         """(visibility, how) from a live query, or (None, why-it-could-not-answer)."""
         if self.offline:
@@ -994,12 +1018,12 @@ class VisibilityOracle:
         gh = shutil.which("gh")
         if not gh:
             return None, "gh is not on PATH"
-        # Both identities: a private repo owned by one account is a 404 to the other's token, so
-        # asking with only one of them turns "private, and you cannot see it" into "no answer".
-        # visibility_of.py handles this with `gh auth switch`, which rewrites the machine's ACTIVE
-        # account. This tool is read-only, so it borrows each token for one child process instead
-        # and leaves the active account exactly where it found it.
-        for acct in (None,):
+        # Every logged in identity: a private repo owned by one account is a 404 to another's
+        # token, so asking with only one of them turns "private, and you cannot see it" into
+        # "no answer". visibility_of.py handles this with `gh auth switch`, which rewrites the
+        # machine's ACTIVE account. This tool is read-only, so it borrows each token for one
+        # child process instead and leaves the active account exactly where it found it.
+        for acct in [None] + self._accounts(gh):
             env = None
             if acct:
                 # Memoized per ACCOUNT, not per (account, slug): the token does not depend on which
