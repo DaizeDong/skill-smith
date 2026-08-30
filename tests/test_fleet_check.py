@@ -1169,3 +1169,34 @@ def test_coverage_is_stated_next_to_the_verdict_word_not_only_at_the_end():
 
     full = {"pass": 200, "fail": 0, "warn": 0, "skip": 0, "unknown": 0}
     assert "NOT EVALUATED" not in fc.digest_line(full)[0].split("|")[0]
+
+
+def test_coverage_never_rounds_up_to_a_hundred():
+    """A run with unevaluated rows must not be able to print 100% coverage.
+
+    This is the defect that put the following line in a real digest, verbatim:
+
+        VERDICT GREEN over 100% of rows (1993 of 2000) | ... | NOT EVALUATED 7 | coverage 100%
+
+    Coverage was rounded, and round(99.65) is 100, so the line claimed full coverage and 1993 of
+    2000 in the same breath. Worse, the branch that exists to SHOUT about unevaluated rows compares
+    the percentage against FULL_COVERAGE_PCT, so a rounded 100 kept it quiet: the shout was disabled
+    exactly when the gap was smallest and hardest to notice by eye.
+    """
+    near = {"pass": 1993, "fail": 0, "warn": 0, "skip": 7, "unknown": 0}
+    line, _ = fc.digest_line(near)
+    assert "100%" not in line, line
+    assert "99%" in line, line
+    ev, silent, total, pct = fc.coverage_of(near)
+    assert (ev, silent, total, pct) == (1993, 7, 2000, 99)
+
+    # NEGATIVE CONTROL. 100 must stay reachable, or the fix has only moved the lie: a fully
+    # evaluated run that could never say so would be the same defect wearing the opposite sign.
+    full = {"pass": 2000, "fail": 0, "warn": 0, "skip": 0, "unknown": 0}
+    assert fc.coverage_of(full)[3] == 100
+    assert "100%" in fc.digest_line(full)[0]
+
+    # And flooring must not disturb a gap that was always visible.
+    wide = {"pass": 127, "fail": 0, "warn": 0, "skip": 94, "unknown": 0}
+    head = fc.digest_line(wide)[0].split("|")[0]
+    assert "57%" in head and "NOT EVALUATED" in head, head
