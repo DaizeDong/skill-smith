@@ -1425,19 +1425,40 @@ FULL_COVERAGE_PCT = 95
 
 
 def coverage_of(tot):
-    """(evaluated, not_evaluated, total, percent) over every row in the run."""
+    """(evaluated, not_evaluated, total, percent) over every row in the run.
+
+    THE PERCENT IS FLOORED AND CAPPED, NEVER ROUNDED, and 100 is reachable only when every row was
+    evaluated. Rounding put this line in the run's own digest, verbatim:
+
+        VERDICT GREEN over 100% of rows (1993 of 2000) | ... | NOT EVALUATED 7 | coverage 100%
+
+    which states full coverage and 1993 of 2000 in the same breath. Worse, `round(99.65)` is 100, so
+    the branch that exists to SHOUT about unevaluated rows compared 100 against the 95 threshold and
+    stayed quiet. The failure mode this whole line was written to prevent, arriving through its own
+    arithmetic: a report where "checked everything" and "checked nearly everything" print the same.
+
+    Floor, because 99.9% coverage is not 100% coverage. Cap at 99 while anything is unevaluated,
+    because on a large enough run the floor of the true percentage is 100 too.
+    """
     ev = tot["pass"] + tot["fail"] + tot["warn"]
     silent = tot["skip"] + tot["unknown"]
     total = ev + silent
-    return ev, silent, total, ((100.0 * ev / total) if total else 0.0)
+    if not total:
+        return ev, silent, total, 0
+    pct = int(100 * ev // total)
+    if silent and pct >= 100:
+        pct = 99
+    return ev, silent, total, pct
 
 
 def coverage_phrase(tot):
     """The clause that has to travel WITH the verdict word, never further down the line."""
     ev, silent, total, pct = coverage_of(tot)
-    if silent and round(pct) < FULL_COVERAGE_PCT:
-        return "OVER %d%% OF ROWS (%d of %d; %d NOT EVALUATED)" % (round(pct), ev, total, silent)
-    return "over %d%% of rows (%d of %d)" % (round(pct), ev, total)
+    # pct is already a floored, capped integer. round() here would re-introduce the bug one
+    # layer up the moment coverage_of changed, so the caller stops rounding too.
+    if silent and pct < FULL_COVERAGE_PCT:
+        return "OVER %d%% OF ROWS (%d of %d; %d NOT EVALUATED)" % (pct, ev, total, silent)
+    return "over %d%% of rows (%d of %d)" % (pct, ev, total)
 
 
 def digest_line(tot):
@@ -1464,7 +1485,7 @@ def digest_line(tot):
             "coverage %d%% (%d of %d rows)"
             % (verdict, coverage_phrase(tot),
                tot["pass"], tot["fail"], tot["warn"], silent, tot["skip"], tot["unknown"],
-               round(pct), ev, total)), verdict
+               pct, ev, total)), verdict
 
 
 def print_report(checks, started, elapsed):
