@@ -57,7 +57,57 @@ def env_var(skill):
     return skill.upper().replace("-", "_") + "_CONFIG"
 
 
+def _companion_root(skill):
+    """Ask tools/datadir.py where this skill's companion is. ONE resolver, not two.
+
+    THIS FUNCTION IS THE FIX FOR A DEFECT THAT SHIPPED FROM THE TEMPLATE. What used to be here was a
+    second discovery order, written out longhand: an override, two environment variables, then two
+    home dotfiles. It did not know the fleet convention that a companion repo is the SIBLING of its
+    skill repo, and tools/datadir.py did.
+
+    One skill in this fleet ran with exactly that split. datadir found the companion beside the repo
+    while this loader returned nothing, so the skill fell through to a shipped example default that
+    was repo relative, and 4029 real-run files accumulated inside a PUBLIC repository. Two answers to
+    one question, and the wrong one decided where files landed.
+
+    Because this file is a template asset, that split was not something one skill grew. It was
+    written into every skill the scaffolder produced. Delegating rather than maintaining a second
+    copy of the order is the whole point: a second copy is what drifted, and it would drift again.
+
+    Returns None when tools/datadir.py is absent or predates resolve_companion_root, which is a real
+    state during a rollout. The caller then falls through to the dotfile probes, which is a narrower
+    answer rather than a wrong one.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    for cand in (os.path.join(here, os.pardir, "tools", "datadir.py"),
+                 os.path.join(here, "datadir.py")):
+        p = os.path.abspath(cand)
+        if not os.path.isfile(p):
+            continue
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_dd_for_config", p)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        fn = getattr(mod, "resolve_companion_root", None)
+        if fn is None:
+            return None
+        r = fn(skill)
+        return str(r) if r else None
+    return None
+
+
 def default_dir(skill):
+    """Where `init` puts a new config when nobody said. The SIBLING companion comes first.
+
+    This used to be the home dotfile and nothing else, so a freshly initialised skill wrote its
+    config somewhere its own data resolver would not look first, and the two disagreed from the
+    moment the skill was created. Same defect as the one in verify_config's discover; same fix.
+    """
+    root = _companion_root(skill)
+    if root and os.path.isdir(root):
+        return root
     return os.path.expanduser("~/.%s-config" % skill)
 
 
