@@ -185,6 +185,36 @@ def _candidates(skill):
     return out
 
 
+def resolve_companion_root(skill):
+    """The private companion REPO root for `skill`, or None. Never a path inside the skill's repo.
+
+    resolve_data_dir answers "where does real-run output go", which is usually `<companion>/data`.
+    This answers the adjacent question, "where is the companion itself", which is what a caller
+    looking for config.json, a registry or a runbook needs.
+
+    IT EXISTS SO THERE IS ONE DISCOVERY ORDER, NOT TWO. One skill in this fleet carried a second
+    resolver of its own, for its config file rather than its data, and that one probed only
+    environment variables and home dotfiles without knowing the sibling convention. The consequence,
+    measured 2026-08-30: this function found the companion while the other returned nothing, so the
+    skill fell through to a shipped example default that was repo relative and wrote 4029 real-run
+    files into its own public repository. Two answers to one question, and the wrong one was the one
+    that decided where files landed.
+
+    So a caller that needs the companion asks here rather than re-deriving the order. The order is
+    the same as resolve_data_dir's, minus the data/ suffix probes, and the same rejection applies: a
+    companion that resolves inside the skill's own repo raises rather than being returned.
+    """
+    for p in _candidates(skill):
+        if not p.is_dir():
+            continue
+        # _candidates yields <root>/data before <root>. A caller asking for the companion ROOT gets
+        # the parent in that case, so both companion shapes in this fleet answer the same way.
+        root = p.parent if p.name == "data" and p.parent.is_dir() else p
+        _reject_if_inside_own_repo(root, skill)
+        return root
+    return None
+
+
 def resolve_data_dir(skill, create=False):
     """Return the private data dir for `skill`, or None if the tool is uninitialized.
 

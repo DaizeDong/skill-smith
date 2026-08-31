@@ -157,19 +157,79 @@ def do_apply(worklist_path, dry_run, backup_dir):
     return 0
 
 
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
+
+
+def _companion_root():
+    """Where this skill's private companion is, via tools/datadir.py. None when there is none."""
+    p = os.path.join(_REPO_ROOT, "tools", "datadir.py")
+    if not os.path.isfile(p):
+        return None
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_dd_for_trim", p)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    fn = getattr(mod, "resolve_companion_root", None)
+    return fn("skill-smith") if fn else None
+
+
+def _default_out_path():
+    """The default worklist destination, which must not be inside this public repo.
+
+    `--out` used to default to the bare relative name `worklist.json`, written from the current
+    directory, which is the repo root whenever anyone runs this the obvious way. The file is not a
+    scratch artifact: every row carries an ABSOLUTE on-disk path, so it contains the operator's
+    username, and the live `description` of every over-cap SKILL.md under ~/.claude/skills, which
+    includes skills that are not in any public repository. It was neither tracked nor gitignored, so
+    one `git add -A` after a scan would have committed it.
+
+    That is real-run output about a person's machine, and this repo is the template every other
+    skill is scaffolded from, so the defect propagated by construction.
+    """
+    root = _companion_root()
+    if root is not None:
+        return os.path.join(str(root), "data", "worklist.json")
+    return os.path.expanduser(os.path.join("~", ".skill-smith", "worklist.json"))
+
+
+def _reject_in_repo(path):
+    """A worklist inside this repo is refused, whatever route produced the path.
+
+    Covers the default, an explicit --out, and a relative path resolved against a current directory
+    that happens to be the repo. One check instead of three, and it raises rather than silently
+    relocating: a tool that writes somewhere other than where it was told is a worse surprise than
+    one that stops and says why.
+    """
+    p = os.path.abspath(os.path.expanduser(path))
+    if os.path.commonpath([p, _REPO_ROOT]) == _REPO_ROOT:
+        raise SystemExit(
+            "trim_descriptions: refusing to write the worklist inside this public repo:\n"
+            "  %s\n"
+            "Every row carries an absolute on-disk path and the live description of skills that may\n"
+            "not be public. Pass --out with a path outside this repo, or leave it unset to use\n"
+            "  %s" % (p, _default_out_path()))
+    return p
+
+
 def main():
     ap = argparse.ArgumentParser(description="Trim over-cap skill descriptions (semantics-preserving).")
     ap.add_argument("--skills-dir", default=os.path.expanduser("~/.claude/skills"))
     ap.add_argument("--cap", type=int, default=170)
     ap.add_argument("--scan", action="store_true")
     ap.add_argument("--apply", metavar="WORKLIST.json")
-    ap.add_argument("--out", default="worklist.json")
+    ap.add_argument("--out", default=None,
+                    help="where to write the scan worklist. Defaults OUTSIDE this repo; see "
+                         "_default_out_path for why a bare relative name was wrong.")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--backup-dir", default=os.environ.get("SKILL_SMITH_BACKUP_DIR", "~/.skill-smith/backup"))
     a = ap.parse_args()
     base = os.path.abspath(os.path.expanduser(a.skills_dir))
     if a.scan:
-        return do_scan(base, a.cap, a.out)
+        out = _reject_in_repo(a.out if a.out else _default_out_path())
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        return do_scan(base, a.cap, out)
     if a.apply:
         return do_apply(a.apply, a.dry_run, a.backup_dir)
     ap.print_help()
