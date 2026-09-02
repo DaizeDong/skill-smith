@@ -79,7 +79,11 @@ def _companion_root(skill):
     answer rather than a wrong one.
     """
     here = os.path.dirname(os.path.abspath(__file__))
-    for cand in (os.path.join(here, os.pardir, "tools", "datadir.py"),
+    # guards/tools first: the kit is a submodule now. The old vendored path stays in the list
+    # only because a repo mid-migration can still hold one, and it is probed SECOND so a stale
+    # copy never wins over the current one.
+    for cand in (os.path.join(here, os.pardir, os.pardir, "guards", "tools", "datadir.py"),
+                 os.path.join(here, os.pardir, "tools", "datadir.py"),
                  os.path.join(here, "datadir.py")):
         p = os.path.abspath(cand)
         if not os.path.isfile(p):

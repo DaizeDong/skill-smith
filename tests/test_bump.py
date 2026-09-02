@@ -29,6 +29,21 @@ import version_sites as vs  # noqa: E402
 DATE = "2026-01-02"
 
 
+
+# A scaffolded fixture is NOT green on one item, on purpose: .dataclass.json ships with an empty
+# "data" list and no "_audited" key, and the boundary check fails that state because an empty
+# declaration is only an answer if somebody looked. Where a skill writes is not knowable before
+# it has run, so a scaffolder that pre-filled the key would assert, for the author, exactly the
+# thing the key exists to make somebody check. These tests are about VERSION SITES, so they skip
+# that one item by name rather than by relaxing the whole gate.
+NEEDS_A_HUMAN = ("data boundary: repo is an uninitialized tool",)
+
+
+def unexpected_failures(stdout):
+    """FAIL lines that are not one of the known-and-required-open items."""
+    return [ln for ln in stdout.splitlines()
+            if "[FAIL]" in ln and not any(k in ln for k in NEEDS_A_HUMAN)]
+
 def run(args, **kw):
     return subprocess.run([sys.executable] + args, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=120, **kw)
@@ -70,8 +85,9 @@ def test_conformance_green_on_prerelease_badge(tmp_path):
         write(repo, rel, read(repo, rel).replace("Roadmap-v0.1.0-purple",
                                                  "Roadmap-v0.1.0%20alpha-purple"))
     c = run([CONFORM, repo])
-    assert c.returncode == 0, c.stdout
-    assert "[FAIL]" not in c.stdout, c.stdout
+    _x = unexpected_failures(c.stdout)
+    assert not _x, c.stdout
+    assert any(k in c.stdout for k in NEEDS_A_HUMAN), c.stdout
 
 
 def test_next_version_levels():
@@ -102,7 +118,9 @@ def test_bump_moves_all_five_sites(tmp_path):
     assert "## [0.1.0]" in changelog, "history must survive the bump"
 
     c = run([CONFORM, repo])
-    assert c.returncode == 0, c.stdout
+    _x = unexpected_failures(c.stdout)
+    assert not _x, c.stdout
+    assert any(k in c.stdout for k in NEEDS_A_HUMAN), c.stdout
 
 
 def test_bump_demotes_previous_roadmap_heading(tmp_path):
@@ -191,7 +209,9 @@ def test_bump_preserves_prerelease_marker(tmp_path):
     assert json.loads(read(repo, os.path.join(".claude-plugin", "plugin.json")))["version"] == "0.2.3"
     assert "Current: **v0.2.3**" in read(repo, "ROADMAP.md")
     c = run([CONFORM, repo])
-    assert c.returncode == 0, c.stdout
+    _x = unexpected_failures(c.stdout)
+    assert not _x, c.stdout
+    assert any(k in c.stdout for k in NEEDS_A_HUMAN), c.stdout
 
 
 def test_bump_can_drop_and_set_prerelease(tmp_path):

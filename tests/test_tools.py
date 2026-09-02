@@ -31,6 +31,28 @@ BUDGET = os.path.join(_SCRIPTS, "budget_check.py")
 DEDUP = os.path.join(_SCRIPTS, "dedup_check.py")
 
 
+
+# The one thing a fresh scaffold cannot be green on, and must not be.
+#
+# .dataclass.json ships with an empty "data" list and no "_audited" key, and the boundary check
+# fails a repo in that state on purpose: an empty declaration is only an answer if somebody
+# looked, and six repos once shipped a careful paragraph concluding they had nothing to declare
+# while a verifier committed a live ledger into every one of them with the check still exiting 0.
+#
+# Nothing the scaffolder could write here would be true. Where a skill's real output goes is not
+# knowable before the skill has run, so pre-filling _audited would be the tool asserting, on the
+# author's behalf, something nobody checked. That is the exact failure the key exists to prevent.
+#
+# So the assertion is not "a fresh scaffold is conformant". It is "a fresh scaffold is conformant
+# except for the items that require a human to look, and those are exactly these".
+NEEDS_A_HUMAN = ("data boundary: repo is an uninitialized tool",)
+
+
+def unexpected_failures(stdout):
+    """FAIL lines that are not one of the known-and-required-open items."""
+    return [ln for ln in stdout.splitlines()
+            if "[FAIL]" in ln and not any(k in ln for k in NEEDS_A_HUMAN)]
+
 def run(args, **kw):
     """Run a script as a subprocess; return CompletedProcess (text)."""
     proc = subprocess.run(
@@ -98,8 +120,10 @@ def test_scaffold_then_conformance(tmp_path):
     repo = os.path.join(out, "my-skill")
     assert os.path.isdir(repo)
     c = run([CONFORM, repo])
-    assert c.returncode == 0, "scaffold output must be 20/20 conformant:\n%s" % c.stdout
-    assert "[FAIL]" not in c.stdout
+    extra = unexpected_failures(c.stdout)
+    assert not extra, "scaffold output failed something other than the audit key:\n%s" % '\n'.join(extra)
+    # and the open item is genuinely open, not quietly passing because the check went away
+    assert any(k in c.stdout for k in NEEDS_A_HUMAN), c.stdout
 
 
 def test_scaffold_kebab_normalization(tmp_path):

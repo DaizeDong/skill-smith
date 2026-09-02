@@ -368,12 +368,25 @@ def test_uninitialized_data_dir_skips(tmp_path, monkeypatch):
     assert c.count(fc.FAIL) == 0
 
 
-def test_repo_without_datadir_is_not_reported(tmp_path):
+def test_repo_without_datadir_says_so_instead_of_going_quiet(tmp_path):
+    """A repo with no resolver anywhere gets a WARN row, not silence.
+
+    It used to be skipped with the comment "this skill does not use datadir.py". That reading
+    stopped being true when the kit became a submodule: an unchecked-out guards/ produces the
+    same empty probe as a skill that genuinely has no data dir, and the loop then examined
+    every repo and reported on none while the report still printed normally.
+
+    So the two cases share a row and the row names both readings. A checker that was fed
+    nothing must not look like one that found nothing wrong.
+    """
     root = tmp_path / "code"
     root.mkdir()
     make_repo(root, "plain")
-    assert fc.check_data_boundary(_vis_map(tmp_path, {}),
-                                  repos={"plain": str(root / "plain")}, offline=True).rows == []
+    rows = fc.check_data_boundary(_vis_map(tmp_path, {}),
+                                  repos={"plain": str(root / "plain")}, offline=True).rows
+    assert len(rows) == 1, rows
+    assert rows[0][0] == "WARN", rows[0]
+    assert "nothing here examined it" in rows[0][2], rows[0]
 
 
 def test_data_boundary_is_unknown_when_git_cannot_run(tmp_path, monkeypatch):
