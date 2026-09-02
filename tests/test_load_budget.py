@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression suite for tools/load_budget.py, the PHILOSOPHY P7 always-loaded budget gate.
+"""Regression suite for guards/tools/load_budget.py, the PHILOSOPHY P7 always-loaded budget gate.
 
 WHAT THESE TESTS EXIST TO STOP
     The tool shipped knowing one repo shape, skills/<name>/SKILL.md. Two repos in this fleet keep
@@ -21,7 +21,7 @@ import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
-LB = os.path.join(_REPO, "tools", "load_budget.py")
+LB = os.path.join(_REPO, "guards", "tools", "load_budget.py")
 
 OVER_BUDGET = 1
 NOTHING_MEASURED = 3
@@ -74,8 +74,13 @@ def test_both_layouts_in_one_repo_are_measured(tmp_path):
     """Neither layout may shadow the other: the tool discovers both, it does not choose."""
     d = str(tmp_path / "both")
     plugin_repo(d)
-    write(os.path.join(d, "SKILL.md"), "---\nname: r\ndescription: y\n---\nroot\n")
-    write(os.path.join(d, "skills", "kid", "SKILL.md"), "---\nname: kid\ndescription: y\n---\nkid\n")
+    # Real prose, not one word. The gate refuses to clear a SKILL.md with no measurable run
+    # of prose, and it is right to: that file is empty, truncated or unreadable, and neither
+    # half of the gate examined it. These tests are about LAYOUT DISCOVERY, so the body has
+    # to be long enough to get past the content check.
+    write(os.path.join(d, "SKILL.md"), "---\nname: r\ndescription: y\n---\n" + "word " * 400)
+    write(os.path.join(d, "skills", "kid", "SKILL.md"),
+          "---\nname: kid\ndescription: y\n---\n" + "alt " * 400)
     r = run([LB, d])
     assert r.returncode == 0, r.stdout + r.stderr
     rows = [ln for ln in r.stdout.splitlines() if "always-loaded" in ln]
@@ -105,7 +110,7 @@ def test_nothing_to_measure_in_a_non_skill_repo_still_fails_and_says_why(tmp_pat
     r = run([LB, d])
     assert r.returncode == NOTHING_MEASURED, r.stdout + r.stderr
     assert "declares no skill" in r.stdout, r.stdout
-    assert "Drop tools/load_budget.py" in r.stdout, r.stdout
+    assert "Drop " in r.stdout and "load_budget.py" in r.stdout, r.stdout
 
 
 def test_duplicated_prose_still_blocks(tmp_path):
@@ -128,8 +133,13 @@ def test_scan_all_covers_both_layouts(tmp_path):
     b = str(parent / "b")
     plugin_repo(a)
     plugin_repo(b)
-    write(os.path.join(a, "SKILL.md"), "---\nname: a\ndescription: y\n---\nalpha\n")
-    write(os.path.join(b, "skills", "bee", "SKILL.md"), "---\nname: bee\ndescription: y\n---\nbeta\n")
+    # Real prose, not one word. The gate refuses to clear a SKILL.md with no measurable run
+    # of prose, and it is right to: that file is empty, truncated or unreadable, and neither
+    # half of the gate examined it. These tests are about LAYOUT DISCOVERY, so the body has
+    # to be long enough to get past the content check.
+    write(os.path.join(a, "SKILL.md"), "---\nname: a\ndescription: y\n---\n" + "word " * 400)
+    write(os.path.join(b, "skills", "bee", "SKILL.md"),
+          "---\nname: bee\ndescription: y\n---\n" + "alt " * 400)
     r = run([LB, str(parent), "--scan-all"])
     assert r.returncode == 0, r.stdout + r.stderr
     rows = [ln for ln in r.stdout.splitlines() if "always-loaded" in ln]

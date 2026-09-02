@@ -25,6 +25,20 @@ CONFORM = os.path.join(_SCRIPTS, "check_conformance.py")
 INIT_ASSET = os.path.join(_REPO, "skills", "skill-smith", "assets", "config", "init_config.py")
 
 
+
+# A freshly scaffolded repo is NOT green on one item, on purpose: .dataclass.json ships with an
+# empty "data" list and no "_audited" key, and the boundary check fails that state because an
+# empty declaration is only an answer if somebody looked. Where a skill writes is not knowable
+# before the skill has run, so a scaffolder that pre-filled the key would be asserting, on the
+# author behalf, exactly the thing the key exists to make somebody check.
+NEEDS_A_HUMAN = ("data boundary: repo is an uninitialized tool",)
+
+
+def unexpected_failures(stdout):
+    """FAIL lines that are not one of the known-and-required-open items."""
+    return [ln for ln in stdout.splitlines()
+            if "[FAIL]" in ln and not any(k in ln for k in NEEDS_A_HUMAN)]
+
 def run(args, env=None, cwd=None):
     e = dict(os.environ)
     if env:
@@ -53,13 +67,14 @@ def test_with_config_scaffold_passes_g8_and_g6(tmp_path):
     repo = os.path.join(out, "cfg-skill")
     # G8: full dynamic run (init x2 determinism + hot-swap) must accept
     g8 = run([CFGCONF, repo])
-    assert g8.returncode == 0, "config-bearing scaffold must pass G8:\n%s" % g8.stdout
-    assert "[FAIL]" not in g8.stdout
+    _x = unexpected_failures(g8.stdout)
+    assert not _x, "config-bearing scaffold must pass G8:\n%s" % '\n'.join(_x)
     assert "7/7 elements pass" in g8.stdout
     # G6: Spec v1 conformance unaffected by the config additions
     g6 = run([CONFORM, repo])
-    assert g6.returncode == 0, "must remain Spec-v1 conformant:\n%s" % g6.stdout
-    assert "[FAIL]" not in g6.stdout
+    _x = unexpected_failures(g6.stdout)
+    assert not _x, "must remain Spec-v1 conformant, and not merely the audit key:\n%s" % '\n'.join(_x)
+    assert any(k in g6.stdout for k in NEEDS_A_HUMAN), g6.stdout
 
 
 def test_plain_scaffold_is_not_config_bearing(tmp_path):

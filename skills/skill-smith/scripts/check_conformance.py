@@ -395,14 +395,23 @@ def main(root):
     # The 2026-07 audit found real private data (a phone, a home ZIP, an employer, a health-provider name, an email address on ~every commit) in five public skill repos. By the time anyone
     # noticed, the fix was no longer an edit: it was a history rewrite and a force-push on each one.
     # A repo without the gate is a repo accumulating that debt right now.
-    for rel in ["tools/pii_guard.py", "tools/test_pii_guard.py",
-                ".githooks/pre-commit", ".githooks/pre-push",
+    # The kit is a submodule now, so the paths moved. .pii-allow stays in the repo: which
+    # findings are exempt is a fact about THIS repo and cannot be shared.
+    for rel in ["guards/tools/pii_guard.py", "guards/tools/test_pii_guard.py",
+                "guards/hooks/pre-commit", "guards/hooks/pre-push",
                 ".github/workflows/pii-guard.yml", ".pii-allow"]:
         check("PII gate: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
     # The gate must actually be clean -- shipping it red is worse than not having it, because the
     # green checkbox above then means nothing.
-    guard = os.path.join(root, "tools", "pii_guard.py")
-    if os.path.isfile(guard):
+    # FAIL, not skip, when the scanner is absent. `if os.path.isfile(...)` made this whole check
+    # vanish silently on any repo missing the guard, which after the submodule migration is every
+    # repo whose submodule is not checked out. A conformance report that drops a check reads
+    # exactly like one where the check passed.
+    guard = os.path.join(root, "guards", "tools", "pii_guard.py")
+    if not os.path.isfile(guard):
+        check("PII gate: scan is clean (tree + history)", False,
+              "scanner absent, so NOTHING scanned this repo; run git submodule update --init")
+    else:
         p = subprocess.run([sys.executable, guard, "--tree", "--history"],
                            cwd=root, capture_output=True, text=True)
         check("PII gate: scan is clean (tree + history)", p.returncode == 0,
@@ -418,10 +427,13 @@ def main(root):
     # So a conformant repo declares every path as TOOL / FIXTURE / DATA and ships as an UNINITIALIZED
     # TOOL: real-run output resolves to a private store, and an agent writing this repo has nothing
     # real within reach to copy.
-    for rel in ["tools/data_boundary.py", "tools/datadir.py", ".dataclass.json"]:
+    for rel in ["guards/tools/data_boundary.py", "guards/tools/datadir.py", ".dataclass.json"]:
         check("data boundary: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
-    boundary = os.path.join(root, "tools", "data_boundary.py")
-    if os.path.isfile(boundary):
+    boundary = os.path.join(root, "guards", "tools", "data_boundary.py")
+    if not os.path.isfile(boundary):
+        check("data boundary: repo is an uninitialized tool", False,
+              "the PRIMARY control is absent, so it asserted nothing; git submodule update --init")
+    else:
         p = subprocess.run([sys.executable, boundary], cwd=root, capture_output=True, text=True)
         check("data boundary: repo is an uninitialized tool", p.returncode == 0,
               (p.stderr or "").strip().splitlines()[0] if p.returncode else "")
@@ -429,10 +441,13 @@ def main(root):
     # 1d) the DASH gate (Spec v1 section 10): published prose carries no en/em dash. Style, not
     # security, so it scans the current tree only. The tool de-dashes Markdown + Python comments and
     # leaves every string literal (data) alone.
-    for rel in ["tools/dash_guard.py", ".github/workflows/dash-guard.yml"]:
+    for rel in ["guards/tools/dash_guard.py", ".github/workflows/dash-guard.yml"]:
         check("dash gate: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
-    dguard = os.path.join(root, "tools", "dash_guard.py")
-    if os.path.isfile(dguard):
+    dguard = os.path.join(root, "guards", "tools", "dash_guard.py")
+    if not os.path.isfile(dguard):
+        check("dash gate: prose is dash-clean (tree)", False,
+              "scanner absent, so nothing was examined; git submodule update --init")
+    else:
         p = subprocess.run([sys.executable, dguard, "--tree"], cwd=root, capture_output=True, text=True)
         check("dash gate: prose is dash-clean (tree)", p.returncode == 0,
               (p.stderr or "").strip().splitlines()[0] if p.returncode else "")

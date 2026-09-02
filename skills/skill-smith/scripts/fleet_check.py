@@ -1127,11 +1127,26 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
     # already make. The set of rows and their contents are identical to the single-loop version.
     plan = []                            # ("row", status, name, detail) | ("vis", name, resolved, top, slug)
     for name, path in sorted(repos.items()):
-        dd = os.path.join(path, "tools", "datadir.py")
-        if not os.path.isfile(dd):
-            continue                     # this skill does not use datadir.py
-        # Use the repo's OWN vendored copy: the question is where THAT resolver points, and a
-        # re-implementation here would answer a subtly different question the moment one drifts.
+        # Probe the submodule first, then the old vendored path. Both are real states during
+        # the rollout, and the ORDER matters: a repo mid-migration can hold a stale copy in
+        # tools/ next to the current one in guards/, and the stale one is exactly what this
+        # check must not consult.
+        #
+        # The bare `continue` that used to be here read "this skill does not use datadir.py".
+        # After the migration that sentence was false for every repo, and the loop silently
+        # examined none of them while the report still printed. A checker fed nothing prints
+        # the same green as one that found nothing wrong.
+        dd = next((c for c in (os.path.join(path, "guards", "tools", "datadir.py"),
+                               os.path.join(path, "tools", "datadir.py"))
+                   if os.path.isfile(c)), None)
+        if dd is None:
+            plan.append(("row", "WARN", name,
+                         "no datadir.py in guards/tools or tools: either this skill genuinely "
+                         "does not resolve a data dir, or its guards submodule is not checked "
+                         "out and nothing here examined it"))
+            continue
+        # Use the resolver THAT REPO would use: the question is where ITS resolver points, and
+        # a re-implementation here would answer a subtly different question the moment one drifts.
         try:
             mod = load_datadir(dd, "fleet_datadir_%s" % name.replace("-", "_"))
             resolved = mod.resolve_data_dir(name, create=False)
