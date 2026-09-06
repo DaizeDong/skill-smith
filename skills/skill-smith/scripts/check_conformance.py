@@ -441,12 +441,16 @@ def main(root):
     # 1d) the DASH gate (Spec v1 section 10): published prose carries no en/em dash. Style, not
     # security, so it scans the current tree only. The tool de-dashes Markdown + Python comments and
     # leaves every string literal (data) alone.
-    for rel in ["guards/tools/dash_guard.py", ".github/workflows/dash-guard.yml"]:
+    # The dash gate lives in the STYLE submodule, not the security one. It moved when the two
+    # kits were split, and this line kept pointing at guards/, so every scaffolded repo failed
+    # conformance on a file that was never going to be there.
+    for rel in ["style/tools/dash_guard.py", ".github/workflows/dash-guard.yml"]:
         check("dash gate: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
-    dguard = os.path.join(root, "guards", "tools", "dash_guard.py")
+    dguard = os.path.join(root, "style", "tools", "dash_guard.py")
     if not os.path.isfile(dguard):
         check("dash gate: prose is dash-clean (tree)", False,
-              "scanner absent, so nothing was examined; git submodule update --init")
+              "scanner absent, so nothing was examined; the STYLE submodule is not checked out "
+              "(git submodule update --init style)")
     else:
         p = subprocess.run([sys.executable, dguard, "--tree"], cwd=root, capture_output=True, text=True)
         check("dash gate: prose is dash-clean (tree)", p.returncode == 0,

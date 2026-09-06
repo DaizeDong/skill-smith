@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression suite for guards/tools/load_budget.py, the PHILOSOPHY P7 always-loaded budget gate.
+"""Regression suite for style/tools/load_budget.py, the PHILOSOPHY P7 always-loaded budget gate.
 
 WHAT THESE TESTS EXIST TO STOP
     The tool shipped knowing one repo shape, skills/<name>/SKILL.md. Two repos in this fleet keep
@@ -21,7 +21,10 @@ import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
-LB = os.path.join(_REPO, "guards", "tools", "load_budget.py")
+# The load budget lives in the STYLE submodule, not the security one. Both this line and the
+# conformance checker kept pointing at guards/ after the kits were split, so eight tests failed
+# against a path that was never going to exist again.
+LB = os.path.join(_REPO, "style", "tools", "load_budget.py")
 
 OVER_BUDGET = 1
 NOTHING_MEASURED = 3
