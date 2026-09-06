@@ -368,6 +368,14 @@ DATACLASS_TMPL = """{
 
 
 GUARDS_URL = "https://github.com/DaizeDong/fleet-guards.git"
+STYLE_URL = "https://github.com/DaizeDong/fleet-style.git"
+# TWO kits, two submodules. fleet-guards is security (the scanner, the data boundary,
+# the companion resolver, the hooks); fleet-style is the house rules that are NOT about
+# keeping an identifier out of a public history (the dash gate, the load budget). They
+# were one repo until the split, and the scaffolder kept adding only the first, so every
+# repo it produced failed its own conformance check on a dash gate that was never
+# installed. The pair is declared once, here, so adding a third kit is one entry.
+KITS = ((GUARDS_URL, "guards"), (STYLE_URL, "style"))
 
 # The consumer's whole CI file. Checkout, python, and one `uses:` line pointing into the
 # submodule, where the steps and the reasoning for them live in a single copy.
@@ -420,26 +428,27 @@ def emit_guards(root, force, name):
         if r.returncode != 0:
             raise SystemExit("git init failed in {0}: {1}".format(root, r.stderr.strip()))
         print("  git init")
-    guards = os.path.join(root, "guards")
-    # No `and not force` here, unlike every other write below. --force overwrites FILES; a
-    # submodule that is already present is already the desired state, and `git submodule add`
-    # on an existing path fails rather than refreshing it. To move the pin, advance it in the
+    # No `and not force` on the existence check, unlike every other write below. --force overwrites
+    # FILES; a submodule that is already present is already the desired state, and `git submodule
+    # add` on an existing path fails rather than refreshing it. To move a pin, advance it in the
     # submodule and commit the new pointer; re-scaffolding is not the tool for that.
-    if os.path.isdir(guards):
-        print("  SKIP (exists): %s" % guards)
-    else:
-        r = subprocess.run(["git", "submodule", "add", "-b", "main", GUARDS_URL, "guards"],
+    for url, path in KITS:
+        dest = os.path.join(root, path)
+        if os.path.isdir(dest):
+            print("  SKIP (exists): %s" % dest)
+            continue
+        r = subprocess.run(["git", "submodule", "add", "-b", "main", url, path],
                            cwd=root, capture_output=True, text=True)
         if r.returncode != 0:
             # Loud, not a warning. A repo scaffolded without the gates is the exact state section 8
             # exists to prevent, and printing WARN next to twenty lines of progress is how it gets
             # missed. The caller decides what to do; it must not be told this succeeded.
             raise SystemExit(
-                "FAILED to add the guards submodule to {0}:{2}{1}{2}"
-                "The repo is NOT guarded. Fix the clone (network, credentials, the URL "
-                "above) and re-run; do not proceed and do not copy the kit in by hand."
-                .format(root, r.stderr.strip(), chr(10)))
-        print("  added submodule: guards -> %s" % GUARDS_URL)
+                "FAILED to add the {3} submodule to {0}:{2}{1}{2}"
+                "The repo is NOT fully gated. Fix the clone (network, credentials, the URL "
+                "above) and re-run; do not proceed and do not copy a kit in by hand."
+                .format(root, r.stderr.strip(), chr(10), path))
+        print("  added submodule: %s -> %s" % (path, url))
 
     # Hooks come from the submodule. This is repo-local git config, so it is not committed and a
     # fresh clone does not inherit it; that is why CI, which cannot be opted out of, is the
