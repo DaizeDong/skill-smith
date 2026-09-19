@@ -106,6 +106,10 @@ import re
 import stat
 import sys
 
+from skill_smith.catalog import discover
+from skill_smith.paths import within
+from skill_smith.readers import library_request, load_snapshot, problems as catalog_problems, skill_entries
+
 # The documented rule, kept because it is what the written doctrine says.
 DOCUMENTED_MAX_CHARS = 15000
 # What the listing was OBSERVED to carry, measured by diffing a live listing against disk. See the
@@ -220,23 +224,8 @@ def user_tier_rows(skills_dir, code_root):
     a statement about who wrote it, which is how "loose directory" silently became "third party,
     cannot be fixed". Both tiers sit inside a directory the operator maintains by hand.
     """
-    rows = []
-    if not os.path.isdir(skills_dir):
-        return rows
-    code_root = os.path.normcase(os.path.abspath(code_root))
-    for entry in sorted(os.listdir(skills_dir)):
-        d = os.path.join(skills_dir, entry)
-        p = os.path.join(d, "SKILL.md")
-        if not os.path.isfile(p):
-            continue
-        tgt = link_target(d)
-        resolved = os.path.normcase(os.path.abspath(tgt if tgt else d))
-        tier = OURS if resolved.startswith(code_root + os.sep) else LOCAL
-        name, desc = parse_frontmatter(read(p) or "")
-        if desc is None:
-            continue
-        rows.append(Row(tier, name or entry, desc, p))
-    return rows
+    snapshot = discover(library_request(skills_dir, code_root))
+    return rows_from_catalog(snapshot, code_root)[0]
 
 
 def plugin_tier_rows(installed_json):
@@ -245,46 +234,28 @@ def plugin_tier_rows(installed_json):
     Returns (rows, problems). Dedupe is by (plugin key, skill dir name): installed_plugins.json can
     carry more than one record for a plugin (different scopes) and the same skill must count once.
     """
-    rows, problems = [], []
-    raw = read(installed_json)
-    if raw is None:
-        return rows, ["installed_plugins.json not readable at %s" % installed_json]
-    try:
-        data = json.loads(raw)
-    except ValueError as e:
-        return rows, ["installed_plugins.json is not valid JSON: %s" % e]
-    seen = set()
-    for key, records in sorted((data.get("plugins") or {}).items()):
-        if not isinstance(records, list):
-            records = [records]
-        resolved_any = False
-        for rec in records:
-            ip = (rec or {}).get("installPath") or ""
-            if not ip or not os.path.isdir(ip):
-                continue
-            resolved_any = True
-            sk = os.path.join(ip, "skills")
-            if not os.path.isdir(sk):
-                continue
-            for entry in sorted(os.listdir(sk)):
-                p = os.path.join(sk, entry, "SKILL.md")
-                if not os.path.isfile(p):
-                    continue
-                dedupe = (key, entry.lower())
-                if dedupe in seen:
-                    continue
-                seen.add(dedupe)
-                name, desc = parse_frontmatter(read(p) or "")
-                if desc is None:
-                    continue
-                rows.append(Row(PLUGIN, name or entry, desc, p, owner=key))
-        if not resolved_any:
-            # Say it out loud. A stale record whose install path is gone means the plugin's real
-            # cost is unknown, and an unknown printed as zero is the same lie this file exists to
-            # stop.
-            problems.append("%s: no installPath on disk (%s)"
-                            % (key, "; ".join((r or {}).get("installPath", "?") for r in records)))
-    return rows, problems
+    snapshot = discover({"plugin_registries": [{"path": installed_json, "client": "claude"}]})
+    return rows_from_catalog(snapshot, None)
+
+
+def rows_from_catalog(snapshot, code_root):
+    """Project the catalog into budget rows without reading sources again.
+
+    The legacy budget counts a plugin skill once across scopes. The catalog keeps
+    every scope, including failed ones, so that this projection cannot hide them.
+    """
+    rows, seen = [], set()
+    for record, entry in skill_entries(snapshot):
+        if entry["description"] is None:
+            continue
+        owner = record["registry_key"]
+        key = (owner, entry.get("relative_path") or entry["install_name"]) if owner else (record["source_id"], entry["install_name"])
+        if key in seen:
+            continue
+        seen.add(key)
+        tier = PLUGIN if owner else OURS if code_root and within(entry["resolved_path"], code_root) else LOCAL
+        rows.append(Row(tier, entry["name"], entry["description"], entry["path"], owner=owner))
+    return rows, catalog_problems(snapshot)
 
 
 def rank_plugins(rows):
@@ -412,13 +383,15 @@ def measure_losses(rows, listing):
     return lost, unseen
 
 
-def main():
+def main(argv=None, snapshot=None):
     ap = argparse.ArgumentParser(description="G3: does the installed library fit in the prompt?")
     ap.add_argument("--skills-dir", default=os.path.expanduser("~/.claude/skills"))
     ap.add_argument("--code-root", default=os.path.expanduser("~/CodesClaude"),
                     help="a skill resolving under here is OURS, and only OURS has a per-skill cap")
     ap.add_argument("--installed-plugins",
                     default=os.path.expanduser("~/.claude/plugins/installed_plugins.json"))
+    ap.add_argument("--settings", help="settings JSON for exact enabledPlugins observations")
+    ap.add_argument("--catalog-json", help="consume a previously captured catalog snapshot")
     ap.add_argument("--per-skill-max", type=int, default=PER_SKILL_MAX)
     ap.add_argument("--capacity", type=int, default=OBSERVED_CAPACITY_CHARS,
                     help="observed chars of description the listing carried; see the docstring")
@@ -427,13 +400,14 @@ def main():
                     help="rank installed plugins by description cost, and price the removals")
     ap.add_argument("--listing", default="",
                     help="a captured live skill listing; turns predicted losses into measured ones")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
 
     skills_dir = os.path.abspath(os.path.expanduser(a.skills_dir))
     code_root = os.path.abspath(os.path.expanduser(a.code_root))
-    rows = user_tier_rows(skills_dir, code_root)
-    prows, problems = plugin_tier_rows(os.path.abspath(os.path.expanduser(a.installed_plugins)))
-    rows += prows
+    if snapshot is None:
+        snapshot = load_snapshot(a.catalog_json) if a.catalog_json else discover(library_request(
+            skills_dir, code_root, os.path.abspath(os.path.expanduser(a.installed_plugins)), a.settings))
+    rows, problems = rows_from_catalog(snapshot, code_root)
 
     if not rows:
         print("budget_check: no skills found under %s and no plugin skills resolved" % skills_dir)

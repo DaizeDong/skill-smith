@@ -1,6 +1,6 @@
 # skill-smith
 
-创建 Claude Code skill,单个或一整套,并达到业界领先、经测试真实可用的标准：先调研全行业，再按规范脚手架，最后对任何过不了验收闸的产物一律拒绝上线。
+为本地 agent 环境提供技能脚手架与校验、共享目录，以及运行时覆盖策略。根据来源标识、资源解析和能力证据选择运行入口。调研与评估工作流另有说明；自动 eval 提升验证和迭代交接仍受下文所列实现限制。
 
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-orange?style=flat)](https://docs.anthropic.com/en/docs/claude-code)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -18,9 +18,9 @@
 skill-smith 立足一条原则：**skill 不是"生成出来"就算完成，而是"被证明可用"才算完成。** 由此推出两点，贯穿整个仓库的每个决策：
 
 1. **先调研，再设计（P1）。** 靠猜做不出"业界领先"。在写新 skill 的第一行之前，skill-smith 先把一次广泛调研委托给 [`market-intel`](https://github.com/DaizeDong/market-intel),业界最佳参考实现、可借鉴的前沿设计、需规避的 anti-patterns。设计目标是**调研出来的当下最高水准**，不是嘴上声称的。
-2. **生成 ≠ 可用（P2）。** 社区到处在量产"看着没问题、却静默失效"的自动生成 skill（约 50% 根本不触发；实测审计显示多数低于可用质量线）。所以 skill-smith 对"被接纳"的态度，与 [`self-evolve`](https://github.com/DaizeDong/self-evolve) 对"真改进"的态度完全一致：只有过了反自欺**验收闸**（相对 baseline 的可测 eval 提升 + held-out 触发率 + token 预算 + 去重 + 安全 + 规范一致 + 单一职责聚焦）才算数。
+2. **生成 ≠ 可用（P2）。** 生成的 skill 仍需要独立评估。因此，调研工作流对"被接纳"的态度，与 [`self-evolve`](https://github.com/DaizeDong/self-evolve) 对"真改进"的态度完全一致：只有过了反自欺**验收闸**（相对 baseline 的可测 eval 提升 + held-out 触发率 + token 预算 + 去重 + 安全 + 规范一致 + 单一职责聚焦）才算数。
 
-因此 skill-smith **不**做又一个更大的生成器。它是一个**薄编排层**，只 own 别人不 own 的那道缝，把重活委托给你已经在跑的工具。
+调研工作流将研究和迭代委托给已有工具；本仓同时负责确定性脚手架、目录采集和运行时覆盖策略。
 
 📜 **[完整设计理念 -> PHILOSOPHY.md](PHILOSOPHY.md)**（6 条原则，每条都给"打补丁 vs 改根因"对照和它产生的真实决策）。
 

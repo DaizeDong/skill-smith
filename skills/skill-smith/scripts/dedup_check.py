@@ -14,7 +14,8 @@ import argparse
 import os
 import re
 import sys
-import glob
+from skill_smith.catalog import discover
+from skill_smith.readers import library_request, load_snapshot, problems as catalog_problems, skill_entries
 
 STOP = set("a an the of to for and or in on with without via your you this that is are be use used "
            "when use-when from into as at by it its their use-cases skill skills claude code agent "
@@ -60,31 +61,39 @@ def jaccard(a, b):
     return len(a & b) / float(len(a | b))
 
 
-def main():
+def items_from_catalog(snapshot):
+    items, seen = [], set()
+    for record, entry in skill_entries(snapshot):
+        key = (record["registry_key"] or record["source_id"],
+               entry.get("relative_path") or entry["resolved_path"])
+        if entry["description"] and key not in seen:
+            seen.add(key)
+            items.append((entry["name"], words(entry["description"])))
+    return items
+
+
+def main(argv=None, snapshot=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--skills-dir", default=os.path.expanduser("~/.claude/skills"))
+    ap.add_argument("--code-root", default=os.path.expanduser("~/CodesClaude"),
+                    help="approved target root for installed skill junctions")
     ap.add_argument("--threshold", type=float, default=0.4)
     ap.add_argument("--desc", default="", help="candidate description to compare against library")
     ap.add_argument("--name", default="<candidate>")
-    a = ap.parse_args()
+    ap.add_argument("--catalog-json", help="consume the same snapshot as budget/fleet")
+    a = ap.parse_args(argv)
 
     base = os.path.abspath(os.path.expanduser(a.skills_dir))
-    if not os.path.isdir(base):
-        print("skills dir not found: %s" % base)
+    if snapshot is None:
+        snapshot = load_snapshot(a.catalog_json) if a.catalog_json else discover(library_request(
+            base, code_root=os.path.abspath(os.path.expanduser(a.code_root)), max_depth=2))
+    items = items_from_catalog(snapshot)
+    problems = catalog_problems(snapshot)
+    for problem in problems:
+        print("UNRESOLVED: " + problem)
+    if not items:
+        print("dedup_check: no measurable skills; coverage is incomplete or empty")
         return 2
-
-    paths = set(glob.glob(os.path.join(base, "*", "SKILL.md")))
-    paths |= set(glob.glob(os.path.join(base, "*", "*", "SKILL.md")))
-    items = []
-    for p in sorted(paths):
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                txt = f.read()
-        except Exception:
-            continue
-        name, desc = parse_frontmatter(txt)
-        if desc:
-            items.append((name or os.path.basename(os.path.dirname(p)), words(desc)))
 
     flagged = 0
 
@@ -103,7 +112,7 @@ def main():
                   "(self-evolve) instead of creating a duplicate." % (flagged, a.threshold))
             return 1
         print("RESULT: distinct enough. OK to create.")
-        return 0
+        return 2 if problems else 0
 
     # pairwise across the library
     print("Pairwise description overlap (threshold %.2f), %d skills:" % (a.threshold, len(items)))
@@ -118,7 +127,7 @@ def main():
         print("RESULT: %d overlapping pair(s) -> dedup/merge or sharpen descriptions." % flagged)
         return 1
     print("RESULT: no overlaps >= threshold. OK.")
-    return 0
+    return 2 if problems else 0
 
 
 if __name__ == "__main__":

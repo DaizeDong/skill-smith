@@ -173,6 +173,8 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as futures
 import importlib.util
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -183,6 +185,9 @@ import textwrap
 import threading
 import time
 from datetime import datetime, timezone
+
+from skill_smith.catalog import discover
+from skill_smith.readers import library_request, load_snapshot
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFORMANCE = os.path.join(HERE, "check_conformance.py")
@@ -391,16 +396,23 @@ def slug_from_url(url):
     return ("%s/%s" % (owner, repo)).lower()
 
 
-def local_repos(code_root):
+def local_repos(code_root, snapshot=None):
     """Every git working copy directly under code_root, as {name: path}."""
-    out = {}
-    if not os.path.isdir(code_root):
-        return out
-    for name in sorted(os.listdir(code_root)):
-        p = os.path.join(code_root, name)
-        if os.path.isdir(os.path.join(p, ".git")):
-            out[name] = p
-    return out
+    if snapshot is None:
+        snapshot = discover({"repo_roots": [{"path": code_root}]})
+    return {r["name"]: r["path"] for r in snapshot["records"]
+            if r["kind"] == "repository" and r["status"]["resolved"] == "yes"}
+
+
+def record_repository_discovery(check, snapshot):
+    """Keep unresolved working copies visible in existing conformance coverage."""
+    coverage = snapshot["coverage"].get("repo_roots", {"status": "unchecked"})
+    issues = [p for p in snapshot["problems"] if p["stage"] == "repo_roots"]
+    for issue in issues:
+        check.add(UNKNOWN, issue.get("path") or "repo_roots",
+                  "repository discovery: " + issue["reason"])
+    if not issues and coverage["status"] != "checked":
+        check.add(UNKNOWN, "repo_roots", "repository discovery: " + coverage["status"])
 
 
 def repo_slugs(repos):
@@ -610,27 +622,30 @@ class Check:
 
 
 # --- check 1: skill junctions --------------------------------------------------------------------
-def check_junctions(skills_dir):
+def check_junctions(skills_dir, snapshot=None):
     c = Check("junctions", "skill junctions under %s resolve" % skills_dir)
-    if not os.path.isdir(skills_dir):
+    if snapshot is None:
+        snapshot = discover(library_request(skills_dir))
+    coverage = snapshot["coverage"]["skill_roots"]
+    if coverage["status"] != "checked":
         # A check that returns zero rows prints "pass 0, fail 0" and reads exactly like a clean
         # sheet. It is not one: nothing was looked at. Say that out loud instead.
-        c.note = "skills dir does not exist; nothing was inspected"
-        c.add(UNKNOWN, skills_dir, "no such directory; deployment state unobserved")
-        return c
-    for name in sorted(os.listdir(skills_dir)):
-        p = os.path.join(skills_dir, name)
-        if not is_link(p):
-            continue                     # a plain directory is a bundled skill, not a deployment
-        tgt = link_target(p) or "(unreadable)"
-        # isdir() on the link follows it, so this is exactly what a consumer of the skill sees.
-        if os.path.isdir(p):
-            c.add(PASS, name, tgt)
-        else:
-            c.add(FAIL, name, "DANGLING -> %s" % tgt)
+        c.note = "catalog skill-root coverage is " + coverage["status"]
+    for record in snapshot["records"]:
+        for mount in record.get("mounts", []):
+            if not mount["is_link"]:
+                continue
+            name = mount["install_name"]
+            target = mount["direct_target"] or mount["resolved_path"] or "(unreadable)"
+            if mount["resolved"] == "yes":
+                c.add(PASS, name, target)
+            elif mount["resolution"] == "missing":
+                c.add(FAIL, name, "DANGLING -> %s" % target)
+            else:
+                c.add(UNKNOWN, name, "%s -> %s" % (mount["resolution"], target))
     if not c.rows:
-        c.note = "no junctions found (are the skills deployed as plain copies?)"
-        c.add(UNKNOWN, skills_dir, "contains no junctions; nothing to resolve")
+        c.note = c.note or "no junctions found (are the skills deployed as plain copies?)"
+        c.add(UNKNOWN, skills_dir, "no observed junctions; deployment state unobserved")
     return c
 
 
@@ -744,7 +759,7 @@ def check_conformance(repos, timeout):
 
 
 # --- check 4: does the installed library still fit in the system prompt? --------------------------
-def check_budget(skills_dir, code_root, timeout):
+def check_budget(skills_dir, code_root, timeout, snapshot=None):
     """Run budget_check.py (G3) once for the whole machine.
 
     Every other check here is per repo. This one is per LIBRARY, and it is the only check whose
@@ -790,8 +805,15 @@ def check_budget(skills_dir, code_root, timeout):
               "nobody can edit away stays visible without making the verdict red forever. The "
               "per-skill CAP is limited to our tier, the only tier authored to Spec-v1. Same fp "
               "means the same finding set as last night")
-    rc, so, se = run([sys.executable, BUDGET, "--skills-dir", skills_dir, "--code-root", code_root],
-                     timeout=timeout)
+    if snapshot is None:
+        rc, so, se = run([sys.executable, BUDGET, "--skills-dir", skills_dir, "--code-root", code_root],
+                         timeout=timeout)
+    else:
+        import budget_check
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            rc = budget_check.main(["--skills-dir", skills_dir, "--code-root", code_root], snapshot=snapshot)
+        so, se = output.getvalue(), ""
     lines = [ln.strip() for ln in (so or "").splitlines() if ln.strip()]
     status_line = next((ln for ln in lines if ln.startswith("STATUS:")), "")
     digest = next((ln for ln in lines if ln.startswith("BUDGET:")), "")
@@ -1622,6 +1644,9 @@ def main(argv=None):
     ap.add_argument("--skills-dir", default=DEFAULT_SKILLS_DIR)
     ap.add_argument("--code-root", default=DEFAULT_CODE_ROOT,
                     help="where the fleet's working copies live")
+    ap.add_argument("--catalog-json", help="consume a shared catalog snapshot for local discovery")
+    ap.add_argument("--installed-plugins", default=os.path.expanduser("~/.claude/plugins/installed_plugins.json"))
+    ap.add_argument("--settings", help="settings JSON for exact enabledPlugins observations")
     ap.add_argument("--visibility", default=DEFAULT_VISIBILITY)
     ap.add_argument("--status-json", default=DEFAULT_STATUS,
                     help="machine-readable result; the caller checks its utc for freshness")
@@ -1636,7 +1661,11 @@ def main(argv=None):
     started_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     code_root = os.path.abspath(os.path.expanduser(a.code_root))
-    repos = local_repos(code_root)
+    skills_dir = os.path.abspath(os.path.expanduser(a.skills_dir))
+    request = library_request(skills_dir, code_root, a.installed_plugins, a.settings)
+    request["repo_roots"] = [{"path": code_root}]
+    snapshot = load_snapshot(a.catalog_json) if a.catalog_json else discover(request)
+    repos = local_repos(code_root, snapshot=snapshot)
     slugs = repo_slugs(repos)
 
     # ONE pair of memos for the whole run, shared by every check that talks to a remote. This is
@@ -1646,14 +1675,15 @@ def main(argv=None):
     # run in the same process (the test suite does this constantly) starts from nothing.
     branches, listings = Memo(), Memo()
 
-    skills_dir = os.path.abspath(os.path.expanduser(a.skills_dir))
-    checks = [check_junctions(skills_dir)]
+    checks = [check_junctions(skills_dir, snapshot=snapshot)]
     wf = check_workflow(os.path.abspath(os.path.expanduser(a.visibility)), slugs, code_root,
                         timeout=a.gh_timeout, offline=a.offline,
                         listings=listings, branches=branches)
     checks.append(wf)
-    checks.append(check_conformance(repos, a.conformance_timeout))
-    checks.append(check_budget(skills_dir, code_root, a.conformance_timeout))
+    conformance = check_conformance(repos, a.conformance_timeout)
+    record_repository_discovery(conformance, snapshot)
+    checks.append(conformance)
+    checks.append(check_budget(skills_dir, code_root, a.conformance_timeout, snapshot=snapshot))
     checks.append(check_data_boundary(os.path.abspath(os.path.expanduser(a.visibility)),
                                       repos=repos, offline=a.offline, timeout=a.gh_timeout))
 

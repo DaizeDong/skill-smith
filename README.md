@@ -1,6 +1,6 @@
 # skill-smith
 
-Create Claude Code skills, one or a whole series, to an industry-leading, tested-real bar: research the field first, scaffold to spec, then refuse to ship anything that does not pass a hard acceptance gate.
+Skill scaffolding and validation, a shared catalog, and runtime overlay policy for local agent environments. Source identity, resource resolution and capability evidence drive runtime selection. Research and evaluation workflows are documented separately; automated eval-lift and iteration handoffs remain subject to the limitations below.
 
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-orange?style=flat)](https://docs.anthropic.com/en/docs/claude-code)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -18,9 +18,9 @@ Create Claude Code skills, one or a whole series, to an industry-leading, tested
 skill-smith is built on one principle: **a skill is not "done" when it is generated, it is done when it is proven.** Two ideas follow from that, and they shape every decision in this repo:
 
 1. **Research before you design (P1).** You cannot build something "industry-leading" by guessing. Before a single line of a new skill is written, skill-smith delegates a broad recon to [`market-intel`](https://github.com/DaizeDong/market-intel), best reference implementations, frontier designs to borrow, and known anti-patterns to avoid. The design target is the state of the art, surveyed, not asserted.
-2. **Generation != usable (P2).** The whole community ships auto-generated skills that look fine and silently fail (~50% never even trigger; field audits put a majority below a usable quality bar). So skill-smith treats "accepted" exactly the way [`self-evolve`](https://github.com/DaizeDong/self-evolve) treats "improved": only after an anti-self-deception **acceptance gate** (measured eval lift vs baseline + held-out trigger rate + token budget + dedup + security + spec conformance + single-responsibility focus).
+2. **Generation != usable (P2).** Generated skills still need independent evaluation. The research workflow therefore treats "accepted" exactly the way [`self-evolve`](https://github.com/DaizeDong/self-evolve) treats "improved": only after an anti-self-deception **acceptance gate** (measured eval lift vs baseline + held-out trigger rate + token budget + dedup + security + spec conformance + single-responsibility focus).
 
-So skill-smith does **not** try to be a bigger generator. It is a **thin orchestrator** that owns only the seam nothing else owns, and delegates the heavy parts to tools you already run.
+The research workflow delegates research and iteration to existing tools. This repository also owns deterministic scaffolding, catalog acquisition and runtime overlay policy.
 
 📜 **[Read the full design philosophy -> PHILOSOPHY.md](PHILOSOPHY.md)** (6 principles, each with the patch-vs-root contrast and the real decision it produced).
 
@@ -33,7 +33,7 @@ You already have the pieces: `market-intel` (research orchestration), `self-evol
 It does **only what nothing else does**, and delegates everything else:
 
 1. **Research-first recon**, delegate landscape + frontier-design survey to `market-intel` (front engine).
-2. **Spec-conformant scaffolding**, deterministically emit a Skill-Repo-Spec-v1 repo skeleton (7 required files, badges, version four-source-synced, plugin fingerprint).
+2. **Spec-conformant scaffolding**, deterministically emit a Skill-Repo-Spec-v1 repo skeleton (7 required files, badges, version updated by the version tool, plugin fingerprint).
 3. **Acceptance gate**, eval lift, trigger rate, system-prompt token budget, cross-library dedup, security audit, spec conformance, focus. Fail = explicit reject, never silent ship.
 4. **Auto-iteration handoff**, hand the accepted skill to `self-evolve` (back engine) for regression-gated improvement.
 5. **Batch**, fan out a *series* of candidate skills, each through the gate, under one global library-budget manager.
@@ -77,6 +77,10 @@ python skills/skill-smith/scripts/budget_check.py                            # l
 python skills/skill-smith/scripts/dedup_check.py                             # description overlap
 python skills/skill-smith/scripts/fleet_check.py                             # whole fleet, read only
 ```
+
+The budget, dedup and fleet readers also accept a shared JSON source snapshot.
+See the [catalog API](docs/catalog.md) for package usage, exact source identity,
+coverage and compatibility details.
 
 `check_conformance.py` also measures the SKILL.md itself, because that file is paid for on **every**
 invocation of the skill: **warn above 12,000 characters, fail above 16,000**, every relative path it

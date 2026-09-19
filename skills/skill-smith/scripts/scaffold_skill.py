@@ -379,11 +379,55 @@ KITS = ((GUARDS_URL, "guards"), (STYLE_URL, "style"))
 
 # The consumer's whole CI file. Checkout, python, and one `uses:` line pointing into the
 # submodule, where the steps and the reasoning for them live in a single copy.
-WORKFLOW_TMPL = {
-    'pii-guard.yml': "# pii_guard in CI -- the authority.\n#\n# The local hooks are a fast fail, not a guarantee. On 2026-07-13 a pre-commit hook printed its\n# findings and let the commit through anyway, because the caller had piped `git commit` into `head`\n# and the severed pipe destroyed the guard's exit status. A local hook can also be skipped with\n# --no-verify, is not installed on a fresh clone until someone opts in, and does not exist at all\n# for an outside contributor.\n#\n# This runs on GitHub, on every push and every PR, and it cannot be reached by any of that.\n#\n# The steps live in the guards submodule (guards/ci/pii-guard/action.yml) so there is ONE copy of\n# them across the fleet rather than one per repo, which had already begun to drift. This file is\n# only the wiring; the action carries the reasoning for each step.\n#\n# It runs WITHOUT the operator's private denylist (that file never leaves their machine). That is\n# the point of the allowlist design: the structural checks need no private data, so they work here.\nname: pii-guard\n\non:\n  push:\n  pull_request:\n\njobs:\n  scan:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          submodules: true\n          fetch-depth: 0        # the history scan is the point; a shallow clone would see nothing\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.x'\n      - uses: ./guards/ci/pii-guard\n",
-    'dash-guard.yml': "# dash-guard in CI: the house rule that published prose carries no en/em dash (the ASCII hyphen is\n# code syntax and is left alone). Style, not security, so it scans the current tree only.\n#\n# The steps live in guards/ci/dash-guard/action.yml, one copy for the whole fleet.\nname: dash-guard\n\non:\n  push:\n  pull_request:\n\njobs:\n  scan:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          submodules: true\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.x'\n      - uses: ./guards/ci/dash-guard\n",
-    'load-budget.yml': "# load-budget in CI: PHILOSOPHY P7, the always-loaded budget and the no-second-copy rule.\n#\n# The steps live in guards/ci/load-budget/action.yml, one copy for the whole fleet.\nname: load-budget\n\non:\n  push:\n  pull_request:\n\njobs:\n  budget:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          submodules: true\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.x'\n      - uses: ./guards/ci/load-budget\n",
+SOURCE_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", ".."))
+WORKFLOW_NAMES = ("pii-guard.yml", "dash-guard.yml", "load-budget.yml")
+KIT_ENTRYPOINTS = {
+    "guards": ("hooks/pre-commit", "hooks/pre-push", "ci/pii-guard/action.yml",
+               "tools/pii_guard.py", "tools/data_boundary.py", "tools/test_pii_guard.py",
+               "tools/test_pii_guard_v2.py", "tools/test_datadir.py",
+               "tools/test_companion_contract.py"),
+    "style": ("ci/dash-guard/action.yml", "ci/load-budget/action.yml",
+              "tools/dash_guard.py", "tools/load_budget.py",
+              "tools/test_dash_guard.py", "tools/test_load_budget.py"),
 }
+
+
+def workflow_templates():
+    """Use the same generic CI wiring checked in and exercised by this repository."""
+    templates = {}
+    for name in WORKFLOW_NAMES:
+        with open(os.path.join(SOURCE_ROOT, ".github", "workflows", name), encoding="utf-8") as source:
+            templates[name] = source.read()
+    return templates
+
+
+def require_kit(dest, name):
+    try:
+        if not os.path.exists(os.path.join(dest, ".git")):
+            raise OSError("missing Git marker")
+        for relative in KIT_ENTRYPOINTS[name]:
+            with open(os.path.join(dest, relative), "rb") as entrypoint:
+                entrypoint.read(1)
+    except OSError:
+        raise SystemExit("incomplete " + name + " submodule; run git submodule update --init --recursive") from None
+
+
+def preflight_guards(root):
+    """Read all templates and check existing kits before writing any target files."""
+    try:
+        workflows = workflow_templates()
+        hooks = {}
+        for hook in ("pre-commit", "pre-push"):
+            with open(os.path.join(SOURCE_ROOT, ".githooks", hook), encoding="utf-8") as source:
+                hooks[hook] = source.read()
+    except (OSError, UnicodeError):
+        raise SystemExit("scaffold template missing or unreadable; restore the source checkout") from None
+    for _url, name in KITS:
+        dest = os.path.join(root, name)
+        if os.path.lexists(dest):
+            require_kit(dest, name)
+    return hooks, workflows
+
 
 # Starts EMPTY on purpose. An exemption file shipped with entries in it is an off switch
 # somebody else flipped, in a repo nobody has looked at yet.
@@ -392,7 +436,7 @@ PII_ALLOW_TMPL = """# One exemption per line, each with a comment saying why it 
 # written inside the repo it is supposed to protect.
 """
 
-def emit_guards(root, force, name):
+def emit_guards(root, force, name, templates=None):
     """Spec v1 sections 8 + 9 + 10: every public repo is born with the gates already in it.
 
     Section 8 (pii_guard) is the backstop: it reads what you are about to publish and looks for
@@ -418,13 +462,14 @@ def emit_guards(root, force, name):
     A repo that starts without these accumulates the debt before anyone thinks to add them, and by
     then the fix is no longer an edit, it is a history rewrite and a force-push.
     """
+    hooks, workflows = preflight_guards(root) if templates is None else templates
     print("Guards (Spec v1 sections 8 + 9 + 10):")
     # git init FIRST. A submodule needs a repo to live in, and so do the hooks; before this
     # the scaffolder only copied files, which worked in a bare directory and left the gates
     # looking installed in something git had never heard of. Idempotent: git init on an
     # existing repo is a no-op that does not touch the index.
-    if not os.path.isdir(os.path.join(root, ".git")):
-        r = subprocess.run(["git", "init", "-q"], cwd=root, capture_output=True, text=True)
+    if not os.path.exists(os.path.join(root, ".git")):
+        r = subprocess.run(["git", "init", "-q"], cwd=root, capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
             raise SystemExit("git init failed in {0}: {1}".format(root, r.stderr.strip()))
         print("  git init")
@@ -435,10 +480,11 @@ def emit_guards(root, force, name):
     for url, path in KITS:
         dest = os.path.join(root, path)
         if os.path.isdir(dest):
-            print("  SKIP (exists): %s" % dest)
+            require_kit(dest, path)
+            print("  SKIP (verified): %s" % dest)
             continue
         r = subprocess.run(["git", "submodule", "add", "-b", "main", url, path],
-                           cwd=root, capture_output=True, text=True)
+                           cwd=root, capture_output=True, text=True, timeout=120)
         if r.returncode != 0:
             # Loud, not a warning. A repo scaffolded without the gates is the exact state section 8
             # exists to prevent, and printing WARN next to twenty lines of progress is how it gets
@@ -448,15 +494,22 @@ def emit_guards(root, force, name):
                 "The repo is NOT fully gated. Fix the clone (network, credentials, the URL "
                 "above) and re-run; do not proceed and do not copy a kit in by hand."
                 .format(root, r.stderr.strip(), chr(10), path))
+        require_kit(dest, path)
         print("  added submodule: %s -> %s" % (path, url))
 
     # Hooks come from the submodule. This is repo-local git config, so it is not committed and a
     # fresh clone does not inherit it; that is why CI, which cannot be opted out of, is the
     # authority and the hooks are only a fast fail.
-    subprocess.run(["git", "config", "core.hooksPath", "guards/hooks"], cwd=root, check=False)
-    print("  hooks: core.hooksPath = guards/hooks")
+    for hook, body in hooks.items():
+        write(os.path.join(root, ".githooks", hook), body, force)
+        os.chmod(os.path.join(root, ".githooks", hook), 0o755)
+    result = subprocess.run(["git", "config", "core.hooksPath", ".githooks"],
+                            cwd=root, capture_output=True, text=True, timeout=30)
+    if result.returncode != 0:
+        raise SystemExit("core.hooksPath configuration failed: " + result.stderr.strip())
+    print("  hooks: core.hooksPath = .githooks")
 
-    for wf, body in WORKFLOW_TMPL.items():
+    for wf, body in workflows.items():
         dst = os.path.join(root, ".github", "workflows", wf)
         if os.path.exists(dst) and not force:
             print("  SKIP (exists): %s" % dst)
@@ -516,6 +569,8 @@ def main():
         print("ERROR: %s already exists. Use --force to overwrite individual files." % root)
         return 2
 
+    templates = preflight_guards(root)
+
     domain_topics = [kebab(t) for t in a.topics.split(",") if t.strip()]
     keywords = domain_topics + ["skill"]
 
@@ -558,7 +613,7 @@ def main():
     # progressive-loading dir for the new skill
     write(os.path.join(root, "skills", name, "reference", ".gitkeep"), "", a.force)
 
-    emit_guards(root, a.force, a.name)
+    emit_guards(root, a.force, a.name, templates=templates)
 
     if a.with_config:
         print("Config-bearing standard (config-spec E1-E7):")

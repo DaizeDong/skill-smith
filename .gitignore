@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+build/
+*.egg-info/
+*.whl
 
 # Build / self-evolve metadata
 .sie/

@@ -484,7 +484,8 @@ def test_gh_answer_is_asked_once_per_slug(tmp_path, monkeypatch):
     o = _oracle(tmp_path, {})
     for _ in range(5):
         assert o.visibility("owner/repo")[0] == "PRIVATE"
-    assert len(calls) == 1
+    assert len([args for args in calls if args[1:3] == ["repo", "view"]]) == 1
+    assert len([args for args in calls if args[1:3] == ["auth", "status"]]) == 1
 
 
 def test_map_may_answer_only_when_gh_cannot(tmp_path, monkeypatch):
