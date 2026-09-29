@@ -1,108 +1,87 @@
 ---
 name: skill-smith
-description: Create, scaffold, or batch new Claude Code skills to a tested-real bar: research-first design, spec scaffold, eval+budget acceptance gate, then self-evolve iteration.
+description: "Create or batch new skills with research, a guarded scaffold, and evidence-based acceptance. Use for new skills; route repairs to self-evolve."
 ---
 
-# skill-smith, a skill that creates skills
+# skill-smith
 
-> Governing principle (full text in the repo's `PHILOSOPHY.md`): **a skill is done when it is
-> *proven*, not when it is *generated*.** Research before you design (P1); generation != usable, so
-> nothing ships without passing the acceptance gate (P2); own the seam and delegate the engines (P3).
+A skill is accepted after independent approval of its measured evidence. The evidence CLI validates
+contracts and cannot award acceptance. Follow
+`PHILOSOPHY.md`: research before design, require measured proof, and delegate existing engines.
 
-## When to stop and route elsewhere (decide first)
+## Route and collect the brief
 
-- **Improving / fixing an EXISTING skill** -> this is `self-evolve`'s job. Route there, do not recreate.
-- **"Is there a ready-made skill for X?"** -> `market-intel`'s `ready-skills` domain. Route there.
-- **Creating a NEW skill, or a batch of new skills** -> continue here.
+- Improve an existing skill: use `self-evolve`; keep its missing capabilities visible.
+- Find an existing skill: use `market-intel` and its ready-skills research.
+- Create or batch new skills: collect task, audience, inputs, expected deliverables, platforms,
+  configuration, existing alternatives and proof cases together. Infer answers already provided;
+  ask only for missing decisions. See `reference/intake-delivery.md`.
 
-## Workflow (thin, load the named `reference/<shard>.md` only for the step you are on)
+## Workflow
 
-| # | Step | Load | Delegates to |
-|---|---|---|---|
-| **0** | **Research-first (MANDATORY)**, survey best references + frontier designs + anti-patterns before any design | `reference/research-first.md` | **market-intel** (deep scale) |
-| 1 | Triage + dedup, overlap with existing library? single vs batch? | `reference/scaffold.md` §dedup + `scripts/dedup_check.py` | none |
-| 2 | Choose generation backend | `reference/generators.md` | Skill_Seekers / official skill-creator |
-| 3 | Scaffold Spec-v1 repo (add `--with-config` if config-bearing) | `scripts/scaffold_skill.py` + `reference/config-spec.md` | none |
-| 4 | Draft SKILL.md + optimize triggering description | `reference/triggering.md` | official `run_loop.py` (60/40) |
-| 5 | **Acceptance gate** (all must pass; any fail = explicit reject) | `reference/acceptance-gate.md` + `budget_check.py` + `dedup_check.py` + `check_conformance.py` + `check_config_conformance.py` (G8) | agent-skills-eval / scenario-eval |
-| 6 | Hand off to auto-iteration | `reference/iterate-handoff.md` | **self-evolve** |
-| 7 | Batch a series (if multiple) | `reference/batch.md` | Workflow + library-budget manager |
-| 8 | Deploy (junction + GitHub publish; then MANDATORY set remote metadata + verify) | `reference/deploy.md` + `scripts/set_repo_metadata.py` + `scripts/check_remote_conformance.py` | npx skills / gh |
+| Step | Work | Resource |
+|---|---|---|
+| 0 | Research references, designs, anti-patterns and how usefulness is measured | `reference/research-first.md` |
+| 1 | Check overlap, one job and single versus batch scope | `scripts/dedup_check.py`, `reference/batch.md` |
+| 2 | Delegate generation through an available capability | `reference/generators.md` |
+| 3 | Scaffold the guarded repo; use `--with-config` for user configuration | `scripts/scaffold_skill.py`, `reference/config-spec.md` |
+| 4 | Draft instructions and measure held-out positive and negative triggering | `reference/triggering.md` |
+| 5 | Validate evidence against a frozen independent policy and current candidate | `scripts/acceptance_gate.py`, `reference/acceptance-gate.md` |
+| 6 | Hand off accepted evidence to a supported iteration provider | `reference/iterate-handoff.md` |
+| 7 | Install or publish within authorization, then verify that layer | `reference/deploy.md` |
 
-> **Config-bearing skills** (need per-user keys / installed-tool registry / endpoints) are a
-> first-class case: decide at Step 1, scaffold with `--with-config` (Step 3), and they MUST pass the
-> **config standard (E1 to E7)** at the gate (Step 5, G8). Authority: `reference/config-spec.md`.
+## Invariants
 
-## Hard invariants (never violate, these are P1/P2/P4/P5 in force)
+1. Research cannot be skipped. If the research capability is unavailable, report the gap and use
+   an available equivalent explicitly; a generated outline is not research evidence.
+2. G1 measured paired lift and G2 held-out triggering are mandatory. Missing, extrapolated,
+   synthetic-only, unavailable and skipped evidence cannot produce acceptance. The gate validates
+   external evaluator artifacts; it does not itself run models or discover improvements.
+3. Use installed `llmcall` current policy for model and agent work. Do not pin a provider, model,
+   timeout or fallback ladder. Record actual backend metadata for independence; two aliases of one
+   backend are not heterogeneous judges.
+4. Freeze the evaluator-owned policy and holdout before implementation. Keep exact holdout answers
+   out of implementation prompts. A private path under the same account is procedural separation,
+   not proven physical read isolation. Candidate or oracle changes invalidate prior review streaks.
+5. Measure the whole installed library for G3/G4. Our descriptions are capped at 180 characters;
+   use current observed host capacity and listing, not a historical machine snapshot. A required
+   removal decision is BLOCKED, not a clean budget result. G3/G4 use the same user and active-plugin
+   inventory; retain UNKNOWN and unresolved counts. Preserve disabled alternatives.
+6. One job, at most three modules. G5 security, G6 local conformance and G7 focus are required.
+   Configuration-bearing skills require G8 under `reference/config-spec.md`. G6b is required after
+   publishing; local checks do not prove remote metadata or CI.
+7. Public examples are generated synthetic fixtures. Real inputs, transcripts, prompts, results and
+   reports belong in a verified PRIVATE versioned companion. Never fall back into the tool repo.
+8. Scaffold tracked `.githooks` forwarders and pin both kits. Empty, wrong or incomplete submodules
+   fail. Hooks use `.githooks`, never the potentially empty `guards/hooks` directory directly.
+9. Use `scripts/bump_version.py` to align version surfaces. Verify the installed alias, resources and
+   published tree separately from the current worktree.
 
-1. **Research before design.** Never scaffold a skill without the Phase-0 market-intel recon. If
-   market-intel is unavailable, fall back to `deep-research` and SAY SO, never skip silently.
-2. **No skill is "accepted" without passing the full gate.** Eval lift vs baseline + held-out trigger
-   rate + library token budget + dedup + security audit + spec conformance + single-responsibility.
-   Failure is surfaced as an explicit gap, never a silent ship.
-3. **The token budget is library-wide, and it is already blown by a factor of two.** Past the
-   capacity the loader drops descriptions silently, so the skill exists and never fires. The written
-   rule says ~15k chars. Measured 2026-08-01 against a live skill listing: 21,565 chars survived out
-   of 53,821 declared, and **84 of 163 file-backed skills carried no description at all**. Run
-   `budget_check.py`, believe the measurement, and never add without pruning. Our own descriptions
-   are capped at **180 chars** each, the part that is ours to fix; the rest is a removal decision,
-   priced by `--plugins`. The tool does not name which skills lost their description unless given a
-   captured listing, because the loss is not a contiguous tail in load order and guessing it wrong
-   is what made this gate ignorable.
-4. **One skill, one job (<=3 modules).** Sprawl is rejected and split.
-5. **Conform or it is not a DaizeDong skill, locally AND on the remote.** Output must pass
-   `check_conformance.py` (G6: local files, 7 files, philosophy-first bilingual README, badge block,
-   version four-source-synced, plugin fingerprint) **and**, once published, `check_remote_conformance.py`
-   (G6b: the live GitHub repo carries the base-9 + domain topics and a description). These are **two
-   layers**: a plain `git push` sets no remote metadata, so passing G6 alone is how the topics=null
-   incident happened. Deploy (Step 8) MUST run `set_repo_metadata.py` then G6b, neither layer is
-   optional. **Never hand-edit the five version sites**: use `scripts/bump_version.py` (see
-   `reference/scaffold.md` §bump). A five-file manual ritual is not a process, it is a pending
-   bug, which is why most repos drifted as half-applied releases.
-6. **Config-bearing = configurable-by-anyone, or rejected.** If a skill needs a companion config
-   (keys / registry / endpoints), it MUST pass the seven-element config standard (E1 to E7) via
-   `check_config_conformance.py` (G8): documented schema, env-var discovery mount, deterministic
-   `init`, a `verify` doctor, two configs hot-swappable by env var, secrets gitignored (Mode B), and
-   a README Config section. "Works on my machine" config is a reject. See `reference/config-spec.md`.
+## Deliver and resume
 
-## After the gate: the fleet, not just the new skill
+Return the candidate diff, brief, frozen policy hash, manifest, per-gate results, unresolved gaps,
+installation state and external-readiness matrix. A plan is not a measured result. Resume only the
+failed or missing gates while candidate and policy are unchanged; changes require fresh evidence.
+See `reference/intake-delivery.md` for the handoff contract.
 
-`check_conformance.py` was correct for weeks and surfaced nothing, because nothing ran it. A gate
-with no driver does not exist, and the missing piece was never more judgment. `scripts/fleet_check.py`
-is that driver: **read-only, no `--fix` and never one**, it fans the linter over every plugin repo and
-adds what nothing else checks (skill junctions resolve, visibility PUBLIC implies every guard
-workflow -- `pii-guard` and `dash-guard` -- is on the repo's REMOTE default branch, the installed
-library still fits in the system prompt, a resolved real-run data dir is not inside a PUBLIC or
-UNKNOWN repo, and EVERY workflow on EVERY repo of ours, public and private alike, is actually green
-ON THE REMOTE DEFAULT BRANCH, one row per repo and workflow). It exits nonzero
-on any FAIL and writes a UTC-stamped status JSON, so a scheduled caller checks the artifact's
-freshness to know the run HAPPENED rather than trusting an exit code that only says whether it
-PASSED. Run it by hand with `python scripts/fleet_check.py [--offline]`.
+## Fleet checks
 
-Three rules keep that report honest. Every remote question is about the DEFAULT BRANCH, and every
-answer about the outside world is asked LIVE. The workflow check interrogates the REMOTE, never the
-working tree, because a guard file on your disk that was never pushed is not CI; the CI check filters
-on the default branch, because a green topic-branch run reported as the branch the world clones is
-the same lie in a quieter voice; and the visibility answer comes from `gh`, with the cached map
-allowed to vote only when `gh` cannot answer and only while it is inside its trust window, because a
-cache that can never expire outvotes reality forever. `UNKNOWN` means only
-"could not observe" (no `gh`, unauthenticated, rate limited, offline) which is why it never affects
-the exit code, while a definitive negative from a remote that did answer is a `FAIL`; `WARN` means
-observed, not clean, and unfixable by any edit available today. And the run ends in one **VERDICT**
-line carrying a coverage fraction, which the caller quotes verbatim: the nightly digest once turned
-"pass 86, fail 0, skip 82" into the words "all green" over a fleet in which every defect of the next
-day's audit was already present. The coverage clause is glued to the verdict WORD rather than parked
-at the end of the line, because a fraction the reader never reaches is not a disclosure. If you add
-a check here, put it on one side of those lines and say which.
+`scripts/fleet_check.py` checks junctions, local conformance, whole-library budget, DATA boundaries,
+remote guard actions and every remote default-branch workflow. It does not repair repositories.
+Scaffold metadata validation and remote action inspection require PyYAML; unavailable remote parsing is reported as unobserved.
 
-The remote questions run CONCURRENTLY and every answer is memoized per distinct slug, which is why a
-whole-fleet run is ~28s and not ~128s. That is not a comfort feature: a report this slow gets
-abandoned halfway, which is the same outcome as a gate nobody runs. If you add a check that talks to
-a remote, fan it out with `pmap` (it preserves input order, so rows stay diffable against yesterday)
-and take the shared memos rather than opening your own connection budget. Never buy time by asking
-fewer questions: the coverage is the product.
+Reports use the shared companion resolver and verify PRIVATE versioned storage before writing.
+`--no-status` is console-only. `--offline` reports remote rows unobserved, never passed. Quote the
+full verdict with its coverage fraction.
 
-## Progressive loading
+Remote identity checks support GitHub URLs and static SSH aliases proven by the local SSH config;
+unsupported hosts and complex alias rules remain unknown. Git inspection failures remain visible
+in inventory coverage. Trim worklists and backups use the same PRIVATE storage checks as reports.
 
-This `SKILL.md` is the only always-loaded file. Read `reference/<shard>.md` on demand, one at a time,
-for the step you are executing. Never read the whole `reference/` directory at once.
+An explicit `--workflow-policy` maps repository slugs to `skill`, `security-kit` or `style-kit` with
+a reviewed reason for a non-skill role. Public security remains required for every role. A style
+kit without its own security action remains a failure. CI distinguishes recorded execution from
+zero-step/no-runner failure; that distinction alone does not identify the admission cause.
+
+Load only the reference needed for the current step. Preserve user changes and use isolated
+worktrees for repairs; this acceptance command does not authorize external actions.

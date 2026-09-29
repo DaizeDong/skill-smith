@@ -38,7 +38,7 @@ It does **only what nothing else does**, and delegates everything else:
 4. **Auto-iteration handoff**, hand the accepted skill to `self-evolve` (back engine) for regression-gated improvement.
 5. **Batch**, fan out a *series* of candidate skills, each through the gate, under one global library-budget manager.
 
-It is **not**: a from-scratch generator (it calls Skill_Seekers / the official skill-creator), an eval framework (it calls agent-skills-eval / scenario-eval), or an iteration engine (it calls self-evolve). It is the glue + the gate.
+It is **not**: a from-scratch generator (it calls Skill_Seekers / the official skill-creator), an eval framework (it validates results from available evaluators), or an iteration engine (it calls self-evolve). It is the glue + the gate.
 
 It is **not for**: improving an *existing* skill (that is `self-evolve`), or answering "is there a ready-made skill for X" (that is `market-intel`'s `ready-skills` domain).
 
@@ -77,6 +77,17 @@ python skills/skill-smith/scripts/budget_check.py                            # l
 python skills/skill-smith/scripts/dedup_check.py                             # description overlap
 python skills/skill-smith/scripts/fleet_check.py                             # whole fleet, read only
 ```
+
+Budget and dedup use the same user skills and active plugin inventory. Pass `--skills-dir` and
+`--installed-plugins` to both scripts for a different library. Missing, unreadable or ambiguous
+entries produce `UNKNOWN` and an `unresolved` count; a measured overflow or overlap remains visible
+alongside incomplete coverage. Stale versions in the plugin cache are excluded.
+
+Description trimming writes its worklist and backups into the initialized PRIVATE versioned
+companion, resolved through `guards/tools/datadir.py`. Explicit `--out` and `--backup-dir` paths
+must meet the same checks. Initialize the companion and verify its GitHub visibility first;
+unmanaged directories, public or unknown repositories, and linked output paths are refused.
+Keep worklists and backups committed and pushed in that private companion with other run data.
 
 `check_conformance.py` also measures the SKILL.md itself, because that file is paid for on **every**
 invocation of the skill: **warn above 12,000 characters, fail above 16,000**, every relative path it
@@ -174,10 +185,16 @@ it never commits or pushes: cutting a release stays a human decision.
 
 Trigger words: *create a skill, build a skill, scaffold a skill, author a new skill, batch-create skills, make a series of skills, optimize a skill's trigger / description, skill factory.*
 
+## Evidence and runtime prerequisites
+
+Use Python 3.10 or later and install `requirements-dev.txt` for the offline suite, scaffold metadata validation and YAML workflow inspection. Scaffolder tests use temporary local kit mirrors and forbid network Git protocols. Fleet reports resolve through the shared private companion resolver; explicit output paths must also be in verified PRIVATE versioned storage. Use `--no-status` for console-only inspection.
+
+Collect one [delivery brief](skills/skill-smith/reference/intake-delivery.md), freeze the evaluator-owned policy, then use `acceptance_gate.py --snapshot` and the documented manifest command. Keep the JSON result and raw evaluator logs privately.
+
 ## Limitations
 
-- v0.1 ships the **framework**: research-first workflow + deterministic scaffolder + Spec-v1 linter + budget/dedup checks. The acceptance gate's eval-lift wiring (agent-skills-eval / scenario-eval) and the self-evolve handoff land in v0.2/v0.3 (see [ROADMAP.md](ROADMAP.md)).
-- It assumes `market-intel` and `self-evolve` are installed; without them it degrades to plain web research and a manual gate, and says so (never silently).
+- The evidence CLI validates G1/G2 completion and scores plus all required artifacts against the pinned policy and candidate. Its verdict is contract-only: even non-fixture attestations require independent approval. Candidate hashes bind bytes, executable modes and submodule revisions. G8 separates generated templates from explicitly configured A/B doctor checks. See [the evidence contract](skills/skill-smith/reference/acceptance-gate.md).
+- Preflight `market-intel`, self-evolve and the selected evaluator. Use installed llmcall policy for model work. Missing runtime capabilities remain explicit; the evidence gate does not implement subjective scenario-eval or live deployment.
 - It optimizes for *correct, focused, proven* skills, not raw volume, by design it will refuse to add a skill that overflows the library token budget.
 
 ## Languages

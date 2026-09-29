@@ -67,7 +67,9 @@ WHY THE COLOUR SPLIT EXISTS, AND WHAT EACH COLOUR IS ALLOWED TO MEAN
                       genuine capability loss, stated in full on every run WITH the arithmetic and
                       the plugin ranking. Not red, because the remaining move is a DECISION about
                       what to stop having, not a defect somebody forgot to fix.
-      OK / green      under capacity, nothing of ours over the cap.
+      UNKNOWN         an inventory record or skill could not be measured. Known failures still
+                      retain FAIL/BLOCKED priority, with unresolved coverage reported separately.
+      OK / green      complete inventory, under capacity, nothing of ours over the cap.
 
     The lever is COMPUTED, never assumed. That is the whole difference between this and the version
     that decided in advance that the middle tier was somebody else's problem.
@@ -96,7 +98,7 @@ Usage:
                          [--plugins]          rank installed plugins by description cost
                          [--listing FILE]     a captured live skill listing, to MEASURE the losses
 Stdlib only. Token estimate = chars / 4 (rough).
-Exit codes: 0 OK, 1 FAIL (a lever exists), 2 nothing to measure, 3 BLOCKED (real, no lever).
+Exit codes: 0 OK, 1 FAIL (a lever exists), 2 UNKNOWN inventory, 3 BLOCKED (real, no lever).
 """
 import argparse
 import hashlib
@@ -122,50 +124,82 @@ PER_SKILL_MAX = 180
 WARN_RATIO = 0.8
 
 OURS, LOCAL, PLUGIN = "ours", "local", "plugin"
-# The three verdict states. BLOCKED exists so that "real, and no edit closes it" has somewhere to
+# BLOCKED exists so that "real, and no edit closes it" has somewhere to
 # live other than the FAIL bucket, where it would sit forever and bleach the colour out of every
 # other finding.
-OK, FAIL, BLOCKED = "OK", "FAIL", "BLOCKED"
-RC = {OK: 0, FAIL: 1, BLOCKED: 3}
+OK, FAIL, UNKNOWN, BLOCKED = "OK", "FAIL", "UNKNOWN", "BLOCKED"
+RC = {OK: 0, FAIL: 1, UNKNOWN: 2, BLOCKED: 3}
 
 
 def parse_frontmatter(text):
-    """Return (name, description) from a SKILL.md frontmatter block."""
-    text = text.lstrip("﻿")  # tolerate a UTF-8 BOM (common from Windows editors)
-    if not text.startswith("---"):
+    """Read scalar skill metadata; unsupported or malformed metadata remains unmeasurable.
+
+    This stdlib parser accepts plain, quoted and block text. It does not interpret YAML
+    collections, aliases or tags as descriptions. Missing names retain the directory fallback.
+    """
+    lines = text.lstrip("\ufeff").splitlines()
+    if not lines or lines[0].strip() != "---":
         return None, None
-    end = text.find("\n---", 3)
-    if end == -1:
+    try:
+        end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    except StopIteration:
         return None, None
-    block = text[3:end]
-    name = desc = None
-    lines = block.splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        m = re.match(r"^name:\s*(.*)$", line)
-        if m:
-            name = m.group(1).strip().strip('"\'')
-        m = re.match(r"^description:\s*(.*)$", line)
-        if m:
-            desc = m.group(1).strip().strip('"\'')
-            # join folded/continuation lines (indented, no top-level key)
-            j = i + 1
-            while j < len(lines) and (lines[j].startswith((" ", "\t"))
-                                      and not re.match(r"^\s*\w[\w-]*:\s", lines[j])):
-                desc += " " + lines[j].strip()
-                j += 1
-            i = j
+    fields = {}
+    i = 1
+    while i < end:
+        match = re.match(r"^(name|description):\s*(.*)$", lines[i])
+        if not match:
+            line = lines[i]
+            if (line.strip() and not line.lstrip().startswith("#")
+                    and not line.startswith((" ", "\t"))
+                    and not re.match(r"^[\w-]+:\s*", line)):
+                return None, None
+            i += 1
             continue
+        key, raw = match.groups()
+        if key in fields:
+            return None, None
+        continuation = []
         i += 1
-    return name, desc
+        while i < end and (not lines[i].strip() or lines[i].startswith((" ", "\t"))):
+            continuation.append(lines[i].strip())
+            i += 1
+        raw = raw.strip()
+        if re.fullmatch(r"[>|][+-]?", raw):
+            value = " ".join(continuation).strip()
+        else:
+            raw = " ".join([raw, *continuation]).strip()
+            if raw.startswith('"'):
+                try:
+                    value, consumed = json.JSONDecoder().raw_decode(raw)
+                except ValueError:
+                    return None, None
+                if not isinstance(value, str) or (raw[consumed:].strip()
+                                                 and not raw[consumed:].lstrip().startswith("#")):
+                    return None, None
+            elif raw.startswith("'"):
+                quoted = re.fullmatch(r"'((?:[^']|'')*)'\s*(?:#.*)?", raw)
+                if not quoted:
+                    return None, None
+                value = quoted.group(1).replace("''", "'")
+            else:
+                value = re.split(r"\s+#", raw, maxsplit=1)[0].strip()
+                if (not value or value[0] in "[{&*!|>#" or value.lower() in
+                        ("null", "~", "true", "false") or re.search(r":\s", value)
+                        or value.startswith("- ") or re.fullmatch(
+                            r"[+-]?(?:\d[\d_]*(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", value)):
+                    return None, None
+        if not value.strip():
+            return None, None
+        fields[key] = value
+    return fields.get("name"), fields.get("description")
 
 
 def read(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
-    except OSError:
+    except (OSError, UnicodeError):
         return None
 
 
@@ -210,7 +244,38 @@ class Row(object):
         return cost(self.name, self.desc)
 
 
-def user_tier_rows(skills_dir, code_root):
+def skill_directory_rows(skills_dir, tier_for, owner=None):
+    """Measure each direct skill directory and retain every unresolved entry."""
+    rows, problems = [], []
+    label = "plugin %s" % owner if owner else "user"
+    try:
+        entries = sorted(os.listdir(skills_dir))
+    except OSError as error:
+        return rows, ["%s inventory not readable at %s: %s" % (label, skills_dir, error)]
+    for entry in entries:
+        directory = os.path.join(skills_dir, entry)
+        try:
+            if not stat.S_ISDIR(os.stat(directory).st_mode):
+                continue  # README and other files beside the skill directories are not skills.
+            path = os.path.join(directory, "SKILL.md")
+            if not stat.S_ISREG(os.stat(path).st_mode):
+                raise OSError("SKILL.md is not a regular file")
+        except OSError as error:
+            problems.append("%s skill %s not readable: %s" % (label, directory, error))
+            continue
+        raw = read(path)
+        if raw is None:
+            problems.append("%s skill not readable as UTF-8: %s" % (label, path))
+            continue
+        name, desc = parse_frontmatter(raw)
+        if desc is None:
+            problems.append("%s skill has missing or malformed metadata: %s" % (label, path))
+            continue
+        rows.append(Row(tier_for(directory), name or entry, desc, path, owner))
+    return rows, problems
+
+
+def user_tier_rows(skills_dir, code_root, problems=None):
     """Every skill in the user skills dir, tiered by where the directory actually resolves.
 
     Depth 1 only. The depth-2 glob a predecessor used matched a plugin-shaped layout that does not
@@ -220,22 +285,15 @@ def user_tier_rows(skills_dir, code_root):
     a statement about who wrote it, which is how "loose directory" silently became "third party,
     cannot be fixed". Both tiers sit inside a directory the operator maintains by hand.
     """
-    rows = []
-    if not os.path.isdir(skills_dir):
-        return rows
     code_root = os.path.normcase(os.path.abspath(code_root))
-    for entry in sorted(os.listdir(skills_dir)):
-        d = os.path.join(skills_dir, entry)
-        p = os.path.join(d, "SKILL.md")
-        if not os.path.isfile(p):
-            continue
-        tgt = link_target(d)
-        resolved = os.path.normcase(os.path.abspath(tgt if tgt else d))
-        tier = OURS if resolved.startswith(code_root + os.sep) else LOCAL
-        name, desc = parse_frontmatter(read(p) or "")
-        if desc is None:
-            continue
-        rows.append(Row(tier, name or entry, desc, p))
+
+    def tier_for(directory):
+        resolved = os.path.normcase(os.path.realpath(directory))
+        return OURS if resolved.startswith(code_root + os.sep) else LOCAL
+
+    rows, unresolved = skill_directory_rows(skills_dir, tier_for)
+    if problems is not None:
+        problems.extend(unresolved)
     return rows
 
 
@@ -249,42 +307,64 @@ def plugin_tier_rows(installed_json):
     raw = read(installed_json)
     if raw is None:
         return rows, ["installed_plugins.json not readable at %s" % installed_json]
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate object key: %s" % key)
+            result[key] = value
+        return result
+
     try:
-        data = json.loads(raw)
+        data = json.loads(raw, object_pairs_hook=unique_object)
     except ValueError as e:
         return rows, ["installed_plugins.json is not valid JSON: %s" % e]
-    seen = set()
-    for key, records in sorted((data.get("plugins") or {}).items()):
-        if not isinstance(records, list):
+    if not isinstance(data, dict) or not isinstance(data.get("plugins"), dict):
+        return rows, ["installed_plugins.json must contain a plugins object"]
+    measured_by_skill = {}
+    for key, records in sorted(data["plugins"].items()):
+        if not key.strip():
+            problems.append("installed_plugins.json contains an empty plugin key")
+            continue
+        if isinstance(records, dict):
             records = [records]
-        resolved_any = False
-        for rec in records:
-            ip = (rec or {}).get("installPath") or ""
-            if not ip or not os.path.isdir(ip):
+        if not isinstance(records, list) or not records:
+            problems.append("%s: expected nonempty install records" % key)
+            continue
+        for index, rec in enumerate(records):
+            label = "%s record %d" % (key, index + 1)
+            ip = rec.get("installPath") if isinstance(rec, dict) else None
+            if not isinstance(ip, str) or not ip or "\0" in ip or not os.path.isabs(ip):
+                problems.append("%s: installPath must be an absolute path" % label)
                 continue
-            resolved_any = True
-            sk = os.path.join(ip, "skills")
-            if not os.path.isdir(sk):
+            try:
+                entries = os.listdir(ip)
+            except OSError as error:
+                problems.append("%s: installPath not readable at %s: %s" % (label, ip, error))
                 continue
-            for entry in sorted(os.listdir(sk)):
-                p = os.path.join(sk, entry, "SKILL.md")
-                if not os.path.isfile(p):
+            if not any(os.path.normcase(entry) == os.path.normcase("skills") for entry in entries):
+                continue  # A readable plugin without a skills directory can ship only commands.
+            measured, unresolved = skill_directory_rows(os.path.join(ip, "skills"), lambda _d: PLUGIN, key)
+            problems.extend(unresolved)
+            for row in measured:
+                dedupe = (key, os.path.basename(os.path.dirname(row.path)).lower())
+                if dedupe in measured_by_skill:
+                    previous = measured_by_skill[dedupe]
+                    if previous is not None and (previous.name, previous.desc) != (row.name, row.desc):
+                        problems.append("%s skill %s: active scopes have conflicting metadata"
+                                        % dedupe)
+                        measured_by_skill[dedupe] = None
                     continue
-                dedupe = (key, entry.lower())
-                if dedupe in seen:
-                    continue
-                seen.add(dedupe)
-                name, desc = parse_frontmatter(read(p) or "")
-                if desc is None:
-                    continue
-                rows.append(Row(PLUGIN, name or entry, desc, p, owner=key))
-        if not resolved_any:
-            # Say it out loud. A stale record whose install path is gone means the plugin's real
-            # cost is unknown, and an unknown printed as zero is the same lie this file exists to
-            # stop.
-            problems.append("%s: no installPath on disk (%s)"
-                            % (key, "; ".join((r or {}).get("installPath", "?") for r in records)))
-    return rows, problems
+                measured_by_skill[dedupe] = row
+    return [row for row in measured_by_skill.values() if row is not None], problems
+
+
+def library_inventory(skills_dir, code_root, installed_json):
+    """The shared G3/G4 population: user skills plus active plugin installs, with coverage gaps."""
+    problems = []
+    rows = user_tier_rows(skills_dir, code_root, problems)
+    plugins, unresolved = plugin_tier_rows(installed_json)
+    return rows + plugins, problems + unresolved
 
 
 def rank_plugins(rows):
@@ -431,13 +511,8 @@ def main():
 
     skills_dir = os.path.abspath(os.path.expanduser(a.skills_dir))
     code_root = os.path.abspath(os.path.expanduser(a.code_root))
-    rows = user_tier_rows(skills_dir, code_root)
-    prows, problems = plugin_tier_rows(os.path.abspath(os.path.expanduser(a.installed_plugins)))
-    rows += prows
-
-    if not rows:
-        print("budget_check: no skills found under %s and no plugin skills resolved" % skills_dir)
-        return 2
+    rows, problems = library_inventory(skills_dir, code_root,
+                                       os.path.abspath(os.path.expanduser(a.installed_plugins)))
 
     per_tier = {t: [r for r in rows if r.tier == t] for t in (OURS, LOCAL, PLUGIN)}
     totals = {t: sum(r.cost for r in v) for t, v in per_tier.items()}
@@ -475,6 +550,8 @@ def main():
     print("                      counted from disk, so the real pressure is worse than this.")
     print("  library totals at : %d chars%s"
           % (grand, " (including the candidate)" if extra else ""))
+    if problems:
+        print("  Coverage incomplete: all costs and plans below cover the measured subtotal only.")
 
     overflow = max(0, grand - a.capacity)
     floor_lost = min_skills_lost(rows, overflow)
@@ -517,6 +594,8 @@ def main():
               % (OBSERVED_CAPACITY_DATE, OBSERVED_LOST))
         print("  is not derivable from disk: the observed loss was non-contiguous in load order and")
         print("  fell mostly on the plugin tier. Pass --listing FILE to MEASURE it instead.")
+    elif problems:
+        print("  The measured subtotal is under capacity; the complete library cost is UNKNOWN.")
     else:
         print("  The library fits inside the observed capacity, so nothing is dropped.")
 
@@ -525,7 +604,7 @@ def main():
         print("        measurement: %s" % listing_problem)
 
     if problems:
-        print("\n  UNRESOLVABLE plugin records (cost unknown, NOT counted as zero):")
+        print("\n  UNRESOLVABLE inventory records (cost unknown, NOT counted as zero):")
         for p in problems:
             print("    %s" % p)
 
@@ -544,6 +623,7 @@ def main():
     trimmable = overflow > 0 and headroom >= overflow
 
     findings = []          # (stable key, message). The key is what gets fingerprinted.
+    findings.extend(("unresolved:%s" % problem, None) for problem in problems)
     long_ours = [(r.name, len(r.desc)) for r in per_tier[OURS] if len(r.desc) > a.per_skill_max]
     for n, ln in sorted(long_ours, key=lambda x: -x[1]):
         findings.append(("cap:%s" % n,
@@ -563,6 +643,8 @@ def main():
         state = FAIL
     elif overflow > 0:
         state = BLOCKED
+    elif problems:
+        state = UNKNOWN
     else:
         state = OK
 
@@ -580,6 +662,9 @@ def main():
               % (ratio * 100, " Close to the line." if ratio >= WARN_RATIO else ""))
     else:
         print("  STATUS: %s" % state)
+        if problems:
+            print("    - %d unresolved inventory record(s); the complete library cost is unknown."
+                  % len(problems))
         for _key, msg in findings:
             if msg:
                 print("    - %s" % msg)
@@ -597,8 +682,10 @@ def main():
     if trimmable:
         print("\n  DO THIS: trim these %d description(s), all of them the operator's own files, to"
               % len(cuts))
-        print("  the %d-char cap. Together they give back %d chars, which covers the %d needed:"
+        print("  the %d-char cap. Together they give back %d chars, which covers the measured %d needed:"
               % (a.per_skill_max, covered, overflow))
+        if problems:
+            print("  Unresolved inventory may require further changes; this is not a complete plan.")
         for n, t, gives in cuts:
             print("    %-38s %-6s gives back %5d chars" % (n[:38], t, gives))
     elif overflow > 0:
@@ -622,7 +709,9 @@ def main():
         print("  Priced, so the decision has numbers on it. Even after trimming, removing:")
         for key, c, n in picked:
             print("    %-44s frees %6d chars, %2d skills" % (key, c, n))
-        if enough:
+        if enough and problems:
+            print("  would clear the measured overflow; unresolved inventory may still exceed capacity.")
+        elif enough:
             print("  would put the library back inside the observed capacity. Fewer removals will")
             print("  not: the list is largest-first, so it is already the shortest one that works.")
         else:
@@ -648,7 +737,10 @@ def main():
                   % overflow)
             for key, c, n in picked:
                 print("    remove %-40s frees %6d chars, %2d skills" % (key, c, n))
-            if enough:
+            if enough and problems:
+                print("    total: %d chars removed from the measured subtotal; full coverage is unresolved."
+                      % shed)
+            elif enough:
                 print("    total: %d chars, %d skills, leaving the library at %d against a capacity"
                       % (shed, sum(p[2] for p in picked), grand - shed))
                 print("    of %d." % a.capacity)
@@ -656,6 +748,8 @@ def main():
                 print("    NOT ENOUGH. Removing every plugin frees %d of the %d needed, leaving %d"
                       % (shed, overflow, grand - shed))
                 print("    against a capacity of %d. The user tier alone is over." % a.capacity)
+        elif problems:
+            print("\n  Removal needs are UNKNOWN until the inventory is complete.")
         else:
             print("\n  No removal is needed: the library is inside the observed capacity.")
 
@@ -672,10 +766,10 @@ def main():
     lever = "n/a" if overflow <= 0 else ("trim" if trimmable else "decision")
     print("-" * 78)
     print("  BUDGET: %s total=%d capacity=%d overflow=%d trim_headroom=%d min_lost=%d "
-          "cap_over_ours=%d plugins=%d lever=%s fp=%s"
+          "cap_over_ours=%d plugins=%d lever=%s fp=%s unresolved=%d"
           % (state, grand, a.capacity, overflow, headroom,
              len(measured[0]) if measured is not None else floor_lost,
-             len(long_ours), len(ranked), lever, fp))
+              len(long_ours), len(ranked), lever, fp, len(problems)))
     return RC[state]
 
 

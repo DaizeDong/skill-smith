@@ -156,6 +156,7 @@ def test_dedup_candidate_case_insensitive(tmp_path):
     lib = str(tmp_path / "lib")
     make_skill(lib, "alpha", "parse pdf invoices and extract totals.")
     r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4",
+             "--installed-plugins", empty_plugins(tmp_path),
              "--desc", "PARSE PDF INVOICES AND EXTRACT TOTALS", "--name", "C"])
     assert r.returncode == 1, "uppercase duplicate must be flagged:\n%s" % r.stdout
 
@@ -313,10 +314,11 @@ def test_budget_plugin_tier_comes_from_installed_plugins(tmp_path):
     make_skill(lib, "user-one", "a user skill.")
     r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
              "--installed-plugins", str(inst)])
-    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "BUDGET: UNKNOWN" in r.stdout and "unresolved=1" in r.stdout
     assert "tier plugin 1 skills" in squeeze(r.stdout), "stale version or duplicate record counted:\n%s" % r.stdout
     assert "the stale one" not in r.stdout, r.stdout
-    assert "UNRESOLVABLE plugin records" in r.stdout and "ghost@market" in r.stdout, \
+    assert "UNRESOLVABLE inventory records" in r.stdout and "ghost@market" in r.stdout, \
         "a plugin whose installPath is gone must be named, not treated as zero:\n%s" % r.stdout
 
 
@@ -561,7 +563,8 @@ def test_dedup_flags_pair(tmp_path):
     lib = str(tmp_path / "lib")
     make_skill(lib, "alpha", "parse pdf invoices and extract totals.")
     make_skill(lib, "beta", "parse pdf invoices and extract totals fast.")
-    r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4"])
+    r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4",
+             "--installed-plugins", empty_plugins(tmp_path)])
     assert r.returncode == 1, "near-duplicate pair must be flagged (exit 1):\n%s" % r.stdout
     assert "alpha" in r.stdout and "beta" in r.stdout
 
@@ -570,7 +573,8 @@ def test_dedup_distinct_ok(tmp_path):
     lib = str(tmp_path / "lib")
     make_skill(lib, "alpha", "parse pdf invoices and extract totals.")
     make_skill(lib, "gamma", "schedule recurring kubernetes cluster backups nightly.")
-    r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4"])
+    r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4",
+             "--installed-plugins", empty_plugins(tmp_path)])
     assert r.returncode == 0, "distinct descriptions must pass:\n%s" % r.stdout
 
 
@@ -579,11 +583,13 @@ def test_dedup_desc_candidate_mode(tmp_path):
     make_skill(lib, "alpha", "parse pdf invoices and extract totals.")
     # candidate nearly identical to alpha -> overlap, exit 1
     r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4",
+             "--installed-plugins", empty_plugins(tmp_path),
              "--desc", "parse pdf invoices and extract totals", "--name", "cand"])
     assert r.returncode == 1, "overlapping candidate must exit 1:\n%s" % r.stdout
     assert "OVERLAP" in r.stdout
     # distinct candidate -> exit 0
     r2 = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4",
+              "--installed-plugins", empty_plugins(tmp_path),
               "--desc", "render 3d terrain meshes from gis elevation rasters", "--name", "cand2"])
     assert r2.returncode == 0, "distinct candidate must exit 0:\n%s" % r2.stdout
 

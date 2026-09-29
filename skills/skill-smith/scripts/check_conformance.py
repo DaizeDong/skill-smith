@@ -16,6 +16,7 @@ THREE STATUSES, AND THE LINE BETWEEN THEM
     this very linter died the first time. WARN is the seam between those two failure modes, and
     every check below states which side it sits on and why.
 """
+import argparse
 import datetime
 import glob
 import json
@@ -401,21 +402,28 @@ def main(root):
                 "guards/hooks/pre-commit", "guards/hooks/pre-push",
                 ".github/workflows/pii-guard.yml", ".pii-allow"]:
         check("PII gate: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
-    # The gate must actually be clean -- shipping it red is worse than not having it, because the
-    # green checkbox above then means nothing.
+    # A successful exit means no blocking findings. Keep nonblocking diagnostics visible.
     # FAIL, not skip, when the scanner is absent. `if os.path.isfile(...)` made this whole check
     # vanish silently on any repo missing the guard, which after the submodule migration is every
     # repo whose submodule is not checked out. A conformance report that drops a check reads
     # exactly like one where the check passed.
     guard = os.path.join(root, "guards", "tools", "pii_guard.py")
     if not os.path.isfile(guard):
-        check("PII gate: scan is clean (tree + history)", False,
+        check("PII gate: scan completed (tree + history)", False,
               "scanner absent, so NOTHING scanned this repo; run git submodule update --init")
     else:
         p = subprocess.run([sys.executable, guard, "--tree", "--history"],
-                           cwd=root, capture_output=True, text=True)
-        check("PII gate: scan is clean (tree + history)", p.returncode == 0,
-              (p.stderr or "").strip().splitlines()[0] if p.returncode else "")
+                           cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        diagnostics = "\n".join(part.strip() for part in (p.stdout, p.stderr) if part.strip())
+        if p.returncode:
+            check("PII gate: scan completed (tree + history)", False,
+                  "exit %d%s" % (p.returncode, ":\n" + diagnostics if diagnostics else "; no diagnostics"))
+        else:
+            warned = bool(p.stderr.strip() or re.search(
+                r"\bWARN(?:ING)?\b|HISTORY-DEBT|CROSS-REPO|NOT examined|no blocking findings",
+                diagnostics, re.IGNORECASE))
+            check("PII gate: no blocking findings (tree + history)", WARN if warned else True,
+                  diagnostics)
 
     # 1c) the DATA BOUNDARY (Spec v1 section 9) -- the PRIMARY control; the scan above is a backstop.
     #
@@ -571,7 +579,6 @@ def main(root):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("usage: python check_conformance.py <repo_dir>")
-        sys.exit(2)
-    sys.exit(main(sys.argv[1]))
+    parser = argparse.ArgumentParser(description="Check a skill repository against Skill Repo Spec v1.")
+    parser.add_argument("repo_dir", help="skill repository directory")
+    sys.exit(main(parser.parse_args().repo_dir))

@@ -3,15 +3,14 @@
 
 Auto-detects whether a skill repo is *config-bearing* (ships a companion config / secrets template /
 registry.json / init+verify scripts / a README Config section). If it is, enforces the seven-element
-standard E1-E7 with PASS/FAIL per element -- including a LIVE deterministic-generation test (E4) and a
-hot-swap test (E5) by actually running the repo's own init_config.py / verify_config.py. A
-config-bearing repo failing any element is a reject. A non-config-bearing repo is reported as such and
-skips the gate (exit 0).
+standard E1-E7 with PASS/FAIL/NOT_RUN per element. E4 runs deterministic generation;
+E5 checks explicitly supplied, already configured A/B directories with the repo's doctor.
+Blank generated templates are not functional-readiness evidence.
 
 Usage:
-  python check_config_conformance.py <repo_dir> [--no-run]
+  python check_config_conformance.py <repo_dir> [--no-run] [--config-a DIR --config-b DIR]
 --no-run skips the dynamic E4/E5 subprocess tests (static checks only).
-Exit 0 = pass (or not config-bearing); 1 = config-bearing and failing; 2 = usage error.
+Exit 0 = seven elements passed (or not applicable); 1 = failed; 2 = incomplete or usage error.
 Stdlib only. Never echoes secrets.
 """
 import argparse
@@ -21,22 +20,31 @@ import subprocess
 import sys
 import tempfile
 import shutil
+import stat
 
 PASS, FAIL = "PASS", "FAIL"
 
 
 def read(path):
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return f.read()
-    except Exception:
+    except FileNotFoundError:
         return None
+
+
+def path_mode(path):
+    """Treat an absent optional path separately from a path we cannot inspect."""
+    try:
+        return os.stat(path).st_mode
+    except FileNotFoundError:
+        return 0
 
 
 def find_script(root, *names):
     for n in names:
         p = os.path.join(root, "scripts", n)
-        if os.path.isfile(p):
+        if stat.S_ISREG(path_mode(p)):
             return p
     return None
 
@@ -59,12 +67,12 @@ def collect_text(root):
         if t:
             parts.append((rel, t))
     sk = os.path.join(root, "skills")
-    if os.path.isdir(sk):
+    if stat.S_ISDIR(path_mode(sk)):
         for d in os.listdir(sk):
             t = read(os.path.join(sk, d, "SKILL.md"))
             if t:
                 parts.append(("skills/%s/SKILL.md" % d, t))
-    if os.path.isfile(os.path.join(root, "SKILL.md")):
+    if stat.S_ISREG(path_mode(os.path.join(root, "SKILL.md"))):
         t = read(os.path.join(root, "SKILL.md"))
         if t:
             parts.append(("SKILL.md", t))
@@ -78,7 +86,7 @@ def is_config_bearing(root, texts):
         signals.append("scripts/init_config.py")
     if find_script(root, "verify_config.py", "verify-config.py"):
         signals.append("scripts/verify_config.py")
-    if os.path.isfile(os.path.join(root, "CONFIG.md")):
+    if stat.S_ISREG(path_mode(os.path.join(root, "CONFIG.md"))):
         signals.append("CONFIG.md")
     blob = "\n".join(t for _, t in texts)
     if "## Config" in blob or "## 配置" in blob:
@@ -113,8 +121,7 @@ def tree_snapshot(d):
     return out
 
 
-def main(root, no_run):
-    root = os.path.abspath(os.path.expanduser(root))
+def check_config(root, no_run, config_a=None, config_b=None):
     name = plugin_name(root)
     env_var = (name or "skill").upper().replace("-", "_") + "_CONFIG"
     texts = collect_text(root)
@@ -127,7 +134,7 @@ def main(root, no_run):
     if not signals:
         print("  NOT config-bearing (no companion-config signals) -> G8 not applicable.")
         print("-" * 64)
-        print("SKIP: this skill does not bear config; gate passes vacuously.")
+        print("NOT_APPLICABLE: no configuration conformance or readiness was measured.")
         return 0
     print("  config-bearing signals: %s" % ", ".join(signals))
     print("-" * 64)
@@ -190,7 +197,8 @@ def main(root, no_run):
 
     # ---- dynamic E4 (deterministic) + E5 (hot-swap), via the repo's own scripts ----
     if no_run:
-        print("  NOTE: --no-run -> E4 (deterministic) + E5 (hot-swap) not exercised this run.")
+        check("E4 deterministic generation (init x2 identical)", None, "static_not_executed")
+        check("E5 configured hot-swap (two configs, env-var switch verifies)", None, "static_not_executed")
     elif not (init and verify):
         check("E4 deterministic generation (init x2 identical)", False, "init/verify missing")
         check("E5 hot-swap (two configs, env-var switch verifies)", False, "init/verify missing")
@@ -203,45 +211,80 @@ def main(root, no_run):
             r2 = run([init, "--out", b_dir], cwd=root)
             ok_init = r1.returncode == 0 and r2.returncode == 0
             # E4: byte-identical trees (path-independent content) => template-driven determinism
-            same = ok_init and (tree_snapshot(a_dir) == tree_snapshot(b_dir))
+            a_template, b_template = tree_snapshot(a_dir), tree_snapshot(b_dir)
+            same = ok_init and bool(a_template) and a_template == b_template
             check("E4 deterministic generation (init x2 identical)", same,
-                  "init failed" if not ok_init else "two inits differ -> not template-driven")
+                  "init failed" if not ok_init else "generated templates are empty or differ")
 
-            # E5: verify each, then prove env-var switch resolves the pointed-at config
+            # Template validation and configured readiness are separate lifecycle stages.
             if ok_init:
-                v_a = run([verify], env={env_var: a_dir}, cwd=root)
-                v_b = run([verify], env={env_var: b_dir}, cwd=root)
-                resolves_a = v_a.returncode == 0 and a_dir.replace("\\", "/") in v_a.stdout.replace("\\", "/")
-                resolves_b = v_b.returncode == 0 and b_dir.replace("\\", "/") in v_b.stdout.replace("\\", "/")
-                # generated config self-contained (no abs-path leak), also enforced by verify itself
-                check("E5 hot-swap (two configs, env-var switch verifies)",
-                      resolves_a and resolves_b,
-                      "verify did not resolve+validate the env-pointed config on both legs")
+                if config_a is None and config_b is None:
+                    check("E5 configured hot-swap (two configs, env-var switch verifies)", None,
+                          "configuration_required: fill two generated synthetic configs, then supply --config-a and --config-b; blank templates do not establish readiness")
+                elif not config_a or not config_b:
+                    check("E5 configured hot-swap (two configs, env-var switch verifies)", False,
+                          "both --config-a and --config-b are required")
+                else:
+                    a_config = os.path.realpath(os.path.expanduser(config_a))
+                    b_config = os.path.realpath(os.path.expanduser(config_b))
+                    if a_config == b_config or not all(os.path.isdir(path) for path in (a_config, b_config)):
+                        check("E5 configured hot-swap (two configs, env-var switch verifies)", False,
+                              "two distinct existing config directories are required")
+                    else:
+                        v_a = run([verify], env={env_var: a_config}, cwd=root)
+                        v_b = run([verify], env={env_var: b_config}, cwd=root)
+                        resolves_a = v_a.returncode == 0 and a_config.replace("\\", "/") in v_a.stdout.replace("\\", "/")
+                        resolves_b = v_b.returncode == 0 and b_config.replace("\\", "/") in v_b.stdout.replace("\\", "/")
+                        check("E5 configured hot-swap (two configs, env-var switch verifies)",
+                              resolves_a and resolves_b,
+                              "configured doctor must resolve+validate both selected roots; functional journey evidence is separate")
             else:
                 check("E5 hot-swap (two configs, env-var switch verifies)", False, "init failed")
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
     # report
-    n_fail = sum(1 for _, ok, _ in results if not ok)
+    n_fail = sum(1 for _, ok, _ in results if ok is False)
+    n_missing = sum(1 for _, ok, _ in results if ok is None)
     for tag, ok, detail in results:
-        line = "  [%s] %s" % (PASS if ok else FAIL, tag)
-        if detail and not ok:
+        line = "  [%s] %s" % (PASS if ok else "NOT_RUN" if ok is None else FAIL, tag)
+        if detail and ok is not True:
             line += "  -> %s" % detail
         print(line)
     print("-" * 64)
     total = len(results)
     if n_fail:
-        print("%d/%d elements pass  (%d FAIL) -> REJECT: config-bearing skill is not configurable."
-              % (total - n_fail, total, n_fail))
+        print("%d/%d elements pass  (%d FAIL, %d NOT_RUN) -> REJECT: config checks failed."
+              % (total - n_fail - n_missing, total, n_fail, n_missing))
         return 1
+    if n_missing:
+        print("%d/%d elements pass (%d NOT_RUN) -> INCOMPLETE: static/template checks do not establish G8."
+              % (total - n_missing, total, n_missing))
+        return 2
     print("%d/%d elements pass -> ACCEPT (config standard met)." % (total, total))
     return 0
+
+
+def main(root, no_run, config_a=None, config_b=None):
+    root = os.path.abspath(os.path.expanduser(root))
+    try:
+        if not stat.S_ISDIR(path_mode(root)):
+            print("FAIL: G8 target must be an existing directory: %s" % root)
+            return 1
+        # Applicability is a result of inspection, never a fallback for failed access.
+        os.listdir(root)
+        return check_config(root, no_run, config_a, config_b)
+    except (OSError, UnicodeError) as exc:
+        print("FAIL: G8 target could not be inspected (%s); applicability is unknown."
+              % type(exc).__name__)
+        return 1
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("repo")
     ap.add_argument("--no-run", action="store_true")
+    ap.add_argument("--config-a", help="first already configured synthetic companion directory")
+    ap.add_argument("--config-b", help="second already configured synthetic companion directory")
     a = ap.parse_args()
-    sys.exit(main(a.repo, a.no_run))
+    sys.exit(main(a.repo, a.no_run, a.config_a, a.config_b))

@@ -38,7 +38,7 @@ skill-smith 立足一条原则：**skill 不是"生成出来"就算完成，而�
 4. **自迭代交棒**, 把已接纳的 skill 交给 `self-evolve`（后端引擎）做回归门控的迭代优化。
 5. **批量**, 扇出一**系列**候选 skill，逐个过闸，统一受一个全局"库预算管家"约束。
 
-它**不是**：从零生成器（它调用 Skill_Seekers / 官方 skill-creator）、eval 框架（它调用 agent-skills-eval / scenario-eval）、迭代引擎（它调用 self-evolve）。它是**缝 + 闸**。
+它复用 Skill_Seekers / 官方 skill-creator 生成技能，读取已有评测器的结果，并把迭代交给可用的 self-evolve provider。自己负责流程衔接和证据验收。
 
 它**不用于**：改进**已有** skill（那是 `self-evolve`），或回答"有没有现成的 X skill"（那是 `market-intel` 的 `ready-skills` 域）。
 
@@ -151,10 +151,19 @@ JSON, 因为"没人看得了的 fleet"绝不能读起来像"干净的 fleet"。
 
 触发词：*创建 skill、做一个 skill、脚手架 skill、写新 skill、批量创建 skill、做一套 skill、优化 skill 的触发/描述、skill 工厂。*
 
+## 证据与运行准备
+
+使用 Python 3.10 或更新版本。离线测试、脚手架元数据校验与 YAML 工作流检查使用 `requirements-dev.txt`。
+脚手架测试从临时本地 kit 镜像克隆，并禁止网络 Git 协议。Fleet 报告及显式输出路径
+都要通过 PRIVATE 版本化存储检查；只读控制台模式用 `--no-status`。
+
+先集中填写[交付 brief](skills/skill-smith/reference/intake-delivery.md)，冻结独立 policy，
+再运行 snapshot 和 manifest 验收命令。JSON 结果与原始评测日志保存在私有伴生仓。
+
 ## 局限
 
-- v0.1 交付**框架**：调研先行工作流 + 确定性脚手架 + Spec-v1 检查器 + 预算/去重检查。验收闸的 eval-lift 接线（agent-skills-eval / scenario-eval）与 self-evolve 交棒在 v0.2/v0.3（见 [ROADMAP.md](ROADMAP.md)）。
-- 假定已装 `market-intel` 与 `self-evolve`；没有时降级为普通 web 调研 + 手动闸，并会**显式说明**（绝不静默）。
+- 证据入口按固定的 policy 与候选 hash 核对 G1/G2 完成状态、分数和其他必需证据。它只校验契约；非合成的自述结果也必须经过独立审查。候选 hash 包含文件内容、可执行模式和子模块版本。G8 分开检查空模板生成与已配置的 A/B 目录，空模板不代表功能就绪。见[证据契约](skills/skill-smith/reference/acceptance-gate.md)。
+- 先检查 market-intel、self-evolve 和选定评测器是否可用。模型工作走 installed llmcall 当前策略；缺能力明确报告，验收入口本身不实现主观评测器或部署。
 - 它优化的是**正确、聚焦、被证明**的 skill，不是数量,按设计，它会拒绝加入会撑爆库 token 预算的 skill。
 
 ## 语言

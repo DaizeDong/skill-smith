@@ -14,6 +14,7 @@ Usage:
 import argparse
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -264,7 +265,7 @@ def _read_asset(rel):
 def emit_config_bearing(root, name, force, write_fn):
     """Emit the config-bearing standard (config-spec E1-E7) into the new skill repo.
 
-    - scripts/init_config.py + verify_config.py (verbatim generic tools; auto-detect skill)
+    - scripts/{init_config,verify_config,config_runtime}.py (consumer-bound config tools)
     - CONFIG.md (schema + mount + first-time + switch)
     - README.md / README_CN.md '## Config' section appended
     - .gitignore with the secrets gate (E6)
@@ -275,11 +276,12 @@ def emit_config_bearing(root, name, force, write_fn):
     def fill(t):
         return (t.replace("__NAME__", name)
                  .replace("__ENVVAR__", env)
+                 .replace("__DATAENV__", name.upper().replace("-", "_") + "_DATA_DIR")
                  .replace("__DEFAULTDIR__", defaultdir))
 
-    # generic scripts copied verbatim (they self-detect the skill from plugin.json)
-    write_fn(os.path.join(root, "scripts", "init_config.py"), _read_asset("init_config.py"), force)
-    write_fn(os.path.join(root, "scripts", "verify_config.py"), _read_asset("verify_config.py"), force)
+    # The shared runtime binds both commands to the emitted consumer's plugin identity.
+    for script in ("init_config.py", "verify_config.py", "config_runtime.py"):
+        write_fn(os.path.join(root, "scripts", script), _read_asset(script), force)
     # authoritative config doc + secrets gitignore
     write_fn(os.path.join(root, "CONFIG.md"), fill(_read_asset("CONFIG.md.tmpl")), force)
     write_fn(os.path.join(root, ".gitignore"), _read_asset("skill-gitignore.tmpl"), force)
@@ -315,8 +317,8 @@ DATACLASS_TMPL = """{
     "Spec v1 s9 -- every path in this repo belongs to exactly one class.",
     "TOOL    = code, SKILL.md, docs, and metrics ABOUT THE SKILL. Public, hand-written, no data.",
     "FIXTURE = tests and examples. Public, SYNTHETIC, produced by tools/make_fixtures.py.",
-    "DATA    = anything a REAL RUN produced. Never git-tracked. Lives in the private companion",
-    "          config, resolved at runtime by tools/datadir.py. This repo ships only the schema.",
+    "DATA    = anything a REAL RUN produced. Versioned in the verified PRIVATE companion,",
+    "          never in this public tool repo. Resolve with guards/tools/datadir.py and verify visibility.",
     "",
     "Declare DATA paths here BEFORE the skill has anything to write, not after. A skill that",
     "appends real-run output to a git-tracked file will do it on every run, quietly, forever --",
@@ -353,16 +355,16 @@ DATACLASS_TMPL = """{
     "              shared shape list matched 16 of 54 real output names, and 7 of 18 repos scored",
     "              zero, while every one of them writes output on every run.",
     "",
-    "How to fill it: run the skill for real, take the listing of what it wrote (from OUTSIDE this",
-    "repo, where that output lives), and score the names with",
-    "    python tools/data_boundary.py --explain <name> <name> ...",
+    "How to fill it: inspect shipped write paths and synthetic runs; inspect real output only",
+    "when authorized. Score schematic output names with",
+    "    python guards/tools/data_boundary.py --explain <name> <name> ...",
     "Then rewrite each name into its SCHEMATIC form and commit that. A probe carrying a real",
     "ticker, mailbox handle, channel id or counterparty name is private data in a public repo even",
     "with no file behind it, which would reintroduce the leak under the banner of preventing it.",
     "A probe that matches no shape is reported by name: that is a gap in the shared list, not a",
     "reason to delete the probe."
   ],
-  "_data_home": "~/.%(name)s-config/data/   (override with $%(env)s)"
+  "_data_home": "Verified PRIVATE versioned %(name)s-config companion (override with $%(env)s); no in-repo fallback."
 }
 """
 
@@ -381,8 +383,8 @@ KITS = ((GUARDS_URL, "guards"), (STYLE_URL, "style"))
 # submodule, where the steps and the reasoning for them live in a single copy.
 WORKFLOW_TMPL = {
     'pii-guard.yml': "# pii_guard in CI -- the authority.\n#\n# The local hooks are a fast fail, not a guarantee. On 2026-07-13 a pre-commit hook printed its\n# findings and let the commit through anyway, because the caller had piped `git commit` into `head`\n# and the severed pipe destroyed the guard's exit status. A local hook can also be skipped with\n# --no-verify, is not installed on a fresh clone until someone opts in, and does not exist at all\n# for an outside contributor.\n#\n# This runs on GitHub, on every push and every PR, and it cannot be reached by any of that.\n#\n# The steps live in the guards submodule (guards/ci/pii-guard/action.yml) so there is ONE copy of\n# them across the fleet rather than one per repo, which had already begun to drift. This file is\n# only the wiring; the action carries the reasoning for each step.\n#\n# It runs WITHOUT the operator's private denylist (that file never leaves their machine). That is\n# the point of the allowlist design: the structural checks need no private data, so they work here.\nname: pii-guard\n\non:\n  push:\n  pull_request:\n\njobs:\n  scan:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          submodules: true\n          fetch-depth: 0        # the history scan is the point; a shallow clone would see nothing\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.x'\n      - uses: ./guards/ci/pii-guard\n",
-    'dash-guard.yml': "# dash-guard in CI: the house rule that published prose carries no en/em dash (the ASCII hyphen is\n# code syntax and is left alone). Style, not security, so it scans the current tree only.\n#\n# The steps live in guards/ci/dash-guard/action.yml, one copy for the whole fleet.\nname: dash-guard\n\non:\n  push:\n  pull_request:\n\njobs:\n  scan:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          submodules: true\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.x'\n      - uses: ./guards/ci/dash-guard\n",
-    'load-budget.yml': "# load-budget in CI: PHILOSOPHY P7, the always-loaded budget and the no-second-copy rule.\n#\n# The steps live in guards/ci/load-budget/action.yml, one copy for the whole fleet.\nname: load-budget\n\non:\n  push:\n  pull_request:\n\njobs:\n  budget:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          submodules: true\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.x'\n      - uses: ./guards/ci/load-budget\n",
+    'dash-guard.yml': "# dash-guard in CI: the house rule that published prose carries no en/em dash (the ASCII hyphen is\n# code syntax and is left alone). Style, not security, so it scans the current tree only.\n#\n# The steps live in style/ci/dash-guard/action.yml, one copy for the whole fleet.\nname: dash-guard\n\non:\n  push:\n  pull_request:\n\njobs:\n  scan:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          submodules: true\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.x'\n      - uses: ./style/ci/dash-guard\n",
+    'load-budget.yml': "# load-budget in CI: PHILOSOPHY P7, the always-loaded budget and the no-second-copy rule.\n#\n# The steps live in style/ci/load-budget/action.yml, one copy for the whole fleet.\nname: load-budget\n\non:\n  push:\n  pull_request:\n\njobs:\n  budget:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          submodules: true\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.x'\n      - uses: ./style/ci/load-budget\n",
 }
 
 # Starts EMPTY on purpose. An exemption file shipped with entries in it is an off switch
@@ -391,6 +393,68 @@ PII_ALLOW_TMPL = """# One exemption per line, each with a comment saying why it 
 # A bare common word is not an exemption, it is an off switch for a whole class,
 # written inside the repo it is supposed to protect.
 """
+
+KIT_FILES = {
+    "guards": ("hooks/pre-commit", "hooks/pre-push", "tools/pii_guard.py",
+               "tools/data_boundary.py", "tools/datadir.py", "ci/pii-guard/action.yml"),
+    "style": ("tools/dash_guard.py", "ci/dash-guard/action.yml", "ci/load-budget/action.yml"),
+}
+
+
+def checked_git(root, *args):
+    result = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=120)
+    if result.returncode:
+        raise SystemExit("git %s failed: %s" % (args[0], result.stderr.strip()))
+    return result.stdout.strip()
+
+
+def verify_kit(root, url, path):
+    """An existing directory is usable only when it is the expected complete submodule."""
+    dest = os.path.join(root, path)
+    if not os.path.isfile(os.path.join(dest, ".git")):
+        raise SystemExit("Invalid %s submodule: missing .git file; initialize the pinned kit." % path)
+    expected = url.lower().removesuffix(".git")
+    for actual in (checked_git(root, "config", "--file", ".gitmodules", "submodule.%s.url" % path),
+                   checked_git(dest, "config", "--get", "remote.origin.url")):
+        normalized = actual.replace("git@github.com:", "https://github.com/").lower().removesuffix(".git")
+        if normalized != expected:
+            raise SystemExit("Invalid %s submodule identity; expected %s" % (path, url))
+    if checked_git(root, "config", "--file", ".gitmodules", "submodule.%s.path" % path) != path:
+        raise SystemExit("Invalid %s submodule path" % path)
+    gitlink = checked_git(root, "ls-files", "--stage", "--", path).split()
+    if len(gitlink) != 4 or gitlink[0] != "160000" or gitlink[2] != "0":
+        raise SystemExit("Invalid %s: no tracked submodule gitlink" % path)
+    if checked_git(dest, "rev-parse", "--verify", "HEAD") != gitlink[1]:
+        raise SystemExit("Invalid %s submodule revision: HEAD differs from the staged gitlink" % path)
+    if checked_git(dest, "status", "--porcelain", "--untracked-files=all"):
+        raise SystemExit("Invalid %s submodule: modified or untracked content; restore the pinned kit" % path)
+    missing = [rel for rel in KIT_FILES[path] if not os.path.isfile(os.path.join(dest, rel))
+               or os.path.getsize(os.path.join(dest, rel)) == 0]
+    if missing:
+        raise SystemExit("Invalid %s submodule: missing or empty %s" % (path, ", ".join(missing)))
+
+
+def emit_hook_forwarders(root, force):
+    """Track the small entrypoints that still run when guards/ is absent."""
+    for hook in ("pre-commit", "pre-push"):
+        body = ('#!/bin/sh\nset -eu\n'
+                '_ROOT="$(cd "$(dirname "$0")/.." && pwd)"\n'
+                '_REAL="$_ROOT/guards/hooks/%s"\n'
+                'if [ ! -f "$_REAL" ] || [ ! -s "$_REAL" ]; then\n'
+                '  echo "BLOCKED: guard hook missing or empty; run git submodule update --init --recursive" >&2\n'
+                '  exit 1\nfi\nexec sh "$_REAL" "$@"\n') % hook
+        target = os.path.join(root, ".githooks", hook)
+        if os.path.exists(target) and not force:
+            with open(target, encoding="utf-8") as f:
+                if f.read() != body:
+                    raise SystemExit("Existing %s differs; review it before using --force." % target)
+        write(target, body, force)
+        os.chmod(target, 0o755)
+    checked_git(root, "add", "--chmod=+x", "--", ".githooks/pre-commit", ".githooks/pre-push")
+    checked_git(root, "config", "core.hooksPath", ".githooks")
+    if checked_git(root, "config", "--get", "core.hooksPath") != ".githooks":
+        raise SystemExit("git config core.hooksPath readback mismatch")
+
 
 def emit_guards(root, force, name):
     """Spec v1 sections 8 + 9 + 10: every public repo is born with the gates already in it.
@@ -423,7 +487,7 @@ def emit_guards(root, force, name):
     # the scaffolder only copied files, which worked in a bare directory and left the gates
     # looking installed in something git had never heard of. Idempotent: git init on an
     # existing repo is a no-op that does not touch the index.
-    if not os.path.isdir(os.path.join(root, ".git")):
+    if not os.path.exists(os.path.join(root, ".git")):
         r = subprocess.run(["git", "init", "-q"], cwd=root, capture_output=True, text=True)
         if r.returncode != 0:
             raise SystemExit("git init failed in {0}: {1}".format(root, r.stderr.strip()))
@@ -434,8 +498,9 @@ def emit_guards(root, force, name):
     # submodule and commit the new pointer; re-scaffolding is not the tool for that.
     for url, path in KITS:
         dest = os.path.join(root, path)
-        if os.path.isdir(dest):
-            print("  SKIP (exists): %s" % dest)
+        if os.path.exists(dest):
+            verify_kit(root, url, path)
+            print("  verified existing submodule: %s" % path)
             continue
         r = subprocess.run(["git", "submodule", "add", "-b", "main", url, path],
                            cwd=root, capture_output=True, text=True)
@@ -449,12 +514,13 @@ def emit_guards(root, force, name):
                 "above) and re-run; do not proceed and do not copy a kit in by hand."
                 .format(root, r.stderr.strip(), chr(10), path))
         print("  added submodule: %s -> %s" % (path, url))
+        verify_kit(root, url, path)
 
     # Hooks come from the submodule. This is repo-local git config, so it is not committed and a
     # fresh clone does not inherit it; that is why CI, which cannot be opted out of, is the
     # authority and the hooks are only a fast fail.
-    subprocess.run(["git", "config", "core.hooksPath", "guards/hooks"], cwd=root, check=False)
-    print("  hooks: core.hooksPath = guards/hooks")
+    emit_hook_forwarders(root, force)
+    print("  hooks: tracked .githooks forwarders; core.hooksPath = .githooks")
 
     for wf, body in WORKFLOW_TMPL.items():
         dst = os.path.join(root, ".github", "workflows", wf)
@@ -544,6 +610,17 @@ def main():
         "keywords": keywords,
     }
 
+    try:
+        import yaml
+    except ImportError as exc:
+        raise SystemExit("PyYAML is required to validate generated metadata: python -m pip install PyYAML") from exc
+    skill_template = SKILL_TMPL.replace('name: __NAME__', 'name: __YAML_NAME__').replace('__DESC__', '__YAML_DESCRIPTION__')
+    skill_text = sub(skill_template).replace('__YAML_NAME__', json.dumps(name)).replace(
+        '__YAML_DESCRIPTION__', json.dumps(a.description, ensure_ascii=False))
+    frontmatter = yaml.safe_load(skill_text[4:].split('\n---\n', 1)[0])
+    if frontmatter != {'name': name, 'description': a.description}:
+        raise SystemExit("Generated skill frontmatter did not preserve its metadata")
+
     print("Scaffolding %s (v%s) at %s" % (name, ver, root))
     write(os.path.join(root, "README.md"), sub(README_TMPL), a.force)
     write(os.path.join(root, "README_CN.md"), sub(README_CN_TMPL), a.force)
@@ -553,17 +630,18 @@ def main():
     write(os.path.join(root, "CHANGELOG.md"), sub(CHANGELOG_TMPL), a.force)
     write(os.path.join(root, ".claude-plugin", "plugin.json"),
           json.dumps(plugin, indent=2, ensure_ascii=False) + "\n", a.force)
-    write(os.path.join(root, "skills", name, "SKILL.md"), sub(SKILL_TMPL), a.force)
+    write(os.path.join(root, "skills", name, "SKILL.md"), skill_text, a.force)
     write(os.path.join(root, "docs", "design-brief.md"), sub(DESIGN_BRIEF_TMPL), a.force)
     # progressive-loading dir for the new skill
     write(os.path.join(root, "skills", name, "reference", ".gitkeep"), "", a.force)
 
-    emit_guards(root, a.force, a.name)
+    emit_guards(root, a.force, name)
 
     if a.with_config:
         print("Config-bearing standard (config-spec E1-E7):")
         emit_config_bearing(root, name, a.force, write)
 
+    scripts = os.path.dirname(os.path.abspath(__file__))
     print("\nDone. Next:")
     print("  0) PII gate: git init, then `git config core.hooksPath .githooks` (local config cannot")
     print("     be committed, so every clone must run it; CI does not depend on it).")
@@ -571,9 +649,9 @@ def main():
     print("     line is the one leak no file scan will ever see (Spec v1 s8).")
     if a.with_config:
         print("  0b) Config-bearing: fill CONFIG.md schema, then verify with")
-        print("     python skills/skill-smith/scripts/check_config_conformance.py %s" % root)
+        print("     python %s %s" % (shlex.quote(os.path.join(scripts, "check_config_conformance.py")), shlex.quote(root)))
     print("  1) Fill docs/design-brief.md from a market-intel recon (Step 0).")
-    print("  2) python check_conformance.py %s" % root)
+    print("  2) python %s %s" % (shlex.quote(os.path.join(scripts, "check_conformance.py")), shlex.quote(root)))
     print("  3) Draft SKILL.md body + optimize the description (Step 4), then run the acceptance gate.")
     return 0
 

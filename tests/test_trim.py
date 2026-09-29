@@ -10,10 +10,20 @@ import json
 import os
 import subprocess
 import sys
+import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
 TRIM = os.path.join(_REPO, "skills", "skill-smith", "scripts", "trim_descriptions.py")
+sys.path.insert(0, os.path.join(_REPO, "tools"))
+from make_fixtures import trim_companion_fixture
+
+
+@pytest.fixture(autouse=True)
+def private_companion(tmp_path, monkeypatch):
+    home = trim_companion_fixture(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
 
 def run(args):
