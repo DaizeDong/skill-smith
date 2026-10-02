@@ -19,6 +19,9 @@ import sys
 
 import pytest
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), 'tools'))
+from make_fixtures import review15_duplicated_prose
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
 # The load budget lives in the STYLE submodule, not the security one. Both this line and the
@@ -120,9 +123,7 @@ def test_duplicated_prose_still_blocks(tmp_path):
     """The gate's actual job: a paragraph living in both SKILL.md and a reference."""
     d = str(tmp_path / "dup")
     plugin_repo(d)
-    prose = ("the ratchet only turns one way and a grandfather clause without an expiry date is a "
-             "permanent exemption wearing a reassuring name which is the defect this whole file "
-             "exists to prevent from recurring quietly in the dark ") * 6
+    prose = review15_duplicated_prose()
     write(os.path.join(d, "SKILL.md"), "---\nname: d\ndescription: y\n---\n" + prose)
     write(os.path.join(d, "reference", "why.md"), prose)
     r = run([LB, d])

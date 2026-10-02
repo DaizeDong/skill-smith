@@ -4,9 +4,9 @@ Current: **v0.1.3**
 
 ## v0.1.3 (current), the dash gate is scaffolded into every new skill
 
-- `scaffold_skill.py` vendors `tools/dash_guard.py` plus a `dash-guard` CI workflow (assets under
-  `assets/dash-guard/`), so a new skill is born enforcing the house rule that published prose carries
-  no en/em dash. The tool de-dashes Markdown and Python COMMENTS only, leaving every string literal
+- `scaffold_skill.py` initializes the pinned `guards/` security and `style/` presentation submodules.
+  Its dash workflow calls `./style/ci/dash-guard`; the scanner is `style/tools/dash_guard.py`.
+  The scanner de-dashes Markdown and Python comments only, leaving every string literal
   untouched, and never touches the ASCII hyphen.
 - `check_conformance.py` verifies both files exist and that the tree is dash-clean.
 

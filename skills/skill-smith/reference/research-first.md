@@ -41,5 +41,11 @@ Produce a short brief that the rest of the pipeline consumes:
 
 The brief must explicitly answer: *what is the current best, what will we do better/new, what will we
 NOT do, and how will we prove it works?* If you cannot answer the last one, you are not ready to
-scaffold, loop the recon. This brief is attached to the skill's repo (e.g. `docs/design-brief.md`)
-so the design rationale is auditable.
+scaffold, loop the recon. Store the complete real brief under `research/` in the verified PRIVATE
+versioned DATA directory resolved by the consuming skill's guard resolver. Include its private
+artifact reference in the implementation handoff. Missing private storage requires initialization;
+it never falls back into the public tool tree.
+
+The scaffold's `docs/design-rationale.md` is separate public TOOL documentation. It may explain
+reusable behavior, public interfaces, limitations and generated synthetic examples. Do not copy
+the real recon brief, user scope decisions, prompts, observations or private artifact paths into it.

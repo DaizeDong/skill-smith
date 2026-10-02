@@ -6,14 +6,29 @@ Secrets never live in this repo. This file is the authoritative config contract 
 
 ## Discovery convention (how the skill finds your config), E2
 
-The skill resolves its config dir in this order; the first that exists wins:
+Both emitted commands use this consumer's `.claude-plugin/plugin.json` and pinned
+`guards/tools/datadir.py`, even when called from another directory or a linked Git worktree.
+Initialize the submodule with `git submodule update --init --recursive guards` before use.
+`--skill`, if supplied, must match the consuming plugin's name.
 
-1. `$__ENVVAR__`, environment variable (recommended; location-independent).
-2. `$__ENVVAR___DIR`, accepted alias.
-3. `~/__DEFAULTDIR__/`, dotfile-in-home fallback.
-4. `~/.config/__NAME__-config/`, XDG-style fallback (Linux/macOS).
+Config discovery order:
 
-If none resolves, the skill runs without config and says so: config is optional, never a hard crash.
+1. `--out <dir>` for initialization or `--config-dir <dir>` for the doctor.
+2. `$__ENVVAR__`, environment variable (location-independent).
+3. `$__ENVVAR___DIR`, accepted alias.
+4. The pinned resolver's existing candidates: `$__DATAENV__`, then the sibling
+   `__NAME__-config/`, then `~/__DEFAULTDIR__/`, then `~/.__NAME__-data/`.
+
+Explicit config selections never fall through: the doctor fails if the selected directory is
+missing; initialization can create the selected skeleton. The resolver requires sibling ownership
+proof from a `.companion` file containing `__NAME__` or an origin named `__NAME__-config`.
+It skips an unproven sibling only when a later candidate qualifies; otherwise it fails.
+If no candidate exists, the doctor exits 1 and initialization creates `~/__DEFAULTDIR__/`.
+Missing or mismatched guards and destinations inside the consumer always fail.
+XDG config directories and vendored resolver copies are not discovery fallbacks.
+
+Ownership proof and template conformance do not verify repository visibility. Before adding real
+state, put the config in a separate versioned companion repository verified as PRIVATE.
 
 ## Schema, `registry.json` (E1)
 
@@ -26,11 +41,18 @@ If none resolves, the skill runs without config and says so: config is optional,
       "slug": "example",          // REQUIRED: kebab-case; matches tools/<slug>/
       "installed": true,          // REQUIRED: boolean
       "transport": "stdio",       // OPTIONAL: stdio | http | sse | rest | python-lib
-      "notes": "free text"        // OPTIONAL
+      "notes": "free text"        // OPTIONAL: string
     }
   ]
 }
 ```
+
+The registry must be a JSON object with unique member names. `schema_version` must be the integer
+`1`; Boolean and floating-point values do not satisfy that type. `skill` must match the consuming
+plugin identity. `tools` is required, even when empty; `entries` is not a substitute. Every tool
+requires a kebab-case string `slug` and a Boolean `installed`. Optional `transport` and `notes`
+must have the declared types when present. The doctor reports invalid field paths without their
+values. Additional fields may carry tool-specific settings, which need tool-specific validation.
 
 Per tool that needs credentials, add `tools/<slug>/{claude.json.template, env.template}` and put the
 real values in `secrets/<slug>.env` (gitignored). The template/placeholder shape follows market-intel
@@ -41,23 +63,30 @@ real values in `secrets/<slug>.env` (gitignored). The template/placeholder shape
 The companion config repo is **separate and private**. `secrets/*` is **gitignored**, so real values
 never enter git; back them up out-of-band. The skill repo and config repo never echo secrets.
 
-## First-time setup (E3), succeeds on the first try
+## First-time setup (E3)
 
 ```bash
-# 1. Stamp a conformant, empty config skeleton (deterministic, E4):
-python scripts/init_config.py            # -> ~/__DEFAULTDIR__/  (or pass --out <dir>)
+# 1. Reuse the discovered companion, or create a deterministic empty skeleton (E4):
+python scripts/init_config.py            # prints the selected path; --out <dir> selects one
 
-# 2. Point the skill at it (skip if you used the default path):
-export __ENVVAR__=~/__DEFAULTDIR__
+# 2. For a custom path, export the path printed above:
+# export __ENVVAR__=/path/to/private-companion
 
-# 3. Add your tools + secrets, then confirm it is ready:
-python scripts/verify_config.py          # doctor: PASS/FAIL per check, names what is missing
+# 3. Check the generic schema and directories:
+python scripts/verify_config.py          # PASS/FAIL per shape check; names missing items
 ```
+
+A passing doctor means the template conforms, including an empty `tools` list. Populate the
+tool-specific settings and secrets, then run that tool's readiness checks and a functional exercise.
+The generic doctor does not contact services or establish configured/functional readiness.
 
 ## Switching between two configs (hot-swap), E5
 
-A config dir is self-contained (no hardcoded paths). Keep as many as you like and switch by repointing
-the env var, with no other change:
+Each configured root owns its settings. Generated templates must not contain author-specific
+machine paths; after initialization, user-supplied absolute resource paths are allowed. The generic
+doctor does not impose existence or PRIVATE-repository requirements on extra resource fields;
+the consuming capability defines its own resource checks. Real configuration state still belongs
+in the separate PRIVATE companion. Switch the selected settings by repointing the env var:
 
 ```bash
 export __ENVVAR__=~/configs/work       # config A
@@ -65,4 +94,5 @@ export __ENVVAR__=~/configs/personal   # config B, same skill, different state
 ```
 
 Verify the swap: `python scripts/init_config.py --out ~/configs/work` and `--out ~/configs/personal`,
-run `verify_config.py` against each, then flip `$__ENVVAR__` between them. Both must verify READY.
+run `verify_config.py` against each, then flip `$__ENVVAR__` between them. Both must print the selected
+path and pass shape checks. Configured G8 acceptance also needs filled configs and functional evidence.
