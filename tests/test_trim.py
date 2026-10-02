@@ -10,10 +10,21 @@ import json
 import os
 import subprocess
 import sys
+import pytest
+import yaml
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
 TRIM = os.path.join(_REPO, "skills", "skill-smith", "scripts", "trim_descriptions.py")
+sys.path.insert(0, os.path.join(_REPO, "tools"))
+from make_fixtures import trim_companion_fixture
+
+
+@pytest.fixture(autouse=True)
+def private_companion(tmp_path, monkeypatch):
+    home = trim_companion_fixture(tmp_path)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
 
 def run(args):
@@ -62,7 +73,7 @@ def test_apply_roundtrip_with_backup(tmp_path):
     r = run(["--apply", wl, "--backup-dir", bak])
     assert r.returncode == 0, r.stderr
     txt = read(lib, "big")
-    assert "description: trimmed desc" in txt
+    assert yaml.safe_load(txt.split("---", 2)[1])["description"] == "trimmed desc"
     assert "X" * 200 not in txt
     assert any(os.path.isfile(os.path.join(dp, fn)) for dp, _, fns in os.walk(bak) for fn in fns), "backup missing"
 

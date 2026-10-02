@@ -12,9 +12,9 @@ CI that the whole doctrine calls "the authority" is actually green).
 
 WHAT IT DELIBERATELY DOES NOT DO
 --------------------------------
-1. There is NO --fix and no auto-repair, ever. Three of the per-skill config dotdirs it inspects
-   have no companion repo on disk at all and two hold live secrets and uncommitted state.
-   "Converge them" is a data-loss button wearing a helpful label. Check only, report, stop.
+1. There is NO --fix and no auto-repair. Config locations may contain uncommitted state or
+   secrets, so automatic convergence could destroy data. Inspect and report the current
+   condition; a separate authorized workflow owns any migration or repair.
 2. It does not check that a repo has upstream tracking configured. sync-skills.ps1 was rewritten to
    be branch-agnostic and nothing on this machine reads branch.<name>.remote any more, so that check
    would guard a property with no consumer and stay red forever.
@@ -153,11 +153,11 @@ THE FIVE CHECKS
 
 OUTPUT CONTRACT
 ---------------
-Read-only: there is nothing in here that writes to any repo, including no `git fetch`. Exits nonzero
+Source state is read-only, including no `git fetch`; only the private report is written. Exits nonzero
 if any row is FAIL. UNKNOWN and SKIP never affect the exit code, which is safe precisely because
 UNKNOWN can no longer carry a finding. Prints a human-readable report to stdout and writes a
-machine-readable status JSON (default ~/.skill-smith-data/fleet-check-status.json, override with
---status-json) carrying a UTC timestamp, so the caller verifies FRESHNESS rather than trusting an
+machine-readable status JSON in the verified PRIVATE versioned companion (override with
+--status-json, subject to the same storage check), carrying a UTC timestamp to verify FRESHNESS, not an
 exit code it cannot reliably read: a scheduled caller runs this in a child shell where the exit code
 is not a promise, and here exit 1 means "some check FAILED", not "the run happened". Those are
 different questions and only the artifact answers the second one.
@@ -171,10 +171,16 @@ Stdlib only.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import contextvars
 import concurrent.futures as futures
+import fnmatch
 import importlib.util
 import json
 import os
+from pathlib import Path
+import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -183,6 +189,7 @@ import textwrap
 import threading
 import time
 from datetime import datetime, timezone
+from urllib.parse import quote, urlsplit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFORMANCE = os.path.join(HERE, "check_conformance.py")
@@ -191,12 +198,8 @@ BUDGET = os.path.join(HERE, "budget_check.py")
 DEFAULT_SKILLS_DIR = os.path.expanduser("~/.claude/skills")
 DEFAULT_CODE_ROOT = os.path.expanduser("~/CodesClaude")
 DEFAULT_VISIBILITY = os.path.expanduser("~/.pii-guard/visibility.json")
-# The status file is REAL-RUN OUTPUT: it carries repo names, resolved machine paths and failure
-# text. By this repo's own rule that lands in the private store, never inside the repo and never
-# hardcoded into another tool's internals, so the default is the standalone shape tools/datadir.py
-# defines for this skill. A caller that wants it filed next to its other maintenance artifacts
-# passes --status-json; that is the caller's layout decision to make, not this tool's.
-DEFAULT_STATUS = os.path.expanduser("~/.skill-smith-data/fleet-check-status.json")
+# Resolve at execution time, then verify PRIVATE versioned storage before any report write.
+DEFAULT_STATUS = None
 
 # WARN is "evaluated, not clean, and no edit available today makes it clean". It is deliberately
 # NOT a pass (a pass would hide it) and deliberately NOT a fail (a nightly that is permanently red
@@ -324,8 +327,43 @@ class Memo:
 
 
 # --- tiny helpers --------------------------------------------------------------------------------
+_GIT_SELECTORS = {
+    "GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE",
+    "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_GRAFT_FILE", "GIT_SHALLOW_FILE", "GIT_PREFIX", "GIT_INTERNAL_SUPER_PREFIX",
+    "GIT_CEILING_DIRECTORIES", "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_CONFIG",
+    "GIT_REPLACE_REF_BASE",
+}
+_GIT_ENVIRONMENT = contextvars.ContextVar("fleet_git_environment", default=None)
+
+
+@contextlib.contextmanager
+def physical_git_context(root):
+    """Inspect repository configuration after the effective context authorized its owner."""
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() not in _GIT_SELECTORS and not key.upper().startswith("GIT_CONFIG")}
+    env.update({"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_SYSTEM": os.devnull,
+                "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_COUNT": "1",
+                "GIT_CONFIG_KEY_0": "safe.directory", "GIT_CONFIG_VALUE_0": root})
+    token = _GIT_ENVIRONMENT.set(env)
+    try:
+        yield
+    finally:
+        _GIT_ENVIRONMENT.reset(token)
+
+
 def run(args, cwd=None, timeout=60, env=None):
     """Run a command, never raise. Returns (rc, stdout, stderr); rc is None on timeout."""
+    if args and os.path.basename(str(args[0])).lower() in ("git", "git.exe"):
+        inherited = _GIT_ENVIRONMENT.get() if env is None else env
+        inherited = os.environ if inherited is None else inherited
+        env = {key: value for key, value in inherited.items() if key.upper() not in _GIT_SELECTORS}
+        env["GIT_OPTIONAL_LOCKS"] = "0"
+        env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    if args and os.path.basename(str(args[0])).lower() in ("gh", "gh.exe"):
+        env = {key: value for key, value in (os.environ if env is None else env).items()
+               if key.upper() != "GH_HOST"}
+        env["GH_HOST"] = "github.com"
     try:
         p = subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=env,
                            encoding="utf-8", errors="replace", timeout=timeout)
@@ -370,40 +408,114 @@ def link_target(path):
     return t
 
 
-def slug_from_url(url):
-    """owner/repo, lowercased, from any remote URL shape this fleet uses.
+def github_ssh_alias(host):
+    """Prove a static GitHub HostName from the user's SSH config without executing ssh.
 
-    Covers https://github.com/Owner/repo.git, git@github.com:Owner/repo.git and the ssh host-alias
-    form this machine actually uses, git@daizedong:Owner/repo.git.
+    Include and Match configurations require fuller interpretation and remain unknown.
+    Routing/canonicalization overrides are rejected. OpenSSH's first-value rule is
+    preserved for matching Host patterns, including negated patterns.
     """
-    u = (url or "").strip()
-    if u.endswith(".git"):
-        u = u[:-4]
-    u = u.replace("\\", "/").rstrip("/")
-    parts = [p for p in u.split("/") if p]
-    if len(parts) < 2:
-        return None
-    repo, owner = parts[-1], parts[-2]
-    if ":" in owner:
-        owner = owner.rsplit(":", 1)[1]
-    if not owner or not repo:
-        return None
-    return ("%s/%s" % (owner, repo)).lower()
+    path = os.path.expanduser("~/.ssh/config")
+    options, active = {}, True
+    try:
+        with open(path, encoding="utf-8-sig") as stream:
+            for line in stream:
+                parts = shlex.split(line, comments=True)
+                if not parts:
+                    continue
+                key = parts.pop(0).lower()
+                if "=" in key:
+                    key, value = key.split("=", 1)
+                    parts.insert(0, value)
+                if key in ("include", "match"):
+                    return False
+                if key == "host":
+                    positive = any(fnmatch.fnmatchcase(host, p.lower()) for p in parts if not p.startswith("!"))
+                    negative = any(fnmatch.fnmatchcase(host, p[1:].lower()) for p in parts if p.startswith("!"))
+                    active = positive and not negative
+                elif active:
+                    if key in ("proxycommand", "proxyjump", "canonicalizehostname", "canonicaldomains"):
+                        return False
+                    if key in ("hostname", "port"):
+                        if len(parts) != 1:
+                            return False
+                        options.setdefault(key, parts[0].lower())
+    except (OSError, UnicodeError, ValueError):
+        return False
+    return options.get("hostname") == "github.com" and options.get("port", "22") == "22"
 
 
-def local_repos(code_root):
-    """Every git working copy directly under code_root, as {name: path}."""
+def slug_from_url(url):
+    """A canonical GitHub slug only when the URL's provider identity is established."""
+    if not isinstance(url, str) or not url or url != url.strip() or "\\" in url:
+        return None
+    try:
+        if "://" in url:
+            parsed = urlsplit(url)
+            if parsed.query or parsed.fragment or parsed.password:
+                return None
+            host, path = (parsed.hostname or "").lower(), parsed.path
+            if parsed.scheme == "https":
+                if host != "github.com" or parsed.username or parsed.port not in (None, 443):
+                    return None
+            elif parsed.scheme == "ssh":
+                if parsed.username != "git" or parsed.port not in (None, 22):
+                    return None
+                if host != "github.com" and not github_ssh_alias(host):
+                    return None
+            else:
+                return None
+            if not path.startswith("/"):
+                return None
+            path = path[1:]
+        else:
+            match = re.fullmatch(r"git@([A-Za-z0-9.-]+):(.+)", url)
+            if not match:
+                return None
+            host, path = match.groups()
+            if host.lower() != "github.com" and not github_ssh_alias(host.lower()):
+                return None
+        if path.endswith(".git"):
+            path = path[:-4]
+        if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9_.-]+", path):
+            return None
+        if path.split("/")[1] in (".", ".."):
+            return None
+        return path.lower()
+    except ValueError:
+        return None
+
+
+def local_repos(code_root, problems=None):
+    """Every verified Git working copy directly under code_root, as {name: path}."""
     out = {}
+    problems = problems if problems is not None else []
     if not os.path.isdir(code_root):
+        problems.append((code_root, "code root is missing or inaccessible"))
         return out
-    for name in sorted(os.listdir(code_root)):
+    try:
+        names = sorted(os.listdir(code_root))
+    except OSError as exc:
+        problems.append((code_root, "cannot list code root: %s" % exc))
+        return out
+    for name in names:
         p = os.path.join(code_root, name)
-        if os.path.isdir(os.path.join(p, ".git")):
+        try:
+            os.lstat(os.path.join(p, ".git"))
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError as exc:
+            problems.append((name, "cannot inspect Git marker: %s" % exc))
+            continue
+        inside, root = in_git_worktree(p)
+        if inside is True and os.path.normcase(os.path.realpath(root)) == os.path.normcase(os.path.realpath(p)):
             out[name] = p
+        elif inside is None:
+            problems.append((name, root))
     return out
 
 
-def repo_slugs(repos):
+def repo_slugs(repos, problems=None):
     """{slug: path} for every local repo that has an origin remote.
 
     Concurrent, but the RESULT is assembled by walking the repos in their original order, because
@@ -414,13 +526,18 @@ def repo_slugs(repos):
 
     def ask(item):
         _name, path = item
-        rc, so, _se = run(["git", "-C", path, "remote", "get-url", "origin"], timeout=20)
-        return slug_from_url(first_line(so)) if rc == 0 else None
+        rc, so, se = run(["git", "-C", path, "remote", "get-url", "origin"], timeout=20)
+        slug = slug_from_url(first_line(so)) if rc == 0 else None
+        return slug, ("unsupported or unverified origin identity" if rc == 0 else
+                      "origin inspection failed: %s" % (first_line(se) or "no result"))
 
     out = {}
-    for (_name, path), slug in zip(items, pmap(ask, items)):
+    problems = problems if problems is not None else []
+    for (name, path), (slug, reason) in zip(items, pmap(ask, items)):
         if slug:
             out.setdefault(slug, path)
+        else:
+            problems.append((name, reason))
     return out
 
 
@@ -436,13 +553,33 @@ def in_git_worktree(path):
     if rc is None:
         return None, "could not run git: %s" % (first_line(se) or "no result")
     if rc == 0 and first_line(so):
-        return True, first_line(so)
+        top = os.path.normcase(os.path.abspath(first_line(so)))
+        current = os.path.normcase(os.path.abspath(path))
+        while True:
+            marker = os.path.join(current, ".git")
+            if os.path.lexists(marker):
+                if is_link(marker):
+                    return None, "repository marker is an alias"
+                try:
+                    info = os.lstat(marker)
+                except OSError:
+                    return None, "repository marker is inaccessible"
+                if not (stat.S_ISDIR(info.st_mode) or
+                        (stat.S_ISREG(info.st_mode) and info.st_nlink == 1)):
+                    return None, "repository marker is not an ordinary directory or file"
+                if current != top:
+                    return None, "Git toplevel does not own the nearest physical repository marker"
+                return True, first_line(so)
+            parent = os.path.dirname(current)
+            if parent == current:
+                return None, "Git toplevel has no matching physical repository marker"
+            current = parent
     err = (se or "").lower()
-    if "not a git repository" in err or "no such file" in err or "cannot change to" in err:
+    if err.strip() in ("fatal: not a git repository", "fatal: not a git repository (or any of the parent directories): .git"):
         return False, ""
     if rc == 0:
         return None, "git printed no toplevel and no error"
-    return False, ""
+    return None, "git inspection failed: %s" % (first_line(se) or "exit %s" % rc)
 
 
 # --- observing the REMOTE, without writing to any repo --------------------------------------------
@@ -500,7 +637,7 @@ def _remote_workflows_via_gh(gh, slug, timeout, branches):
         return None, "gh could not reach %s: %s" % (slug, se or "exit %s" % rc)
     if not branch:
         return None, "gh returned no default branch for %s" % slug
-    rc, so, se = run([gh, "api", "repos/%s/contents/.github/workflows?ref=%s" % (slug, branch),
+    rc, so, se = run([gh, "api", "repos/%s/contents/.github/workflows?ref=%s" % (slug, quote(branch, safe="")),
                       "--jq", ".[].name"], timeout=timeout)
     if rc == 0:
         return sorted(ln.strip() for ln in so.splitlines() if ln.strip()), ""
@@ -635,8 +772,88 @@ def check_junctions(skills_dir):
 
 
 # --- check 2: PUBLIC implies the guard workflows are ON THE REMOTE --------------------------------
+def condition_state(value):
+    """Recognize constant conditions without attempting to evaluate GitHub expressions."""
+    if value is None or value is True:
+        return "enabled"
+    if value is False:
+        return "disabled"
+    expression = str(value).strip()
+    if expression.startswith('${{') and expression.endswith('}}'):
+        expression = expression[3:-2].strip()
+    while expression.startswith('(') and expression.endswith(')'):
+        expression = expression[1:-1].strip()
+    if expression.lower() in ('false', '0', 'null', "''", '""'):
+        return "disabled"
+    return "enabled" if expression.lower() in ('true', '1') else "conditional"
+
+
+def workflow_guards(text, conditions=None):
+    """Read configured guard actions from workflow jobs, never from filenames or comments."""
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ValueError("PyYAML is required to inspect workflow actions") from exc
+    try:
+        workflow = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError("workflow YAML is invalid") from exc
+    if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs"), dict):
+        raise ValueError("workflow has no jobs object")
+    found = set()
+    for job in workflow["jobs"].values():
+        if not isinstance(job, dict) or condition_state(job.get("if")) == "disabled":
+            continue
+        steps = job.get("steps", [])
+        if not isinstance(steps, list):
+            raise ValueError("workflow steps must be a list")
+        for step in steps:
+            if not isinstance(step, dict) or condition_state(step.get("if")) == "disabled":
+                continue
+            action = str(step.get("uses", "")).split("@", 1)[0].rstrip("/")
+            for guard, kit in (("pii-guard", "guards"), ("dash-guard", "style")):
+                if action in ("./ci/" + guard, "./%s/ci/%s" % (kit, guard)):
+                    found.add(guard)
+                    if conditions is not None and any(condition_state(item.get("if")) == "conditional"
+                                                      for item in (job, step)):
+                        conditions.add(guard)
+    return [guard for guard in GUARD_WORKFLOWS if guard in found]
+
+
+def required_guards(role):
+    if role == "security-kit":
+        return ["pii-guard"]
+    if role in ("skill", "style-kit"):
+        return list(GUARD_WORKFLOWS)
+    raise ValueError("unknown repository role: %s" % role)
+
+
+def remote_guard_coverage(slug, names, timeout, offline=False, branches=None):
+    gh = shutil.which("gh")
+    if offline or not gh:
+        return None, "workflow action bodies not observed (offline or gh unavailable)"
+    branch, rc, error = branch_probe(gh, slug, timeout, branches)
+    if rc:
+        return None, "gh could not reach %s: %s" % (slug, error or "exit %s" % rc)
+    if not branch:
+        return None, "gh returned no default branch for %s" % slug
+    found = set()
+    conditional = set()
+    for filename in names:
+        endpoint = "repos/%s/contents/.github/workflows/%s?ref=%s" % (slug, quote(filename, safe=""), quote(branch, safe=""))
+        rc, so, se = run([gh, "api", endpoint, "-H", "Accept: application/vnd.github.raw+json"], timeout=timeout)
+        if rc:
+            return None, "workflow body unavailable: %s" % (first_line(se) or filename)
+        try:
+            found.update(workflow_guards(so, conditional))
+        except ValueError as exc:
+            return None, str(exc)
+    note = "conditional execution unverified: " + ", ".join(sorted(conditional)) if conditional else ""
+    return [g for g in GUARD_WORKFLOWS if g in found], note
+
+
 def check_workflow(visibility_path, slugs, code_root, timeout=30, offline=False,
-                   listings=None, branches=None):
+                    listings=None, branches=None, policies=None, oracle=None):
     """Assert the guard workflows exist on the REMOTE default branch of every PUBLIC repo.
 
     The predecessor stat()ed the local clone, which answers a question nobody asked. A workflow file
@@ -658,46 +875,103 @@ def check_workflow(visibility_path, slugs, code_root, timeout=30, offline=False,
               % " + ".join(GUARD_WORKFLOWS))
     c.remote_workflows = {}
     c.all_remote_workflows = {}
-    try:
-        with open(visibility_path, encoding="utf-8") as f:
-            vis = json.load(f)
-    except (OSError, ValueError) as e:
-        c.note = "visibility map unreadable: %s" % e
-        c.add(UNKNOWN, os.path.basename(visibility_path), str(e))
-        return c
+    c.visibility_oracle = oracle or VisibilityOracle(visibility_path, offline=offline, timeout=timeout)
+    oracle = c.visibility_oracle
     c.note = ("the REMOTE is interrogated, never the working tree; entries with no clone under %s "
-              "are skipped, a fork of someone else's repo is not ours to gate" % code_root)
-    public = sorted(k for k, v in vis.items() if str(v).upper() == "PUBLIC")
+              "are skipped; cloned origins use current visibility" % code_root)
+    if oracle.error:
+        c.note += "; visibility map unreadable: %s" % oracle.error
+        if not slugs:
+            c.add(UNKNOWN, os.path.basename(visibility_path), oracle.error)
+    oracle.prefetch(slugs)
+    visibility = {slug: oracle.visibility(slug) for slug in sorted(slugs)}
+    public = sorted(slug for slug, (value, _why) in visibility.items() if value == "PUBLIC")
+    for slug, (value, why) in visibility.items():
+        if value == "UNKNOWN":
+            c.add(UNKNOWN, slug, "visibility not observed: %s" % why)
+    for slug in sorted(oracle.map):
+        if oracle._mapped(slug) == "PUBLIC" and slug not in slugs:
+            c.add(SKIP, slug, "no local clone")
     # Fetch every listing CONCURRENTLY, then emit the rows in the same sorted order as before. Each
     # listing is two blocking gh round trips and there are ~17 of them with a clone here; serially
     # that alone was over half a minute of this report's wall clock.
-    cloned = [s for s in public if slugs.get(s) is not None]
-    fetched = dict(zip(cloned, pmap(
+    fetched = dict(zip(public, pmap(
         lambda s: remote_workflow_files(s, slugs[s], timeout, offline=offline,
-                                        memo=listings, branches=branches), cloned)))
+                                         memo=listings, branches=branches), public)))
+    coverage = dict(zip(public, pmap(
+        lambda s: remote_guard_coverage(s, fetched[s][0], timeout, offline, branches)
+        if fetched[s][0] is not None else (None, fetched[s][1]), public)))
     for slug in public:
-        path = slugs.get(slug)
-        if path is None:
-            c.add(SKIP, slug, "no local clone")
-            continue
         names, why = fetched[slug]
         if names is None:
             # Could not look. Say so; do not award a pass for a question never asked.
             c.add(UNKNOWN, slug, "remote not observed: %s" % why)
             continue
-        found = guards_present(names)
-        c.remote_workflows[slug] = found
         c.all_remote_workflows[slug] = list(names)
-        missing = [g for g in GUARD_WORKFLOWS if g not in found]
+        found, body_why = coverage[slug]
+        if found is None:
+            c.add(UNKNOWN, slug, "remote workflow actions not observed: %s" % body_why)
+            continue
+        c.remote_workflows[slug] = found
+        policy = (policies or {}).get(slug, {"role": "skill"})
+        try:
+            role = policy["role"]
+            if role != "skill" and not policy.get("reason"):
+                raise ValueError("non-skill role requires a reviewed reason")
+            required = required_guards(role)
+        except (ValueError, TypeError, KeyError) as exc:
+            c.add(FAIL, slug, "invalid role policy: %s" % exc)
+            continue
+        missing = [g for g in required if g not in found]
         if missing:
-            c.add(FAIL, slug, "PUBLIC but the remote default branch has no %s (remote workflows: %s)"
+            c.add(FAIL, slug, "PUBLIC but the remote default branch has no %s configured action (remote workflows: %s)"
                   % (", ".join(missing), ", ".join(names) or "none"))
         else:
-            c.add(PASS, slug, "remote carries %s" % ", ".join(found))
+            c.add(PASS, slug, "remote actions: %s; role=%s%s%s" % (", ".join(found), role,
+                  (" (%s)" % policy["reason"]) if policy.get("reason") else "",
+                  ("; " + body_why) if body_why else ""))
     return c
 
 
 # --- check 3: fan check_conformance.py ------------------------------------------------------------
+def conformance_evidence(returncode, stdout, stderr):
+    """Require measured rows and a matching summary before reporting a clean conformance run."""
+    lines = [line.strip() for stream in (stdout, stderr) for line in stream.splitlines() if line.strip()]
+    rows = [match.groups() for line in lines
+            if (match := re.fullmatch(r"\[(PASS|WARN|FAIL)\]\s+(.+)", line))]
+    summaries = [line for line in lines if re.match(r"^\d+/\d+\s+passed\b", line)]
+    score = " | ".join(summaries)
+    failures = [line for line in lines if line.startswith("[FAIL]")]
+    warnings = [line for line in lines if re.match(r"^(?:\[WARN\]|WARN(?:ING)?\b)", line, re.I)]
+    # Keep explicit findings from either stream, including a bare status tag.
+    diagnostics = [score, *failures, *warnings, stderr.strip()]
+    detail = " | ".join(part for part in diagnostics if part)
+    if failures:
+        return FAIL, detail
+    if returncode is None:
+        return UNKNOWN, detail or "no conformance result"
+    if returncode != 0:
+        return FAIL, detail or "exit %s" % returncode
+    if warnings:
+        return WARN, detail
+    if stderr.strip():
+        return UNKNOWN, detail + " | unexplained conformance diagnostics"
+    if any(line.startswith("[") and re.fullmatch(r"\[(PASS|WARN|FAIL)\]\s+(.+)", line) is None
+           for line in lines):
+        return UNKNOWN, detail + " | malformed conformance row"
+    if len(summaries) != 1:
+        return UNKNOWN, detail or "missing or ambiguous conformance summary"
+    summary = re.fullmatch(r"(\d+)/(\d+) passed", summaries[0])
+    if summary is None:
+        return UNKNOWN, detail + " | unsupported or contradictory conformance summary"
+    passed, total = map(int, summary.groups())
+    names = [name for _status, name in rows]
+    if (not total or passed != total or len(rows) != total
+            or len(set(names)) != total or any(status != PASS for status, _name in rows)):
+        return UNKNOWN, detail + " | conformance rows are absent, unmeasured or inconsistent"
+    return PASS, score
+
+
 def check_conformance(repos, timeout):
     c = Check("conformance", "Skill Repo Spec v1 conformance (check_conformance.py)")
     if not os.path.isfile(CONFORMANCE):
@@ -720,31 +994,13 @@ def check_conformance(repos, timeout):
             # that gets deleted or renamed removes the repo from coverage with no trace anywhere.
             c.add(SKIP, name, "no .claude-plugin/plugin.json")
             continue
-        rc, so, se = done[name]
-        tail = [ln.strip() for ln in so.splitlines() if "passed" in ln]
-        score = tail[-1] if tail else ""
-        warns = [ln.strip() for ln in so.splitlines() if ln.strip().startswith("[WARN]")]
-        if rc is None:
-            c.add(UNKNOWN, name, se or "no result")
-        elif rc == 0 and warns:
-            # Exit 0 with warnings is not a clean sheet, and the linter's own summary line already
-            # carries the count. Surfacing it as PASS is exactly the rounding that produced a green
-            # total over a fleet full of findings.
-            c.add(WARN, name, score + " | " + "; ".join(w[len("[WARN]"):].strip().split("  -> ")[0]
-                                                        for w in warns))
-        elif rc == 0:
-            c.add(PASS, name, score)
-        else:
-            fails = [ln.strip() for ln in so.splitlines() if ln.strip().startswith("[FAIL]")]
-            detail = score or first_line(se) or "exit %s" % rc
-            if fails:
-                detail += " | " + "; ".join(f[len("[FAIL]"):].strip() for f in fails)
-            c.add(FAIL, name, detail)
+        status, detail = conformance_evidence(*done[name])
+        c.add(status, name, detail)
     return c
 
 
 # --- check 4: does the installed library still fit in the system prompt? --------------------------
-def check_budget(skills_dir, code_root, timeout):
+def check_budget(skills_dir, code_root, timeout, listing=None, capacity=None):
     """Run budget_check.py (G3) once for the whole machine.
 
     Every other check here is per repo. This one is per LIBRARY, and it is the only check whose
@@ -752,10 +1008,10 @@ def check_budget(skills_dir, code_root, timeout):
     prompt with no error anywhere, so the skill simply never fires and nothing says why.
 
     Exit-code contract of budget_check.py:
-      0  OK       library inside the observed capacity, no description of ours over the per-skill cap
+      0  OK       arithmetic fits; fleet PASS also requires measurement=complete
       1  FAIL     a finding closable tonight by editing: our description is over the cap, or the
                   overflow is small enough that trimming user-tier descriptions would clear it
-      2           nothing to measure, which is a state and not a failure
+      2  UNKNOWN  inventory or supplied listing evidence is incomplete
       3  BLOCKED  the library is over capacity and trimming cannot close the gap. Real, reported in
                   full every run, mapped to WARN and not FAIL.
 
@@ -790,8 +1046,12 @@ def check_budget(skills_dir, code_root, timeout):
               "nobody can edit away stays visible without making the verdict red forever. The "
               "per-skill CAP is limited to our tier, the only tier authored to Spec-v1. Same fp "
               "means the same finding set as last night")
-    rc, so, se = run([sys.executable, BUDGET, "--skills-dir", skills_dir, "--code-root", code_root],
-                     timeout=timeout)
+    command = [sys.executable, BUDGET, "--skills-dir", skills_dir, "--code-root", code_root]
+    if listing:
+        command += ["--listing", listing]
+    if capacity is not None:
+        command += ["--capacity", str(capacity)]
+    rc, so, se = run(command, timeout=timeout)
     lines = [ln.strip() for ln in (so or "").splitlines() if ln.strip()]
     status_line = next((ln for ln in lines if ln.startswith("STATUS:")), "")
     digest = next((ln for ln in lines if ln.startswith("BUDGET:")), "")
@@ -809,22 +1069,33 @@ def check_budget(skills_dir, code_root, timeout):
         except (KeyError, ValueError):
             return None
 
-    lost, overflow = num("min_lost"), num("overflow")
+    loss_count, overflow = num("min_lost"), num("overflow")
+    unresolved = num("unresolved")
+    measurement = fields.get("measurement", "missing")
+    lost = loss_count if measurement in ("complete", "incomplete") else None
+    projected = num("projected_min_removals")
+    if projected is None and measurement not in ("complete", "incomplete"):
+        # Older digests used min_lost for projections when no listing was supplied.
+        projected = loss_count
     detail = " | ".join(x for x in (
         status_line,
         "%s chars over capacity" % fields["overflow"] if overflow else "",
-        ">=%d skill(s) have no description in the prompt" % lost if lost else "",
+        ">=%d skill(s) have no description in the supplied listing" % lost if lost else "",
+        "projected minimum removal: %d skill(s) under the capacity policy" % projected if projected else "",
+        "current omissions unmeasured" if measurement in ("not_supplied", "missing") else "",
         "lever=%s" % fields.get("lever", "?"),
+        "unresolved=%d" % unresolved if unresolved else "",
+        "measurement=%s" % measurement,
         "fp=%s" % fields.get("fp", "?")) if x)
 
     if rc is None:
         c.add(UNKNOWN, "library", se or "no result")
-    elif rc == 2:
-        c.add(UNKNOWN, "library", detail or "nothing to measure")
     elif not digest:
         # Fail closed. A run whose digest cannot be found has not been evaluated, and the previous
         # version turned exactly that into a green row by defaulting the count to zero.
         c.add(UNKNOWN, "library", "budget_check printed no BUDGET: digest line, so nothing was read")
+    elif (lost and (state == "OK" or measurement == "complete")) or rc == 1 or state == "FAIL":
+        c.add(FAIL, "library", detail or first_line(se) or "reported FAIL")
     elif rc == 3 or state == "BLOCKED":
         # Real, and no edit closes it. Say so every run, in a colour that does not accuse the
         # operator of leaving something undone. rc and state are OR-ed so a drift between the two
@@ -832,13 +1103,18 @@ def check_budget(skills_dir, code_root, timeout):
         c.add(WARN, "library",
               "BLOCKED, no lever made of keystrokes: " + (detail or "see budget_check output")
               + " | remedy is a removal decision, run budget_check.py --plugins for the ranking")
+    elif rc == 2 or state == "UNKNOWN" or unresolved:
+        c.add(UNKNOWN, "library", detail or "incomplete library inventory")
     elif rc == 0:
-        # rc==0 is supposed to imply the library fits. The WARN arm stays as a disagreement
-        # detector: if the tool ever exits 0 while its own digest reports an overflow, the two have
-        # drifted and this must not round up to PASS.
-        c.add(WARN if overflow else PASS, "library", detail or "within budget")
+        if (measurement != "complete" or state != "OK"
+                or any(value is None or value < 0 for value in (lost, overflow, unresolved))):
+            c.add(UNKNOWN, "library", detail + " | live visibility has not been established")
+        else:
+            c.add(WARN if overflow else PASS, "library", detail or "within budget")
     else:
         c.add(FAIL, "library", detail or first_line(se) or "exit %s" % rc)
+    if unresolved and not c.count(UNKNOWN):
+        c.add(UNKNOWN, "library coverage", "unresolved=%d; known findings above cover only measured skills" % unresolved)
     return c
 
 
@@ -858,6 +1134,81 @@ def origin_slug(repo_path, timeout=20):
     if rc != 0:
         return None
     return slug_from_url(first_line(so))
+
+
+def publication_routes(repo_path, timeout=20):
+    """Resolve Git's default push remote and every effective URL for allowed push routes.
+
+    The documented explicit origin route is checked as well as the default selected by
+    branch.pushRemote, remote.pushDefault, branch.remote, then origin. Git expands URL
+    rewrites in get-url; unsupported identities and ambiguous configuration fail closed.
+    """
+    def query(*args):
+        return run(["git", "-C", repo_path, *args], timeout=timeout)
+
+    def setting(key):
+        rc, output, error = query("config", "--null", "--get-all", key)
+        if rc == 1 and not output and not error:
+            return None
+        if rc != 0 or not output.endswith("\0"):
+            raise ValueError("Cannot verify PRIVATE publication routing configuration")
+        values = output[:-1].split("\0")
+        if len(values) != 1 or not values[0] or values[0] != values[0].strip():
+            raise ValueError("Ambiguous PRIVATE publication routing configuration")
+        return values[0]
+
+    rc, branch, error = query("symbolic-ref", "--quiet", "--short", "HEAD")
+    if rc == 1 and not branch and not error:
+        branch = None  # Detached HEAD still has an explicit origin push route.
+    elif rc != 0 or not branch.strip() or any(c in branch.strip() for c in "\r\n\0"):
+        raise ValueError("Cannot verify PRIVATE publication branch routing")
+    else:
+        branch = branch.strip()
+    branch_push = setting("branch.%s.pushRemote" % branch) if branch else None
+    push_default = setting("remote.pushDefault")
+    branch_remote = setting("branch.%s.remote" % branch) if branch else None
+    selected = branch_push or push_default or branch_remote or "origin"
+    if selected == "." or selected.startswith("-") or any(c.isspace() for c in selected):
+        raise ValueError("Unsupported PRIVATE publication push remote")
+    routes = {}
+    for remote in dict.fromkeys(("origin", selected)):
+        rc, output, _error = query("remote", "get-url", "--push", "--all", remote)
+        urls = output.splitlines()
+        if rc != 0 or not urls:
+            raise ValueError("Cannot verify PRIVATE publication push URLs")
+        slugs = [slug_from_url(url) for url in urls]
+        if any(slug is None for slug in slugs):
+            raise ValueError("PRIVATE publication push destination has an unsupported identity")
+        routes[remote] = sorted(set(slugs))
+    return selected, routes
+
+
+def publication_identity(repo_path, timeout=None):
+    """Collect fetch/push identities; None preserves the helpers' default call shape."""
+    options = {} if timeout is None else {"timeout": timeout}
+    slug = origin_slug(repo_path, **options)
+    if not slug:
+        raise ValueError("DATA destination requires a verified PRIVATE GitHub origin identity")
+    selected, routes = publication_routes(repo_path, **options)
+    return slug, selected, routes
+
+
+def private_publication_proof(identity, oracle):
+    """Require PRIVATE visibility for every collected fetch and push destination."""
+    slug, selected, routes = identity
+    destinations = {slug, *(target for targets in routes.values() for target in targets)}
+    for target in sorted(destinations):
+        visibility, how = oracle.visibility(target)
+        if visibility == "PUBLIC":
+            raise ValueError("PUBLIC repo %s is not a PRIVATE DATA destination (%s); failing closed"
+                             % (target, how))
+        if visibility != "PRIVATE":
+            raise ValueError("Publication destination %s must be verified PRIVATE; got %s (%s); failing closed"
+                             % (target, visibility, how))
+    push_proof = "; ".join("push[%s]=%s" % (remote, ",".join(targets)) for remote, targets in routes.items())
+    return "PRIVATE fetch=%s; %s; default=%s" % (slug, push_proof, selected)
+
+
 
 
 def parse_stamp(text):
@@ -983,7 +1334,7 @@ class VisibilityOracle:
 
     def _token(self, gh, acct):
         """The stored token for one gh account, or "" if there is not one. Never logged."""
-        rc, tok, _se = run([gh, "auth", "token", "--user", acct], timeout=self.timeout)
+        rc, tok, _se = run([gh, "auth", "token", "--hostname", "github.com", "--user", acct], timeout=self.timeout)
         tok = first_line(tok)
         return tok if rc == 0 and tok else ""
 
@@ -998,7 +1349,7 @@ class VisibilityOracle:
         Asking gh at run time works for anyone, with one account or five, and says nothing at
         all about who is running it.
         """
-        rc, so, se = run([gh, "auth", "status"], timeout=self.timeout)
+        rc, so, se = run([gh, "auth", "status", "--hostname", "github.com"], timeout=self.timeout)
         found = []
         for line in ((so or "") + "\n" + (se or "")).splitlines():
             if " account " not in line:
@@ -1023,7 +1374,11 @@ class VisibilityOracle:
         # "no answer". visibility_of.py handles this with `gh auth switch`, which rewrites the
         # machine's ACTIVE account. This tool is read-only, so it borrows each token for one
         # child process instead and leaves the active account exactly where it found it.
-        for acct in [None] + self._accounts(gh):
+        def accounts():
+            yield None
+            yield from self._accounts(gh)
+
+        for acct in accounts():
             env = None
             if acct:
                 # Memoized per ACCOUNT, not per (account, slug): the token does not depend on which
@@ -1079,26 +1434,27 @@ class VisibilityOracle:
             pmap(self.visibility, want)
 
 
-def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
+def data_skill_identity(root):
+    """Companion identity comes from plugin metadata, independently of the checkout name."""
+    path = os.path.join(root, ".claude-plugin", "plugin.json")
+    try:
+        with open(path, encoding="utf-8") as stream:
+            plugin = json.load(stream)
+    except (OSError, ValueError) as error:
+        raise ValueError("plugin identity metadata is missing or unreadable") from error
+    name = plugin.get("name") if isinstance(plugin, dict) else None
+    if not isinstance(name, str) or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) is None:
+        raise ValueError("plugin identity metadata requires a valid name")
+    return name
+
+
+def check_data_boundary(visibility_path, repos, offline=False, timeout=30, oracle=None):
     """Assert no skill's real-run output resolves into a repo the world can read.
 
-    WHY THE PREDICATE CHANGED (2026-07-31)
-    --------------------------------------
-    This used to assert "the resolved data dir is not inside a git worktree". That is the wrong
-    question, and it condemned the correct answer. Real-run output LIVES IN the private companion
-    repo, versioned and backed up -- that is what the doctrine has always said and what the operator
-    has now confirmed explicitly. Implementing "must not reach a public repo" as "must not be in
-    git" turned the fleet's intended shape into a red row: market-intel FAILED here for keeping its
-    ledger in its private companion repo, an agent then moved that ledger OUT to a loose unversioned
-    directory to satisfy the check, and all the while daily-hotspots kept a tracked ledger in ITS
-    private companion repo and nothing objected, because this check could not even see it. Two
-    contradictory shapes in one fleet, and the checker endorsing neither consistently.
-
-    The predicate is now the one that matches the harm: PUBLIC or UNKNOWN fails, PRIVATE passes and
-    SAYS SO, naming the repo, so a reader can tell "the control looked and approved this" apart from
-    "the control skipped it". UNKNOWN fails closed, matching how the PII gate treats an unknown
-    remote: marking a remote private is a deliberate visible act, silently clearing a public one is
-    invisible and permanent.
+    Real-run output belongs in a versioned PRIVATE companion. Being inside a Git worktree
+    is not itself a violation: the publication destinations determine whether DATA can leak.
+    PUBLIC and UNKNOWN fail closed; PRIVATE passes and names the approved repository.
+    An unversioned destination fails because it cannot supply the required private history.
     """
     c = Check("databoundary",
               "resolved real-run data dirs are never inside a PUBLIC or UNKNOWN repo")
@@ -1107,7 +1463,7 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
               "skill has no data dir yet, which is the correct shipping state. Visibility comes from "
               "LIVE gh; the map only votes when gh cannot answer, and only while it is younger than "
               "%s" % human_age(VisibilityOracle.MAX_MAP_AGE_S))
-    oracle = VisibilityOracle(visibility_path, offline=offline, timeout=timeout)
+    oracle = oracle or VisibilityOracle(visibility_path, offline=offline, timeout=timeout)
     if oracle.error:
         c.note += " | visibility map unreadable (%s): there is no fallback left" % oracle.error
     else:
@@ -1125,31 +1481,20 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
     #
     # A deferred row carries everything phase 3 needs, so phase 3 makes no decision phase 1 did not
     # already make. The set of rows and their contents are identical to the single-loop version.
-    plan = []                            # ("row", status, name, detail) | ("vis", name, resolved, top, slug)
+    plan = []  # Immediate rows or deferred (name, resolved, publication identity) records.
     for name, path in sorted(repos.items()):
-        # Probe the submodule first, then the old vendored path. Both are real states during
-        # the rollout, and the ORDER matters: a repo mid-migration can hold a stale copy in
-        # tools/ next to the current one in guards/, and the stale one is exactly what this
-        # check must not consult.
-        #
-        # The bare `continue` that used to be here read "this skill does not use datadir.py".
-        # After the migration that sentence was false for every repo, and the loop silently
-        # examined none of them while the report still printed. A checker fed nothing prints
-        # the same green as one that found nothing wrong.
-        dd = next((c for c in (os.path.join(path, "guards", "tools", "datadir.py"),
-                               os.path.join(path, "tools", "datadir.py"))
-                   if os.path.isfile(c)), None)
-        if dd is None:
-            plan.append(("row", "WARN", name,
-                         "no datadir.py in guards/tools or tools: either this skill genuinely "
-                         "does not resolve a data dir, or its guards submodule is not checked "
-                         "out and nothing here examined it"))
+        dd = os.path.join(path, "guards", "tools", "datadir.py")
+        if not os.path.isfile(dd):
+            plan.append(("row", UNKNOWN, name,
+                         "pinned guards/tools/datadir.py missing; initialize the guards submodule. "
+                         "No consumer tools/ fallback is permitted"))
             continue
         # Use the resolver THAT REPO would use: the question is where ITS resolver points, and
         # a re-implementation here would answer a subtly different question the moment one drifts.
         try:
-            mod = load_datadir(dd, "fleet_datadir_%s" % name.replace("-", "_"))
-            resolved = mod.resolve_data_dir(name, create=False)
+            skill = data_skill_identity(path)
+            mod = load_datadir(dd, "fleet_datadir_%s" % skill.replace("-", "_"))
+            resolved = mod.resolve_data_dir(skill, create=False)
         except Exception as e:                                   # noqa: BLE001 (report, never crash)
             # The resolver's own refusal is a FINDING, not a gap. datadir.py raises
             # DataDirInsideOwnRepo when a data dir resolves inside the skill repo that ships it --
@@ -1158,7 +1503,7 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
             if type(e).__name__ == "DataDirInsideOwnRepo":
                 plan.append(("row", FAIL, name, first_line(str(e)) or str(e)))
             else:
-                plan.append(("row", UNKNOWN, name, "cannot load tools/datadir.py: %s" % e))
+                plan.append(("row", UNKNOWN, name, "cannot resolve plugin identity or load guards/tools/datadir.py: %s" % e))
             continue
         if resolved is None:
             plan.append(("row", SKIP, name, "not initialized"))
@@ -1176,16 +1521,24 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
             plan.append(("row", UNKNOWN, name, "%s: %s" % (resolved, top)))
             continue
         if not inside:
-            # A plain directory outside every worktree. Nothing can publish it, so it clears this
-            # check -- but it is NOT the preferred shape: unversioned means no history and no
-            # backup for the one artifact that records real runs.
-            plan.append(("row", PASS, name,
-                         "%s (outside any git worktree; unversioned)" % resolved))
+            plan.append(("row", FAIL, name,
+                         "%s is unversioned; DATA requires a verified PRIVATE companion repository" % resolved))
             continue
-        plan.append(("vis", name, resolved, top, origin_slug(top, timeout=timeout)))
+        try:
+            identity = publication_identity(top, timeout=timeout)
+        except ValueError as error:
+            plan.append(("row", FAIL, name, "%s: %s" % (resolved, error)))
+            continue
+        plan.append(("vis", name, resolved, identity))
 
     # Phase 2. One concurrent burst instead of one blocking gh call per deferred row.
-    oracle.prefetch(p[4] for p in plan if p[0] == "vis")
+    destinations = set()
+    for entry in plan:
+        if entry[0] == "vis":
+            slug, _selected, routes = entry[3]
+            destinations.add(slug)
+            destinations.update(target for targets in routes.values() for target in targets)
+    oracle.prefetch(sorted(destinations))
 
     # Phase 3.
     for entry in plan:
@@ -1193,18 +1546,13 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30):
             _k, status, name, detail = entry
             c.add(status, name, detail)
             continue
-        _k, name, resolved, top, slug = entry
-        vis, why = oracle.visibility(slug)
-        where = "%s -> %s" % (resolved, slug or top)
-        if vis == "PRIVATE":
-            c.add(PASS, name, "%s [PRIVATE per %s] versioned in the private companion repo"
-                  % (where, why))
-        elif vis == "PUBLIC":
-            c.add(FAIL, name, "data dir %s is inside PUBLIC repo %s (per %s) -- real-run output "
-                              "must never reach a public repo" % (resolved, slug, why))
+        _k, name, resolved, identity = entry
+        try:
+            proof = private_publication_proof(identity, oracle)
+        except ValueError as error:
+            c.add(FAIL, name, "data dir %s: %s" % (resolved, error))
         else:
-            c.add(FAIL, name, "data dir %s is inside repo %s whose visibility could not be "
-                              "established (%s) -- failing closed" % (resolved, slug or top, why))
+            c.add(PASS, name, "%s [%s] versioned in the private companion repo" % (resolved, proof))
     return c
 
 
@@ -1228,7 +1576,7 @@ def ci_targets(wf_check, visibility_path, slugs, timeout, offline=False,
                listings=None, branches=None):
     """[(slug, names_or_None, why, visibility)] for EVERY repo of ours that has a clone here.
 
-    check_workflow only walks the PUBLIC entries, because guard PRESENCE is a public-remote policy.
+    check_workflow checks PUBLIC repos, because guard PRESENCE is a public-remote policy.
     CI greenness is not, and at least one PRIVATE repo here carries a real guard workflow that no
     fleet report has ever read. A private repo's CI going red is exactly as much a broken thing as a
     public one's, so the listing is fetched for the private repos too rather than reusing a set that
@@ -1238,32 +1586,72 @@ def ci_targets(wf_check, visibility_path, slugs, timeout, offline=False,
     extra API calls.
     """
     seen = getattr(wf_check, "all_remote_workflows", {}) or {}
-    try:
-        with open(visibility_path, encoding="utf-8") as f:
-            vis = {k: str(v).upper() for k, v in json.load(f).items()}
-    except (OSError, ValueError) as e:
-        out = [(s, n, "", "PUBLIC") for s, n in sorted(seen.items())]
-        out.append(("(visibility map)", None,
-                    "unreadable: %s; only PUBLIC repos were enumerated" % e, "UNKNOWN"))
-        return out
-    out = [(s, n, "", vis.get(s, "UNKNOWN")) for s, n in sorted(seen.items())]
+    oracle = getattr(wf_check, "visibility_oracle", None)
+    if oracle is None:
+        oracle = VisibilityOracle(visibility_path, offline=offline, timeout=timeout)
+    oracle.prefetch(set(slugs) | set(seen))
+    out = [(s, n, "", oracle.visibility(s)[0]) for s, n in sorted(seen.items())]
     # The repos check_workflow never walked, chiefly the PRIVATE ones. Fetched CONCURRENTLY and
     # appended in the same sorted order; pmap preserves input order, so `out` is byte-identical to
     # what the serial loop produced.
-    extra = [s for s in sorted(vis)
-             if s not in seen and slugs.get(s) is not None]
+    extra = [s for s in sorted(slugs) if s not in seen]
     #                             ^ no clone here: not ours to interrogate, and check_workflow
     #                               already records the SKIP for the public ones
     for slug, (names, why) in zip(extra, pmap(
             lambda s: remote_workflow_files(s, slugs[s], timeout, offline=offline,
                                             memo=listings, branches=branches), extra)):
-        out.append((slug, names, why, vis.get(slug, "UNKNOWN")))
+        out.append((slug, names, why, oracle.visibility(slug)[0]))
     return out
 
 
 def workflow_tier(filename):
     """"guard" if this workflow file is one of GUARD_WORKFLOWS, else "other". Never filters."""
     return "guard" if os.path.splitext(filename)[0].lower() in GUARD_WORKFLOWS else "other"
+
+
+def valid_ci_step(step):
+    """Require a complete, consistent status/conclusion pair before using step evidence."""
+    if (not isinstance(step, dict) or type(step.get("number")) is not int
+            or step["number"] <= 0 or "conclusion" not in step):
+        return False
+    state, conclusion = step.get("status"), step["conclusion"]
+    if state == "completed":
+        return isinstance(conclusion, str) and conclusion in (
+            "success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required")
+    return state in ("queued", "in_progress") and conclusion is None
+
+
+def ci_execution_detail(gh, slug, run_id, timeout):
+    """Distinguish a run with executed steps from a run admitted to no runner.
+
+    Zero steps do not identify a billing cause. That requires separate check annotations.
+    An empty or unavailable job listing supplies no execution evidence.
+    """
+    rc, so, se = run([gh, "api", "repos/%s/actions/runs/%s/jobs?per_page=100" % (slug, run_id),
+                      "--paginate", "--slurp"], timeout=timeout)
+    if rc:
+        return "unknown", first_line(se) or "job inspection failed"
+    try:
+        pages = json.loads(so)
+        if isinstance(pages, dict):
+            pages = [pages]
+        jobs = [job for page in pages for job in page["jobs"]]
+        if not jobs:
+            return "unknown", "job listing empty"
+        if not all(isinstance(job, dict) for job in jobs):
+            return "unknown", "invalid job record"
+        for job in jobs:
+            steps = job.get("steps")
+            if not isinstance(steps, list) or not all(valid_ci_step(step) for step in steps):
+                return "unknown", "invalid or unavailable step records"
+        if any(step["status"] in ("in_progress", "completed") and step.get("conclusion") != "skipped"
+               for job in jobs for step in job["steps"]):
+            return "executed", "at least one valid step was in progress or completed"
+        if all(job.get("steps") == [] and not job.get("runner_name") and not job.get("runner_id") for job in jobs):
+            return "not_started", "all jobs have zero steps and no runner; inspect annotations for admission cause"
+        return "unknown", "no steps recorded; runner/admission evidence incomplete"
+    except (ValueError, KeyError, TypeError):
+        return "unknown", "unparseable job listing"
 
 
 def check_ci(targets, timeout, branches=None):
@@ -1298,6 +1686,7 @@ def check_ci(targets, timeout, branches=None):
     being asked about, and inventing an answer from the wrong ref is how this started.
     """
     c = Check("ci", "EVERY workflow on EVERY repo of ours is GREEN ON THE DEFAULT BRANCH")
+    c.execution = {}
     gh = shutil.which("gh")
     if not gh:
         c.note = "gh not on PATH; CI state unobserved (infrastructure, non-failing)"
@@ -1353,7 +1742,7 @@ def check_ci(targets, timeout, branches=None):
     def ask_runs(job):
         slug, wf, branch = job
         return run([gh, "run", "list", "-w", wf, "-b", branch, "--limit", "1", "-R", slug,
-                    "--json", "conclusion,status,createdAt,headBranch"], timeout=timeout)
+                    "--json", "conclusion,status,createdAt,headBranch,databaseId,headSha"], timeout=timeout)
 
     runs_by_job = dict(zip([(s, w) for s, w, _b in jobs], pmap(ask_runs, jobs)))
 
@@ -1395,6 +1784,9 @@ def check_ci(targets, timeout, branches=None):
             except ValueError as e:
                 c.add(UNKNOWN, name, "unparseable gh output: %s" % e)
                 continue
+            if not isinstance(runs, list) or any(not isinstance(item, dict) for item in runs):
+                c.add(UNKNOWN, name, "invalid workflow run listing")
+                continue
             if not runs:
                 # The file IS on the remote default branch (that is why we are asking). GitHub
                 # expires run history, so a dormant repo legitimately has none. Absence of runs is
@@ -1403,16 +1795,32 @@ def check_ci(targets, timeout, branches=None):
                                      "workflow has only ever run on other refs)" % branch)
                 continue
             r = runs[0]
+            if any(r.get(key) is not None and not isinstance(r[key], str)
+                   for key in ("conclusion", "status")):
+                c.add(UNKNOWN, name, "invalid workflow run status")
+                continue
             concl = (r.get("conclusion") or "").lower()
             state = (r.get("status") or "").lower()
-            when = "%s on %s" % (r.get("createdAt") or "", r.get("headBranch") or branch)
+            reported_branch = r.get("headBranch")
+            branch_verified = isinstance(reported_branch, str) and reported_branch == branch
+            branch_label = (reported_branch if isinstance(reported_branch, str) and reported_branch
+                            else "<unobserved branch>")
+            when = "%s on %s" % (r.get("createdAt") or "", branch_label)
             if state != "completed":
                 c.add(UNKNOWN, name, "run %s (%s)" % (state or "unknown state", when))
-            elif concl in GREEN:
-                c.add(PASS, name, when)
-            elif concl in RED:
+            elif concl in GREEN + RED:
                 detail = "last run %s (%s)" % (concl, when)
-                if exempt:
+                execution, execution_detail = (ci_execution_detail(gh, slug, r["databaseId"], timeout)
+                                               if r.get("databaseId") else ("unknown", "run ID absent"))
+                c.execution[name] = {"state": execution, "detail": execution_detail,
+                                     "run_id": r.get("databaseId"), "head_sha": r.get("headSha")}
+                detail += "; execution=%s: %s" % (execution, execution_detail)
+                if not branch_verified:
+                    c.add(UNKNOWN, name, "%s; returned branch does not establish default branch %s"
+                          % (detail, branch))
+                elif concl in GREEN:
+                    c.add(PASS if execution == "executed" else UNKNOWN, name, detail)
+                elif exempt:
                     # Named, per workflow, per repo, and the reason is printed every single run so
                     # the exemption cannot quietly become the norm.
                     c.add(WARN, name, "%s [CI_WARN_ONLY: %s]" % (detail, exempt))
@@ -1578,7 +1986,72 @@ def print_report(checks, started, elapsed):
     return tot
 
 
+def reject_output_aliases(path):
+    """Reject ambiguous physical destinations before any DATA write or mkdir."""
+    absolute = Path(os.path.abspath(os.path.expanduser(path)))
+    for node in (*reversed(absolute.parents), absolute):
+        try:
+            info = node.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 1024:
+            raise ValueError("DATA output contains a link or reparse alias")
+        if stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
+            raise ValueError("DATA output contains a hardlink alias")
+        if node != absolute and not stat.S_ISDIR(info.st_mode):
+            raise ValueError("DATA output parent is not a directory")
+    return str(absolute)
+
+
+def default_data_path(name):
+    """Resolve a real-run destination through the consumer's pinned resolver."""
+    repo = os.path.realpath(os.path.join(HERE, "..", "..", ".."))
+    module = load_datadir(os.path.join(repo, "guards", "tools", "datadir.py"), "skill_smith_datadir")
+    # Bind the consumer explicitly so linked worktrees retain sibling discovery.
+    module._own_repo_root = lambda: repo
+    directory = module.resolve_data_dir("skill-smith")
+    if directory is None:
+        raise ValueError("Initialize the private skill-smith companion or set SKILL_SMITH_CONFIG; no DATA fallback")
+    return os.path.join(directory, name)
+
+
+def resolve_status_path(path, visibility_path, offline=False, oracle=None, *,
+                        default_name="fleet-check-status.json", directory=False):
+    """Resolve status, worklist or backup DATA into a verified PRIVATE repository."""
+    repo = os.path.realpath(os.path.join(HERE, "..", "..", ".."))
+    path = reject_output_aliases(default_data_path(default_name) if path is None else path)
+    if os.path.exists(path) and os.path.isdir(path) != directory:
+        raise ValueError("DATA destination has the wrong file/directory type")
+    try:
+        inside_own = os.path.commonpath([os.path.normcase(repo), os.path.normcase(path)]) == os.path.normcase(repo)
+    except ValueError:  # Different Windows volumes cannot contain one another.
+        inside_own = False
+    if inside_own:
+        raise ValueError("Report DATA cannot be written inside the tool repository")
+    parent = path if directory and os.path.isdir(path) else os.path.dirname(path)
+    while not os.path.isdir(parent):
+        higher = os.path.dirname(parent)
+        if higher == parent:
+            raise ValueError("Report requires an existing PRIVATE versioned companion")
+        parent = higher
+    inside, root = in_git_worktree(parent)
+    if inside is not True:
+        raise ValueError("Report requires a PRIVATE versioned companion, not an unversioned directory")
+    identity = publication_identity(root)
+    oracle = oracle or VisibilityOracle(visibility_path, offline=offline)
+    effective_proof = private_publication_proof(identity, oracle)
+    with physical_git_context(root):
+        physical_inside, physical_root = in_git_worktree(parent)
+        if (physical_inside is not True or
+                os.path.normcase(os.path.abspath(physical_root)) != os.path.normcase(os.path.abspath(root))):
+            raise ValueError("Physical and effective Git contexts disagree about PRIVATE DATA ownership")
+        physical_proof = private_publication_proof(publication_identity(root), oracle)
+    return path, effective_proof + "; physical: " + physical_proof
+
+
 def write_status(path, checks, tot, started_utc, elapsed, exit_code):
+    path = reject_output_aliases(path)
+    tmp = reject_output_aliases(path + ".tmp")
     line, verdict = digest_line(tot)
     payload = {
         "tool": "fleet_check",
@@ -1604,12 +2077,12 @@ def write_status(path, checks, tot, started_utc, elapsed, exit_code):
         "unobserved": ["%s: %s -- %s" % (c.id, n, d)
                        for c in checks for s, n, d in c.rows if s == UNKNOWN],
         "warnings": ["%s: %s -- %s" % (c.id, n, d)
-                     for c in checks for s, n, d in c.rows if s == WARN],
+                      for c in checks for s, n, d in c.rows if s == WARN],
+        "ci_execution": {name: value for c in checks for name, value in getattr(c, "execution", {}).items()},
     }
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, sort_keys=True)
         f.write("\n")
@@ -1623,6 +2096,9 @@ def main(argv=None):
     ap.add_argument("--code-root", default=DEFAULT_CODE_ROOT,
                     help="where the fleet's working copies live")
     ap.add_argument("--visibility", default=DEFAULT_VISIBILITY)
+    ap.add_argument("--listing", help="captured current skill listing for measured G3 visibility; absent evidence stays UNKNOWN")
+    ap.add_argument("--capacity", type=int, help="explicit current G3 capacity policy; historical estimates are not enforced")
+    ap.add_argument("--workflow-policy", help="reviewed JSON mapping repo slug to role and reason; public security is always required")
     ap.add_argument("--status-json", default=DEFAULT_STATUS,
                     help="machine-readable result; the caller checks its utc for freshness")
     ap.add_argument("--no-status", action="store_true", help="do not write the status file")
@@ -1631,13 +2107,32 @@ def main(argv=None):
     ap.add_argument("--gh-timeout", type=int, default=30)
     ap.add_argument("--conformance-timeout", type=int, default=300)
     a = ap.parse_args(argv)
+    policies = None
+    if a.workflow_policy:
+        try:
+            with open(a.workflow_policy, encoding="utf-8") as f:
+                policies = json.load(f)
+            if not isinstance(policies, dict):
+                raise ValueError("workflow policy must be an object")
+        except (OSError, ValueError) as e:
+            print("workflow policy rejected: %s" % e, file=sys.stderr)
+            return 1
+
+    oracle = VisibilityOracle(a.visibility, offline=a.offline, timeout=a.gh_timeout)
+    if not a.no_status:
+        try:
+            a.status_json, storage_proof = resolve_status_path(a.status_json, a.visibility, a.offline, oracle)
+        except (OSError, ValueError, RuntimeError, ImportError) as e:
+            print("status destination rejected: %s" % e, file=sys.stderr)
+            return 1
 
     t0 = time.time()
     started_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     code_root = os.path.abspath(os.path.expanduser(a.code_root))
-    repos = local_repos(code_root)
-    slugs = repo_slugs(repos)
+    inventory_problems = []
+    repos = local_repos(code_root, problems=inventory_problems)
+    slugs = repo_slugs(repos, problems=inventory_problems)
 
     # ONE pair of memos for the whole run, shared by every check that talks to a remote. This is
     # what makes the deduplication cross-check rather than merely intra-check: the default branch
@@ -1648,14 +2143,19 @@ def main(argv=None):
 
     skills_dir = os.path.abspath(os.path.expanduser(a.skills_dir))
     checks = [check_junctions(skills_dir)]
+    if inventory_problems:
+        inventory = Check("inventory", "repository inventory inspection coverage")
+        for name, reason in inventory_problems:
+            inventory.add(UNKNOWN, name, reason)
+        checks.append(inventory)
     wf = check_workflow(os.path.abspath(os.path.expanduser(a.visibility)), slugs, code_root,
                         timeout=a.gh_timeout, offline=a.offline,
-                        listings=listings, branches=branches)
+                        listings=listings, branches=branches, policies=policies, oracle=oracle)
     checks.append(wf)
     checks.append(check_conformance(repos, a.conformance_timeout))
-    checks.append(check_budget(skills_dir, code_root, a.conformance_timeout))
+    checks.append(check_budget(skills_dir, code_root, a.conformance_timeout, a.listing, a.capacity))
     checks.append(check_data_boundary(os.path.abspath(os.path.expanduser(a.visibility)),
-                                      repos=repos, offline=a.offline, timeout=a.gh_timeout))
+                                      repos=repos, offline=a.offline, timeout=a.gh_timeout, oracle=oracle))
 
     if a.offline:
         c = Check("ci", "EVERY workflow on EVERY repo of ours is GREEN ON THE DEFAULT BRANCH")
@@ -1679,7 +2179,7 @@ def main(argv=None):
     if not a.no_status:
         try:
             write_status(a.status_json, checks, tot, started_utc, elapsed, exit_code)
-            print("\nstatus: %s" % a.status_json)
+            print("\nstatus: %s [%s]" % (a.status_json, storage_proof))
         except OSError as e:
             print("\nstatus write FAILED: %s" % e, file=sys.stderr)
             # A caller that cannot see a fresh artifact must not be told everything is fine.

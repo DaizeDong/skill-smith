@@ -1,102 +1,19 @@
 #!/usr/bin/env python3
-"""Library system-prompt budget check (Acceptance Gate G3).
+"""Audit installed file-backed skill descriptions and current listing visibility.
 
-WHAT IS BEING PREVENTED, AND WHY IT IS INVISIBLE
-    Every installed skill injects `name` + `description` into the system prompt. Past a budget the
-    descriptions are SILENTLY DROPPED: the skill still exists, still has a description in its
-    SKILL.md, and the agent simply never sees it, so it never fires. Nothing errors, nothing logs.
-    The only way to notice is to count.
+The inventory includes user and active plugin tiers. Only the authored tier has the
+per-skill description cap. A supplied listing measures missing descriptions by identity;
+an incomplete listing or inventory remains explicitly unresolved.
 
-THE MEASUREMENT OF 2026-08-01, WHICH REPLACED THREE ROUNDS OF GUESSING
-    An agent session was asked to write down, verbatim, the skill listing its own system prompt
-    carried, and that listing was diffed against the descriptions present in every SKILL.md on
-    disk. Result: of 163 file-backed skills, 79 appeared WITH their description and 84 appeared as
-    a bare name. The 79 surviving lines came to 21,565 chars. The library declares 53,821. So about
-    32,000 chars of description, and 84 skills, were not in the prompt at all.
+--capacity supplies an explicit current capacity policy. Crossing that policy produces
+FAIL when trimming can close the gap and BLOCKED when a removal decision is needed.
+Those projections do not establish that any current description is absent: only the
+listing does that. Observed omissions and authored-description violations produce FAIL.
 
-    Three things that earlier versions of this file asserted were false, and each one mattered:
-
-    1. "Truncation takes a contiguous tail in load order." It does not. In the listing,
-       `vast-gpu` kept its description while the skills either side of it alphabetically lost
-       theirs. A running-total prefix model cannot produce a non-contiguous set, so every VICTIM
-       NAME this tool used to print was a guess dressed as a finding. It no longer guesses. Give it
-       `--listing FILE` and it will MEASURE which skills lost their description; without that
-       input it reports the arithmetic and says the names are not knowable from disk.
-
-    2. "The plugin tier is budgeted elsewhere, so only the user tier truncates." Backwards. 81 of
-       the 84 losses were plugin skills. Computing the running total over the user tier alone made
-       the tool report zero plugin victims while the plugin tier was where nearly all the loss was.
-
-    3. "Uninstalling a plugin moves the total by zero." That followed from (2) and is the exact
-       opposite of the truth: the plugin tier is 33,040 of the 53,821 chars, and uninstalling the
-       largest plugin frees more than four times what trimming every user description could.
-       The previous version deleted the operator's only real lever on the strength of a model its
-       own observation had already refuted.
-
-WHAT THIS TOOL STILL CANNOT SEE, SAID OUT LOUD RATHER THAN COUNTED AS ZERO
-    24 entries in that live listing have no SKILL.md anywhere on disk: built-in skills shipped
-    inside the CLI, and skills registered dynamically by a running workflow. They consume the same
-    budget and cannot be enumerated from the filesystem. Both sides of this tool's comparison are
-    therefore restricted to FILE-BACKED skills, which keeps the arithmetic internally consistent
-    and means the real pressure is somewhat worse than the number printed. The capacity figure is
-    an OBSERVATION on a date, not a constant of the loader: if the CLI ships more built-ins
-    tomorrow, the same library will fit less.
-
-THE THREE TIERS
-    ours    skills under the user skills dir that resolve, through a junction, into the fleet code
-            root. Authored to this repo's Spec-v1, so the per-skill description cap applies.
-    local   skills that sit as plain directories in the user skills dir. STILL THE OPERATOR'S.
-            Nothing installs into the user skills dir automatically; plugins install under the
-            plugin cache. A loose directory there was put there by hand.
-    plugin  skills shipped by installed plugins, read from installed_plugins.json.
-
-    The middle tier used to be called `other` and documented as "third-party, not ours to edit".
-    That was an assumption dressed as a fact and it was false: every loose directory here is the
-    operator's own. Naming a fixable thing unfixable is one of the two ways this row became
-    permanent noise. The tier now records HOW it decided (junction target, or loose), so the claim
-    is auditable instead of asserted.
-
-WHY THE COLOUR SPLIT EXISTS, AND WHAT EACH COLOUR IS ALLOWED TO MEAN
-    The other way the row became noise: it was RED for a condition no edit could clear. A colour
-    that never changes stops being read, and then the next real failure is invisible too. So:
-
-      FAIL / red      something closable tonight by editing a file: one of OUR descriptions over
-                      the per-skill cap, or an overflow small enough that trimming user-tier
-                      descriptions to the cap would clear it. A lever exists, so the run names it.
-      BLOCKED / amber the library is over capacity and trimming cannot close the gap. Real, a
-                      genuine capability loss, stated in full on every run WITH the arithmetic and
-                      the plugin ranking. Not red, because the remaining move is a DECISION about
-                      what to stop having, not a defect somebody forgot to fix.
-      OK / green      under capacity, nothing of ours over the cap.
-
-    The lever is COMPUTED, never assumed. That is the whole difference between this and the version
-    that decided in advance that the middle tier was somebody else's problem.
-
-    BLOCKED must never be reachable by editing text, or it becomes a place to hide failures. It is
-    entered only when trim headroom is arithmetically smaller than the overflow, which the run
-    prints both sides of.
-
-WHY THE FIX FOR AMBER IS A RANKING AND NOT AN INSTRUCTION
-    "Uninstall a plugin" is not an action, it is a shrug. `--plugins` ranks every installed plugin
-    by the chars of description it contributes and the number of skills it brings, then computes
-    the smallest set of removals that gets the library back under the observed capacity. That turns
-    the amber row into a decision with numbers attached, which the operator can take or decline.
-    Declining is a legitimate answer; not being told the price is not.
-
-WHY installed_plugins.json AND NOT A GLOB
-    The plugin cache keeps 2 to 4 stale versions per plugin plus scratch clones. A glob over the
-    cache counts every one of them and reports a library several times larger than the one actually
-    loaded. installed_plugins.json names the ACTIVE installPath per plugin, which is the only place
-    that answer exists. Entries whose installPath is missing from disk are printed as unresolvable,
-    never skipped in silence.
-
-Usage:
-  python budget_check.py [--skills-dir ~/.claude/skills] [--code-root ~/CodesClaude]
-                         [--extra "candidate description to test-add"]
-                         [--plugins]          rank installed plugins by description cost
-                         [--listing FILE]     a captured live skill listing, to MEASURE the losses
-Stdlib only. Token estimate = chars / 4 (rough).
-Exit codes: 0 OK, 1 FAIL (a lever exists), 2 nothing to measure, 3 BLOCKED (real, no lever).
+Without --capacity, a complete listing supplies a current visible-character lower bound.
+The historical capacity remains a labelled estimate when no complete listing is available;
+it cannot override complete current coverage or create an enforced overflow by itself.
+Fleet PASS additionally requires a complete current listing.
 """
 import argparse
 import hashlib
@@ -122,50 +39,71 @@ PER_SKILL_MAX = 180
 WARN_RATIO = 0.8
 
 OURS, LOCAL, PLUGIN = "ours", "local", "plugin"
-# The three verdict states. BLOCKED exists so that "real, and no edit closes it" has somewhere to
+# BLOCKED exists so that "real, and no edit closes it" has somewhere to
 # live other than the FAIL bucket, where it would sit forever and bleach the colour out of every
 # other finding.
-OK, FAIL, BLOCKED = "OK", "FAIL", "BLOCKED"
-RC = {OK: 0, FAIL: 1, BLOCKED: 3}
+OK, FAIL, UNKNOWN, BLOCKED = "OK", "FAIL", "UNKNOWN", "BLOCKED"
+RC = {OK: 0, FAIL: 1, UNKNOWN: 2, BLOCKED: 3}
+
+
+def frontmatter_end(lines):
+    """Locate a column-zero closing fence, preserving fences inside YAML blocks."""
+    return next(i for i in range(1, len(lines)) if lines[i].rstrip() == "---")
 
 
 def parse_frontmatter(text):
-    """Return (name, description) from a SKILL.md frontmatter block."""
-    text = text.lstrip("﻿")  # tolerate a UTF-8 BOM (common from Windows editors)
-    if not text.startswith("---"):
-        return None, None
-    end = text.find("\n---", 3)
-    if end == -1:
-        return None, None
-    block = text[3:end]
-    name = desc = None
-    lines = block.splitlines()
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        m = re.match(r"^name:\s*(.*)$", line)
-        if m:
-            name = m.group(1).strip().strip('"\'')
-        m = re.match(r"^description:\s*(.*)$", line)
-        if m:
-            desc = m.group(1).strip().strip('"\'')
-            # join folded/continuation lines (indented, no top-level key)
-            j = i + 1
-            while j < len(lines) and (lines[j].startswith((" ", "\t"))
-                                      and not re.match(r"^\s*\w[\w-]*:\s", lines[j])):
-                desc += " " + lines[j].strip()
-                j += 1
-            i = j
-            continue
-        i += 1
-    return name, desc
+    """Validate the whole YAML mapping before extracting string loader metadata.
 
+    PyYAML is required. Missing names retain the inventory's directory fallback;
+    missing, invalid or unavailable YAML never produces measurable descriptions.
+    """
+    if not isinstance(text, str):
+        return None, None
+    lines = text.lstrip("\ufeff").splitlines()
+    if not lines or lines[0].rstrip() != "---":
+        return None, None
+    try:
+        end = frontmatter_end(lines)
+    except StopIteration:
+        return None, None
+    try:
+        import yaml
+    except ImportError:
+        return None, None
+
+    merge_key = object()
+
+    class UniqueKeySafeLoader(yaml.SafeLoader):
+        def construct_mapping(self, node, deep=False):
+            if isinstance(node, yaml.MappingNode):
+                seen = set()
+                for key_node, _ in node.value:
+                    key = (merge_key if key_node.tag == "tag:yaml.org,2002:merge"
+                           else self.construct_object(key_node, deep=True))
+                    if key in seen:
+                        raise yaml.constructor.ConstructorError(
+                            None, None, "duplicate mapping key", key_node.start_mark)
+                    seen.add(key)
+            # Check explicit keys before SafeLoader expands merge mappings, which
+            # legitimately allow an explicit key to override an inherited value.
+            return super().construct_mapping(node, deep=deep)
+
+    try:
+        fields = yaml.load("\n".join(lines[1:end]) + "\n", Loader=UniqueKeySafeLoader)
+    except (yaml.YAMLError, TypeError, ValueError, RecursionError):
+        return None, None
+    if not isinstance(fields, dict):
+        return None, None
+    for key in ("name", "description"):
+        if key in fields and (not isinstance(fields[key], str) or not fields[key].strip()):
+            return None, None
+    return fields.get("name"), fields.get("description")
 
 def read(path):
     try:
         with open(path, "r", encoding="utf-8") as f:
             return f.read()
-    except OSError:
+    except (OSError, UnicodeError):
         return None
 
 
@@ -210,7 +148,38 @@ class Row(object):
         return cost(self.name, self.desc)
 
 
-def user_tier_rows(skills_dir, code_root):
+def skill_directory_rows(skills_dir, tier_for, owner=None):
+    """Measure each direct skill directory and retain every unresolved entry."""
+    rows, problems = [], []
+    label = "plugin %s" % owner if owner else "user"
+    try:
+        entries = sorted(os.listdir(skills_dir))
+    except OSError as error:
+        return rows, ["%s inventory not readable at %s: %s" % (label, skills_dir, error)]
+    for entry in entries:
+        directory = os.path.join(skills_dir, entry)
+        try:
+            if not stat.S_ISDIR(os.stat(directory).st_mode):
+                continue  # README and other files beside the skill directories are not skills.
+            path = os.path.join(directory, "SKILL.md")
+            if not stat.S_ISREG(os.stat(path).st_mode):
+                raise OSError("SKILL.md is not a regular file")
+        except OSError as error:
+            problems.append("%s skill %s not readable: %s" % (label, directory, error))
+            continue
+        raw = read(path)
+        if raw is None:
+            problems.append("%s skill not readable as UTF-8: %s" % (label, path))
+            continue
+        name, desc = parse_frontmatter(raw)
+        if desc is None:
+            problems.append("%s skill has missing or malformed metadata: %s" % (label, path))
+            continue
+        rows.append(Row(tier_for(directory), name or entry, desc, path, owner))
+    return rows, problems
+
+
+def user_tier_rows(skills_dir, code_root, problems=None):
     """Every skill in the user skills dir, tiered by where the directory actually resolves.
 
     Depth 1 only. The depth-2 glob a predecessor used matched a plugin-shaped layout that does not
@@ -220,22 +189,15 @@ def user_tier_rows(skills_dir, code_root):
     a statement about who wrote it, which is how "loose directory" silently became "third party,
     cannot be fixed". Both tiers sit inside a directory the operator maintains by hand.
     """
-    rows = []
-    if not os.path.isdir(skills_dir):
-        return rows
     code_root = os.path.normcase(os.path.abspath(code_root))
-    for entry in sorted(os.listdir(skills_dir)):
-        d = os.path.join(skills_dir, entry)
-        p = os.path.join(d, "SKILL.md")
-        if not os.path.isfile(p):
-            continue
-        tgt = link_target(d)
-        resolved = os.path.normcase(os.path.abspath(tgt if tgt else d))
-        tier = OURS if resolved.startswith(code_root + os.sep) else LOCAL
-        name, desc = parse_frontmatter(read(p) or "")
-        if desc is None:
-            continue
-        rows.append(Row(tier, name or entry, desc, p))
+
+    def tier_for(directory):
+        resolved = os.path.normcase(os.path.realpath(directory))
+        return OURS if resolved.startswith(code_root + os.sep) else LOCAL
+
+    rows, unresolved = skill_directory_rows(skills_dir, tier_for)
+    if problems is not None:
+        problems.extend(unresolved)
     return rows
 
 
@@ -249,42 +211,64 @@ def plugin_tier_rows(installed_json):
     raw = read(installed_json)
     if raw is None:
         return rows, ["installed_plugins.json not readable at %s" % installed_json]
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate object key: %s" % key)
+            result[key] = value
+        return result
+
     try:
-        data = json.loads(raw)
+        data = json.loads(raw, object_pairs_hook=unique_object)
     except ValueError as e:
         return rows, ["installed_plugins.json is not valid JSON: %s" % e]
-    seen = set()
-    for key, records in sorted((data.get("plugins") or {}).items()):
-        if not isinstance(records, list):
+    if not isinstance(data, dict) or not isinstance(data.get("plugins"), dict):
+        return rows, ["installed_plugins.json must contain a plugins object"]
+    measured_by_skill = {}
+    for key, records in sorted(data["plugins"].items()):
+        if not key.strip():
+            problems.append("installed_plugins.json contains an empty plugin key")
+            continue
+        if isinstance(records, dict):
             records = [records]
-        resolved_any = False
-        for rec in records:
-            ip = (rec or {}).get("installPath") or ""
-            if not ip or not os.path.isdir(ip):
+        if not isinstance(records, list) or not records:
+            problems.append("%s: expected nonempty install records" % key)
+            continue
+        for index, rec in enumerate(records):
+            label = "%s record %d" % (key, index + 1)
+            ip = rec.get("installPath") if isinstance(rec, dict) else None
+            if not isinstance(ip, str) or not ip or "\0" in ip or not os.path.isabs(ip):
+                problems.append("%s: installPath must be an absolute path" % label)
                 continue
-            resolved_any = True
-            sk = os.path.join(ip, "skills")
-            if not os.path.isdir(sk):
+            try:
+                entries = os.listdir(ip)
+            except OSError as error:
+                problems.append("%s: installPath not readable at %s: %s" % (label, ip, error))
                 continue
-            for entry in sorted(os.listdir(sk)):
-                p = os.path.join(sk, entry, "SKILL.md")
-                if not os.path.isfile(p):
+            if not any(os.path.normcase(entry) == os.path.normcase("skills") for entry in entries):
+                continue  # A readable plugin without a skills directory can ship only commands.
+            measured, unresolved = skill_directory_rows(os.path.join(ip, "skills"), lambda _d: PLUGIN, key)
+            problems.extend(unresolved)
+            for row in measured:
+                dedupe = (key, os.path.basename(os.path.dirname(row.path)).lower())
+                if dedupe in measured_by_skill:
+                    previous = measured_by_skill[dedupe]
+                    if previous is not None and (previous.name, previous.desc) != (row.name, row.desc):
+                        problems.append("%s skill %s: active scopes have conflicting metadata"
+                                        % dedupe)
+                        measured_by_skill[dedupe] = None
                     continue
-                dedupe = (key, entry.lower())
-                if dedupe in seen:
-                    continue
-                seen.add(dedupe)
-                name, desc = parse_frontmatter(read(p) or "")
-                if desc is None:
-                    continue
-                rows.append(Row(PLUGIN, name or entry, desc, p, owner=key))
-        if not resolved_any:
-            # Say it out loud. A stale record whose install path is gone means the plugin's real
-            # cost is unknown, and an unknown printed as zero is the same lie this file exists to
-            # stop.
-            problems.append("%s: no installPath on disk (%s)"
-                            % (key, "; ".join((r or {}).get("installPath", "?") for r in records)))
-    return rows, problems
+                measured_by_skill[dedupe] = row
+    return [row for row in measured_by_skill.values() if row is not None], problems
+
+
+def library_inventory(skills_dir, code_root, installed_json):
+    """The shared G3/G4 population: user skills plus active plugin installs, with coverage gaps."""
+    problems = []
+    rows = user_tier_rows(skills_dir, code_root, problems)
+    plugins, unresolved = plugin_tier_rows(installed_json)
+    return rows + plugins, problems + unresolved
 
 
 def rank_plugins(rows):
@@ -378,37 +362,46 @@ def parse_listing(path):
         # function report 87 installed skills as absent from the listing, which read as a disagreement
         # between disk and capture rather than as a parser bug. Skill names never contain spaces.
         m = re.match(r"^(\S+?):\s+(\S.*)$", body)
-        if m:
-            out[m.group(1).lower()] = True
-        else:
-            out[body.split()[0].rstrip(":").lower()] = False
+        key = m.group(1).lower() if m else body.split()[0].rstrip(":").lower()
+        has_description = bool(m)
+        if key in out and out[key] != has_description:
+            return None, "listing contains conflicting observations for %s" % key
+        out[key] = has_description
     if not out:
         return None, "listing at %s contained no '- name' lines" % path
     return out, None
 
 
-def measure_losses(rows, listing):
-    """(lost, unseen) by MEASUREMENT: rows described on disk but bare in the listing.
+def listing_identity(row):
+    """Canonical identity shared by measurements and finding fingerprints."""
+    return ("%s:%s" % (row.owner, row.name) if row.owner else row.name).lower()
 
-    A plugin skill appears in the listing as `plugin:skill`, so a row is matched on its own name
-    and on any listing key whose trailing segment equals it. `unseen` are rows the listing does not
-    mention at all, which means the capture and the disk disagree about what is installed.
+
+def measure_losses(rows, listing):
+    """Return measured losses and unresolved identities, without borrowing a plugin's row.
+
+    Prefer the full owner identity. Loader-style plugin prefixes and bare names are usable
+    only when they identify exactly one installed row. Missing or ambiguous rows stay unseen.
     """
-    tail = {}
-    for k, v in listing.items():
-        tail.setdefault(k.rpartition(":")[2], v)
+    aliases = {}
+    row_keys = []
+    for index, row in enumerate(rows):
+        keys = [listing_identity(row)]
+        if row.owner:
+            keys += ["%s:%s" % (row.owner.split("@", 1)[0].lower(), row.name.lower()), row.name.lower()]
+        keys = list(dict.fromkeys(keys))
+        row_keys.append(keys)
+        for key in keys:
+            aliases.setdefault(key, set()).add(index)
     lost, unseen = [], []
-    for r in rows:
-        key = r.name.lower()
-        if key in listing:
-            has = listing[key]
-        elif key in tail:
-            has = tail[key]
-        else:
-            unseen.append(r)
+    for index, row in enumerate(rows):
+        observations = [listing[key] for key in row_keys[index]
+                        if key in listing and aliases[key] == {index}]
+        if not observations or len(set(observations)) != 1:
+            unseen.append(row)
             continue
-        if not has:
-            lost.append(r)
+        if not observations[0]:
+            lost.append(row)
     return lost, unseen
 
 
@@ -420,30 +413,58 @@ def main():
     ap.add_argument("--installed-plugins",
                     default=os.path.expanduser("~/.claude/plugins/installed_plugins.json"))
     ap.add_argument("--per-skill-max", type=int, default=PER_SKILL_MAX)
-    ap.add_argument("--capacity", type=int, default=OBSERVED_CAPACITY_CHARS,
-                    help="observed chars of description the listing carried; see the docstring")
+    ap.add_argument("--capacity", type=int, default=None,
+                    help="explicit current capacity policy; the historical estimate is advisory")
     ap.add_argument("--extra", default="", help="a candidate description to hypothetically add")
     ap.add_argument("--plugins", action="store_true",
                     help="rank installed plugins by description cost, and price the removals")
     ap.add_argument("--listing", default="",
                     help="a captured live skill listing; turns predicted losses into measured ones")
     a = ap.parse_args()
+    configured_capacity = a.capacity
+    if configured_capacity is not None and configured_capacity <= 0:
+        ap.error('--capacity must be positive')
 
     skills_dir = os.path.abspath(os.path.expanduser(a.skills_dir))
     code_root = os.path.abspath(os.path.expanduser(a.code_root))
-    rows = user_tier_rows(skills_dir, code_root)
-    prows, problems = plugin_tier_rows(os.path.abspath(os.path.expanduser(a.installed_plugins)))
-    rows += prows
-
-    if not rows:
-        print("budget_check: no skills found under %s and no plugin skills resolved" % skills_dir)
-        return 2
+    rows, problems = library_inventory(skills_dir, code_root,
+                                       os.path.abspath(os.path.expanduser(a.installed_plugins)))
 
     per_tier = {t: [r for r in rows if r.tier == t] for t in (OURS, LOCAL, PLUGIN)}
     totals = {t: sum(r.cost for r in v) for t, v in per_tier.items()}
     extra = cost("candidate", a.extra) if a.extra else 0
     grand = sum(totals.values()) + extra
     user_rows = [r for r in rows if r.tier in (OURS, LOCAL)]
+
+    # Current omissions require a listing; capacity arithmetic supplies a separate projection.
+    measured = None
+    listing_problem = None
+    measurement = "not_supplied"
+    if a.listing:
+        measurement = "incomplete"
+        listing, listing_problem = parse_listing(a.listing)
+        if listing is not None:
+            lost, unseen = measure_losses(rows, listing)
+            measured = (lost, unseen, listing)
+            problems.extend("listing identity absent or ambiguous: %s" % listing_identity(row) for row in unseen)
+            if not unseen and not problems:
+                measurement = "complete"
+        if listing_problem:
+            problems.append(listing_problem)
+
+    if configured_capacity is not None:
+        a.capacity = configured_capacity
+        capacity_source = "configured"
+    elif measurement == "complete":
+        lost_rows = {id(row) for row in measured[0]}
+        a.capacity = sum(row.cost for row in rows if id(row) not in lost_rows)
+        capacity_source = "current_listing_lower_bound"
+    else:
+        a.capacity = OBSERVED_CAPACITY_CHARS
+        capacity_source = "historical_estimate"
+    estimated_overflow = max(0, grand - a.capacity)
+    overflow = estimated_overflow if configured_capacity is not None else 0
+
 
     print("Skill metadata budget")
     print("  user skills dir : %s" % skills_dir)
@@ -466,28 +487,17 @@ def main():
 
     print("-" * 78)
     print("  documented budget : %d chars (what the written rule says)" % DOCUMENTED_MAX_CHARS)
-    print("  OBSERVED capacity : %d chars, measured %s by diffing a live skill listing against"
-          % (a.capacity, OBSERVED_CAPACITY_DATE))
-    print("                      disk: %d of %d file-backed skills kept their description, %d "
-          "appeared" % (OBSERVED_KEPT, OBSERVED_MEASURED, OBSERVED_LOST))
-    print("                      as a bare name. Capacity is an observation on a date, not a")
-    print("                      constant: built-in skills share the same budget and cannot be")
-    print("                      counted from disk, so the real pressure is worse than this.")
+    print("  capacity reference : %d chars (%s)" % (a.capacity, capacity_source))
+    print("  OBSERVED capacity : %d chars, measured %s (historical estimate; advisory only)"
+          % (OBSERVED_CAPACITY_CHARS, OBSERVED_CAPACITY_DATE))
+    print("  Actual description omissions come only from the supplied current listing.")
     print("  library totals at : %d chars%s"
           % (grand, " (including the candidate)" if extra else ""))
+    if problems:
+        print("  Coverage incomplete: all costs and plans below cover the measured subtotal only.")
 
-    overflow = max(0, grand - a.capacity)
     floor_lost = min_skills_lost(rows, overflow)
     ranked = rank_plugins(rows)
-
-    # --- what is actually lost: measured if a listing was supplied, bounded if not ---------------
-    measured = None
-    listing_problem = None
-    if a.listing:
-        listing, listing_problem = parse_listing(a.listing)
-        if listing is not None:
-            lost, unseen = measure_losses(rows, listing)
-            measured = (lost, unseen, listing)
 
     print()
     if measured is not None:
@@ -509,23 +519,25 @@ def main():
             print("  registered by a running workflow. They consume the same budget and are NOT in")
             print("  any total above, which is why the pressure is worse than the arithmetic says.")
     elif overflow > 0:
-        print("  AT LEAST %d of %d file-backed skills cannot carry a description, because %d chars"
-              % (floor_lost, len(rows), overflow))
-        print("  are declared beyond the observed capacity. That is a FLOOR, computed by dropping")
-        print("  the most expensive descriptions first; the loader is under no obligation to choose")
-        print("  the cheapest set, and on %s it lost %d. WHICH skills lose their description"
-              % (OBSERVED_CAPACITY_DATE, OBSERVED_LOST))
-        print("  is not derivable from disk: the observed loss was non-contiguous in load order and")
-        print("  fell mostly on the plugin tier. Pass --listing FILE to MEASURE it instead.")
+        print("  Projected overflow above the explicit capacity policy: %d chars." % overflow)
+        print("  The implied minimum removal is %d skill(s); current omissions are unmeasured."
+              % floor_lost)
+    elif problems:
+        print("  The complete library cost and current visibility are UNKNOWN.")
     else:
-        print("  The library fits inside the observed capacity, so nothing is dropped.")
+        print("  Arithmetic estimate: historical capacity is advisory; live visibility is unmeasured.")
+        if capacity_source == "historical_estimate" and estimated_overflow:
+            print("  Under that historical estimate, AT LEAST %d skill(s) would need removal."
+                  % min_skills_lost(rows, estimated_overflow))
+            print("  Current omission is not derivable from disk; this projection does not assert a loss.")
+        print("  Supply --listing to measure descriptions or --capacity to enforce a current policy.")
 
     if listing_problem:
-        print("  NOTE: --listing was given but unusable, so losses below are the bound, not the")
-        print("        measurement: %s" % listing_problem)
+        print("  NOTE: supplied listing is unusable; no current omission count was established:")
+        print("        %s" % listing_problem)
 
     if problems:
-        print("\n  UNRESOLVABLE plugin records (cost unknown, NOT counted as zero):")
+        print("\n  UNRESOLVABLE inventory records (cost unknown, NOT counted as zero):")
         for p in problems:
             print("    %s" % p)
 
@@ -544,6 +556,11 @@ def main():
     trimmable = overflow > 0 and headroom >= overflow
 
     findings = []          # (stable key, message). The key is what gets fingerprinted.
+    findings.extend(("unresolved:%s" % problem, None) for problem in problems)
+    measured_lost = measured[0] if measured is not None else []
+    findings.extend(("lost:%s" % listing_identity(row),
+                     "%s has no description in the supplied listing" % listing_identity(row))
+                    for row in measured_lost)
     long_ours = [(r.name, len(r.desc)) for r in per_tier[OURS] if len(r.desc) > a.per_skill_max]
     for n, ln in sorted(long_ours, key=lambda x: -x[1]):
         findings.append(("cap:%s" % n,
@@ -551,18 +568,21 @@ def main():
                          % (n, ln, a.per_skill_max)))
     if overflow > 0:
         findings.append(("overflow",
-                         "the library declares %d chars of description and the listing was "
-                         "observed to carry %d, so %d chars and at least %d skills are not in the "
-                         "prompt at all" % (grand, a.capacity, overflow, floor_lost)))
+                         "the library declares %d chars against explicit capacity %d; "
+                         "the policy projection exceeds that limit by %d chars. "
+                         "Current description visibility is reported separately."
+                         % (grand, a.capacity, overflow)))
         for key, c, n in ranked:
             # Fingerprinted so that installing or removing a plugin visibly changes the finding SET,
             # which is how the operator tells tonight's amber from last night's.
             findings.append(("plugin:%s" % key, None))
 
-    if long_ours or trimmable:
+    if long_ours or trimmable or measured_lost:
         state = FAIL
     elif overflow > 0:
         state = BLOCKED
+    elif problems:
+        state = UNKNOWN
     else:
         state = OK
 
@@ -575,11 +595,19 @@ def main():
         print("        alone never fails for them. The library TOTAL is a finding for every tier.")
 
     if state == OK:
-        ratio = grand / float(a.capacity)
-        print("  STATUS: OK (our tier clean, library inside the observed capacity at %.0f%%)%s"
-              % (ratio * 100, " Close to the line." if ratio >= WARN_RATIO else ""))
+        if measurement == "complete":
+            print("  STATUS: OK (our tier clean; current listing has no observed description omissions)")
+        elif configured_capacity is not None:
+            ratio = grand / float(a.capacity)
+            print("  STATUS: OK (our tier clean; configured capacity use %.0f%%; visibility unmeasured)"
+                  % (ratio * 100))
+        else:
+            print("  STATUS: OK (our tier clean; historical capacity is advisory; visibility unmeasured)")
     else:
         print("  STATUS: %s" % state)
+        if problems:
+            print("    - %d unresolved inventory record(s); the complete library cost is unknown."
+                  % len(problems))
         for _key, msg in findings:
             if msg:
                 print("    - %s" % msg)
@@ -587,7 +615,7 @@ def main():
     if overflow > 0:
         print("\n  THE ARITHMETIC OF THE LEVER")
         print("    library declares    %6d chars" % grand)
-        print("    observed capacity   %6d chars" % a.capacity)
+        print("    selected capacity reference   %6d chars" % a.capacity)
         print("    OVERFLOW to remove  %6d chars" % overflow)
         print("    TRIM headroom       %6d chars  (every user-tier description above the %d-char"
               % (headroom, a.per_skill_max))
@@ -597,33 +625,38 @@ def main():
     if trimmable:
         print("\n  DO THIS: trim these %d description(s), all of them the operator's own files, to"
               % len(cuts))
-        print("  the %d-char cap. Together they give back %d chars, which covers the %d needed:"
+        print("  the %d-char cap. Together they give back %d chars, which covers the measured %d needed:"
               % (a.per_skill_max, covered, overflow))
+        if problems:
+            print("  Unresolved inventory may require further changes; this is not a complete plan.")
         for n, t, gives in cuts:
             print("    %-38s %-6s gives back %5d chars" % (n[:38], t, gives))
     elif overflow > 0:
-        # Printed whenever the overflow has no keystroke lever, INCLUDING when the run is red for a
-        # separate reason. An earlier shape made this an `elif state == BLOCKED`, so one over-cap
-        # description of ours would flip the run to FAIL and silently swallow the far larger
-        # condition underneath it. The colour is decided by the lever; the reporting is not.
+        # Report capacity-policy overflow even when a separate cap violation or observed
+        # description omission makes the overall run red.
         need = overflow - headroom
         picked, shed, enough = removal_plan(ranked, need)
         print("\n  NO LEVER MADE OF KEYSTROKES EXISTS. Trimming every user-tier description to the")
         print("  cap yields %d chars and %d are needed, so %d chars would still be over."
               % (headroom, overflow, need))
-        print("  What remains is not a defect to fix, it is a DECISION about what to stop having.")
+        print("  The remaining capacity-policy overflow requires a decision about what to stop having.")
         if state == BLOCKED:
             print("  This run is deliberately NOT red: red is for what can be closed tonight, and a")
             print("  colour that never changes stops being read.")
         else:
-            print("  This run is red for the cap violation(s) listed above, which ARE closable")
-            print("  tonight. Closing them will not clear this: it is the larger, separate finding")
-            print("  and it will still be here, amber, once the red is gone.")
+            if long_ours:
+                print("  This run is red for %d authored description cap violation(s)." % len(long_ours))
+            if measured_lost:
+                print("  This run is red for %d observed description omission(s)." % len(measured_lost))
+                print("  Restore visibility and measure a new complete listing to clear that finding.")
+            print("  Capacity-policy overflow is separate and remains after description trimming.")
         print("  Priced, so the decision has numbers on it. Even after trimming, removing:")
         for key, c, n in picked:
             print("    %-44s frees %6d chars, %2d skills" % (key, c, n))
-        if enough:
-            print("  would put the library back inside the observed capacity. Fewer removals will")
+        if enough and problems:
+            print("  would clear the measured overflow; unresolved inventory may still exceed capacity.")
+        elif enough:
+            print("  would put the library back inside the selected capacity reference. Fewer removals will")
             print("  not: the list is largest-first, so it is already the shortest one that works.")
         else:
             print("  would still not be enough: removing EVERY plugin frees %d of the %d needed."
@@ -644,11 +677,14 @@ def main():
                                    totals[OURS] + totals[LOCAL], len(user_rows)))
         if overflow > 0:
             picked, shed, enough = removal_plan(ranked, overflow)
-            print("\n  To get under the observed capacity by plugin removal ALONE (%d chars):"
+            print("\n  To get under the selected capacity reference by plugin removal ALONE (%d chars):"
                   % overflow)
             for key, c, n in picked:
                 print("    remove %-40s frees %6d chars, %2d skills" % (key, c, n))
-            if enough:
+            if enough and problems:
+                print("    total: %d chars removed from the measured subtotal; full coverage is unresolved."
+                      % shed)
+            elif enough:
                 print("    total: %d chars, %d skills, leaving the library at %d against a capacity"
                       % (shed, sum(p[2] for p in picked), grand - shed))
                 print("    of %d." % a.capacity)
@@ -656,8 +692,13 @@ def main():
                 print("    NOT ENOUGH. Removing every plugin frees %d of the %d needed, leaving %d"
                       % (shed, overflow, grand - shed))
                 print("    against a capacity of %d. The user tier alone is over." % a.capacity)
+        elif problems:
+            print("\n  Removal needs are UNKNOWN until the inventory is complete.")
+        elif configured_capacity is None:
+            print("\n  No removal policy is enforced without --capacity.")
+            print("  The capacity reference is advisory; current omissions require a listing.")
         else:
-            print("\n  No removal is needed: the library is inside the observed capacity.")
+            print("\n  No removal is needed under the configured capacity policy.")
 
     # One machine-readable digest, printed unconditionally in every state including OK. The caller
     # reads this line and nothing else. `fp` fingerprints the finding KEYS, not the numbers, so it
@@ -672,10 +713,12 @@ def main():
     lever = "n/a" if overflow <= 0 else ("trim" if trimmable else "decision")
     print("-" * 78)
     print("  BUDGET: %s total=%d capacity=%d overflow=%d trim_headroom=%d min_lost=%d "
-          "cap_over_ours=%d plugins=%d lever=%s fp=%s"
+          "cap_over_ours=%d plugins=%d lever=%s fp=%s unresolved=%d measurement=%s "
+          "capacity_source=%s estimated_overflow=%d projected_min_removals=%d"
           % (state, grand, a.capacity, overflow, headroom,
-             len(measured[0]) if measured is not None else floor_lost,
-             len(long_ours), len(ranked), lever, fp))
+             len(measured_lost),
+              len(long_ours), len(ranked), lever, fp, len(problems), measurement,
+              capacity_source, estimated_overflow, floor_lost))
     return RC[state]
 
 

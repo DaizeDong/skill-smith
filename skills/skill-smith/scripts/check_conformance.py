@@ -2,7 +2,7 @@
 """Skill Repo Spec v1 linter. Checks a skill repo dir for conformance.
 
 Usage:  python check_conformance.py <repo_dir>
-Exits 0 if no check FAILS, 1 otherwise. Stdlib only. (Skill Repo Spec v1.)
+Exits 0 if no check FAILS, 1 otherwise. Requires PyYAML. (Skill Repo Spec v1.)
 
 THREE STATUSES, AND THE LINE BETWEEN THEM
     PASS   the property holds.
@@ -16,6 +16,7 @@ THREE STATUSES, AND THE LINE BETWEEN THEM
     this very linter died the first time. WARN is the seam between those two failure modes, and
     every check below states which side it sits on and why.
 """
+import argparse
 import datetime
 import glob
 import json
@@ -26,6 +27,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import version_sites  # noqa: E402  (sibling module: the one definition of where a version lives)
+from budget_check import frontmatter_end, parse_frontmatter  # noqa: E402
 
 PASS, FAIL, WARN = "PASS", "FAIL", "WARN"
 results = []
@@ -107,6 +109,31 @@ def skill_md_paths(root):
     return out
 
 
+def check_skill_md_content(root):
+    """Validate readable loader metadata and an instruction body before measuring a skill."""
+    contents = {}
+    for path in skill_md_paths(root):
+        label = "SKILL.md content: %s" % os.path.relpath(path, root).replace(os.sep, "/")
+        text = read(path)
+        if text is None:
+            check(label, False, "unreadable SKILL.md; no content was measured")
+            continue
+        name, description = parse_frontmatter(text)
+        if (not name or not description or len(name) > 64
+                or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) is None):
+            check(label, False, "requires valid name and description loader metadata")
+            continue
+        lines = text.lstrip("\ufeff").splitlines()
+        end = frontmatter_end(lines)
+        body = re.sub(r"<!--.*?-->", "", "\n".join(lines[end + 1:]), flags=re.S)
+        if not re.search(r"\w", body):
+            check(label, False, "requires a nonempty instruction body after frontmatter")
+            continue
+        check(label, True)
+        contents[path] = text
+    return contents
+
+
 def grandfather_key(root, path):
     rel = os.path.relpath(path, root).replace(os.sep, "/")
     return "%s/%s" % (os.path.basename(os.path.abspath(root)), rel)
@@ -121,9 +148,10 @@ def _days_until(datestr):
     return (d - datetime.date.today()).days
 
 
-def check_skill_md_size(root):
-    for p in skill_md_paths(root):
-        text = read(p) or ""
+def check_skill_md_size(root, contents=None):
+    if contents is None:
+        contents = check_skill_md_content(root)
+    for p, text in contents.items():
         n = len(text)
         key = grandfather_key(root, p)
         label = "SKILL.md size (%d chars): %s" % (n, os.path.relpath(p, root).replace(os.sep, "/"))
@@ -254,14 +282,14 @@ def basename_index(root):
     return idx
 
 
-def check_shard_pointers(root):
-    paths = skill_md_paths(root)
-    if not paths:
+def check_shard_pointers(root, contents=None):
+    if contents is None:
+        contents = check_skill_md_content(root)
+    if not contents:
         return
     idx = basename_index(root)
-    for p in paths:
+    for p, text in contents.items():
         base = os.path.dirname(p)
-        text = read(p) or ""
         rel_skill = os.path.relpath(p, root).replace(os.sep, "/")
         seen, dangling, unresolved = set(), [], []
         n_ok = 0
@@ -351,9 +379,11 @@ def retrofit_hits(path):
     return hits
 
 
-def check_retrofit_markers(root):
+def check_retrofit_markers(root, contents=None):
+    if contents is None:
+        contents = check_skill_md_content(root)
     targets = []
-    for p in skill_md_paths(root):
+    for p in contents:
         targets.append(p)
         targets += sorted(glob.glob(os.path.join(os.path.dirname(p), "reference", "**", "*.md"),
                                     recursive=True))
@@ -392,8 +422,8 @@ def main(root):
         check("file: %s" % rel, os.path.isfile(os.path.join(root, rel)))
 
     # 1b) the PII gate (Spec v1 section 8) -- REQUIRED, not a later hardening pass.
-    # The 2026-07 audit found real private data (a phone, a home ZIP, an employer, a health-provider name, an email address on ~every commit) in five public skill repos. By the time anyone
-    # noticed, the fix was no longer an edit: it was a history rewrite and a force-push on each one.
+    # Private records in public history require history remediation, not only a working-file edit.
+    # Run the safety gate before commit so examples and generated artifacts remain synthetic.
     # A repo without the gate is a repo accumulating that debt right now.
     # The kit is a submodule now, so the paths moved. .pii-allow stays in the repo: which
     # findings are exempt is a fact about THIS repo and cannot be shared.
@@ -401,30 +431,35 @@ def main(root):
                 "guards/hooks/pre-commit", "guards/hooks/pre-push",
                 ".github/workflows/pii-guard.yml", ".pii-allow"]:
         check("PII gate: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
-    # The gate must actually be clean -- shipping it red is worse than not having it, because the
-    # green checkbox above then means nothing.
+    # A successful exit means no blocking findings. Keep nonblocking diagnostics visible.
     # FAIL, not skip, when the scanner is absent. `if os.path.isfile(...)` made this whole check
     # vanish silently on any repo missing the guard, which after the submodule migration is every
     # repo whose submodule is not checked out. A conformance report that drops a check reads
     # exactly like one where the check passed.
     guard = os.path.join(root, "guards", "tools", "pii_guard.py")
     if not os.path.isfile(guard):
-        check("PII gate: scan is clean (tree + history)", False,
+        check("PII gate: scan completed (tree + history)", False,
               "scanner absent, so NOTHING scanned this repo; run git submodule update --init")
     else:
         p = subprocess.run([sys.executable, guard, "--tree", "--history"],
-                           cwd=root, capture_output=True, text=True)
-        check("PII gate: scan is clean (tree + history)", p.returncode == 0,
-              (p.stderr or "").strip().splitlines()[0] if p.returncode else "")
+                           cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        diagnostics = "\n".join(part.strip() for part in (p.stdout, p.stderr) if part.strip())
+        if p.returncode:
+            check("PII gate: scan completed (tree + history)", False,
+                  "exit %d%s" % (p.returncode, ":\n" + diagnostics if diagnostics else "; no diagnostics"))
+        else:
+            warned = bool(p.stderr.strip() or re.search(
+                r"\bWARN(?:ING)?\b|HISTORY-DEBT|CROSS-REPO|NOT examined|no blocking findings",
+                diagnostics, re.IGNORECASE))
+            check("PII gate: no blocking findings (tree + history)", WARN if warned else True,
+                  diagnostics)
 
     # 1c) the DATA BOUNDARY (Spec v1 section 9) -- the PRIMARY control; the scan above is a backstop.
     #
-    # The same audit found what no scanner could: real-run output from the operator's own account, their
-    # private activity -- in public repos, written there by
-    # the SKILLS THEMSELVES on every real run. A ticker with an entry price has no email in it, no
-    # phone, no ZIP. Nothing to smell. pii_guard was green the whole time.
-    #
-    # So a conformant repo declares every path as TOOL / FIXTURE / DATA and ships as an UNINITIALIZED
+    # Runtime records can disclose private activity without containing an email or phone number.
+    # A string scanner cannot establish the privacy of arbitrary records, so the primary control
+    # is the storage boundary: every path is TOOL, FIXTURE or DATA, and the shipped repository is an
+    # UNINITIALIZED
     # TOOL: real-run output resolves to a private store, and an agent writing this repo has nothing
     # real within reach to copy.
     for rel in ["guards/tools/data_boundary.py", "guards/tools/datadir.py", ".dataclass.json"]:
@@ -466,9 +501,10 @@ def main(root):
     # rather than a version history. All three were unmeasured until 2026-07-31, and the fleet had
     # drifted accordingly: a 41,959-char always-loaded file, three dangling shard pointers, and
     # instruction text that told the reader which phase added a rule instead of what the rule is.
-    check_skill_md_size(root)
-    check_shard_pointers(root)
-    check_retrofit_markers(root)
+    contents = check_skill_md_content(root)
+    check_skill_md_size(root, contents)
+    check_shard_pointers(root, contents)
+    check_retrofit_markers(root, contents)
 
     # 2) plugin.json fingerprint
     pj_raw = read(os.path.join(root, ".claude-plugin", "plugin.json"))
@@ -571,7 +607,6 @@ def main(root):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("usage: python check_conformance.py <repo_dir>")
-        sys.exit(2)
-    sys.exit(main(sys.argv[1]))
+    parser = argparse.ArgumentParser(description="Check a skill repository against Skill Repo Spec v1.")
+    parser.add_argument("repo_dir", help="skill repository directory")
+    sys.exit(main(parser.parse_args().repo_dir))

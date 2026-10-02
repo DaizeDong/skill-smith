@@ -28,6 +28,9 @@ import shutil
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from github_identity import github_environment, owner_repo_from_homepage
+
 BASE9 = ["claude-code", "claude-plugin", "claude-skill", "claude",
          "ai", "ai-agent", "agent", "llm", "skill"]
 PASS, FAIL = "PASS", "FAIL"
@@ -51,18 +54,11 @@ def load_plugin(repo_dir):
         return {}
 
 
-def owner_repo_from_homepage(homepage):
-    if not homepage:
-        return None, None
-    m = re.search(r"github\.com/([^/]+)/([^/#?]+)", homepage)
-    return (m.group(1), m.group(2).rstrip("/")) if m else (None, None)
-
-
 def run_gh(args):
     gh = shutil.which("gh")
     if not gh:
         return None
-    return subprocess.run([gh] + args, capture_output=True, text=True,
+    return subprocess.run([gh] + args, capture_output=True, text=True, env=github_environment(),
                           encoding="utf-8", errors="replace")
 
 
@@ -117,6 +113,10 @@ def main():
     if not (owner and repo):
         print("ERROR: could not resolve owner/repo. Pass --owner/--repo or a repo_dir whose "
               "plugin.json homepage is github.com/<owner>/<repo>.", file=sys.stderr)
+        return 2
+
+    if owner_repo_from_homepage("https://github.com/%s/%s" % (owner, repo)) != (owner, repo):
+        print("ERROR: owner and repo must identify one github.com repository.", file=sys.stderr)
         return 2
 
     print("Skill Repo Spec v1 REMOTE conformance (G6b): %s/%s" % (owner, repo))

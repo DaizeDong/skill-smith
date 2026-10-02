@@ -38,7 +38,7 @@ skill-smith 立足一条原则：**skill 不是"生成出来"就算完成，而�
 4. **自迭代交棒**, 把已接纳的 skill 交给 `self-evolve`（后端引擎）做回归门控的迭代优化。
 5. **批量**, 扇出一**系列**候选 skill，逐个过闸，统一受一个全局"库预算管家"约束。
 
-它**不是**：从零生成器（它调用 Skill_Seekers / 官方 skill-creator）、eval 框架（它调用 agent-skills-eval / scenario-eval）、迭代引擎（它调用 self-evolve）。它是**缝 + 闸**。
+它复用 Skill_Seekers / 官方 skill-creator 生成技能，读取已有评测器的结果，并把迭代交给可用的 self-evolve provider。自己负责流程衔接和证据验收。
 
 它**不用于**：改进**已有** skill（那是 `self-evolve`），或回答"有没有现成的 X skill"（那是 `market-intel` 的 `ready-skills` 域）。
 
@@ -51,7 +51,7 @@ skill-smith 立足一条原则：**skill 不是"生成出来"就算完成，而�
 或手动克隆：
 
 ```bash
-git clone https://github.com/DaizeDong/skill-smith.git ~/.claude/plugins/skill-smith
+git clone --recurse-submodules https://github.com/DaizeDong/skill-smith.git ~/.claude/plugins/skill-smith
 ```
 
 （维护者部署：源在 `CodesClaude/skill-smith`，用 PowerShell junction 部署到 `~/.claude/skills/skill-smith`,见 [`reference/deploy.md`](skills/skill-smith/reference/deploy.md)。）
@@ -78,6 +78,14 @@ python skills/skill-smith/scripts/dedup_check.py                             # �
 python skills/skill-smith/scripts/fleet_check.py                             # 全 fleet 体检, 只读
 ```
 
+预算脚本未收到 `--listing FILE` 时只做算术估算，并输出 `measurement=not_supplied`。
+预算脚本和 fleet 脚本都可接收当前清单：清单不可读、缺项或身份不明确时为 `UNKNOWN`，
+测到描述丢失时为 `FAIL`。只有完整测量才能让 fleet 将 G3 判为 `PASS`。
+
+描述精简的工作清单和备份必须存入已核验的私有版本库。检查会覆盖 origin 的全部有效推送 URL，
+以及分支和远端配置选出的默认推送目的地；公开、未知或无法解释的目的地都会被拒绝。
+应用精简需要 PyYAML，会先校验完整 frontmatter，再备份和写入，换行与布尔样式文本均保留为字符串。
+
 `check_conformance.py` 还会量 SKILL.md 自身, 因为这个文件在该 skill **每一次**被调用时都要付费:
 **超过 12,000 字符告警, 超过 16,000 字符判失败**; 它写下的每个相对路径都必须在盘上解析得到;
 指令文本要直接写规则, 而不是写"第几轮加了什么"。2026-07-31 当天已经超线的文件按名字连同实测大小
@@ -94,16 +102,17 @@ plugin 那层从 `installed_plugins.json` 读而不是 glob 缓存目录(缓存�
 **实测**出来的容量: 163 个有文件的 skill 里 79 个保住了描述, 84 个只剩一个光名字, 活下来的行合计 21,565 字符,
 而整个库声明了 53,821 字符。
 
-这次实测推翻了这个工具原先的三条断言。截断**不是**按加载顺序砍掉连续的尾巴, 所以它不再猜受害者名单:
-不给 `--listing FILE` 时只报"至少多少个 skill 必须丢描述"的**下界**, 并明说名字无法从磁盘推出来;
-给了就**实测**出来。损失也不局限在用户层, 绝大部分落在 plugin 层。卸载 plugin 更不是没用, 它是最大的那根杠杆。
+要判断当前提示词里丢了哪些描述，需要提供抓取的 `--listing FILE`。没有清单，就只能说当前缺失情况未知，
+也无法从磁盘推算出具体名单。历史容量估计只作参考；传入 `--capacity N` 才会按明确的容量策略检查超额。
+这时的最少移除数量表示“要满足该策略，至少需要移除多少项”。摘要用 `min_lost` 记录清单中已观察到的缺失，
+用 `projected_min_removals` 记录策略推算，两者都要结合 `measurement` 阅读。没有清单时记录为零，
+不能据此认定所有描述都可见。清单或安装记录不完整时，也不能认定检查已覆盖整个库。
 
-判定颜色跟的是**杠杆**, 不是严重程度。今晚动手改文字就能关掉的(我们自己的描述超过 180 字符上限,
-或者超额小到把描述裁到上限就能覆盖)判 **FAIL** 红灯, 并点名具体裁哪几条。改文字怎么都吸收不掉的超额判
-**BLOCKED** 黄灯: 每次运行都完整陈述, 带两边的算术, 外加一份按字符成本排序、标好价钱的 plugin 卸载清单。
-因为"卸个东西吧"不带数字只是耸肩, 不是杠杆。黄不是淡一点的红, 它的意思是剩下的只能是"决定不要什么",
-而一个永远不变的颜色就等于没人再看。只有每个 skill 描述的**字数上限**仍然只对我们这层判失败,
-因为那是本仓产出 skill 的 Spec-v1 写作规则, 不是对早于该规范的 skill 的评判。完整排名跑 `--plugins`。
+我们自己的描述超过 180 字符上限，仍判 **FAIL**。明确指定容量后，能靠裁短描述解决的超额也判 **FAIL**，
+并列出建议裁剪项；必须决定移除哪些技能才能解决的超额判 **BLOCKED**，在舰队报告中显示黄灯，
+同时给出预计移除数量，完整的 plugin 成本排名可用 `--plugins` 查看。提供的清单里确实没有描述的技能，
+会单独报告为已观察到的缺失。舰队预算项只有在清单证据完整时才可能 PASS。没有 `--capacity`，
+历史估计不会触发强制移除。单项描述上限仍只约束本仓产出的技能，因为它属于 Spec-v1 写作规则。
 
 `fleet_check.py` 是上面那个检查器一直缺的 driver。它把 `check_conformance.py` 铺到每个 plugin 仓上,
 再补上没人查的五件事: skill junction 能否解析、标为 PUBLIC 的仓**在远端默认分支上**是否带齐每个 guard
@@ -151,16 +160,25 @@ JSON, 因为"没人看得了的 fleet"绝不能读起来像"干净的 fleet"。
 
 触发词：*创建 skill、做一个 skill、脚手架 skill、写新 skill、批量创建 skill、做一套 skill、优化 skill 的触发/描述、skill 工厂。*
 
+## 证据与运行准备
+
+使用 Python 3.10 或更新版本。运行元数据与 YAML 工作流校验前安装 `requirements.txt`；离线测试使用 `requirements-dev.txt`。YAML 解析器缺失或 frontmatter 无效时，G6 不会通过，库清单会保留未完成检查的记录。
+脚手架测试从临时本地 kit 镜像克隆，并禁止网络 Git 协议。Fleet 报告及显式输出路径
+都要通过 PRIVATE 版本化存储检查；只读控制台模式用 `--no-status`。
+
+先集中填写[交付 brief](skills/skill-smith/reference/intake-delivery.md)，冻结独立 policy，
+再运行 snapshot 和 manifest 验收命令。JSON 结果与原始评测日志保存在私有伴生仓。
+
 ## 局限
 
-- v0.1 交付**框架**：调研先行工作流 + 确定性脚手架 + Spec-v1 检查器 + 预算/去重检查。验收闸的 eval-lift 接线（agent-skills-eval / scenario-eval）与 self-evolve 交棒在 v0.2/v0.3（见 [ROADMAP.md](ROADMAP.md)）。
-- 假定已装 `market-intel` 与 `self-evolve`；没有时降级为普通 web 调研 + 手动闸，并会**显式说明**（绝不静默）。
+- 证据入口按固定的 policy 与候选 hash 核对 G1/G2 完成状态、分数和其他必需证据。它只校验契约；非合成的自述结果也必须经过独立审查。候选 hash 包含文件内容、可执行模式和子模块版本。G8 分开检查空模板生成与已配置的 A/B 目录，空模板不代表功能就绪。见[证据契约](skills/skill-smith/reference/acceptance-gate.md)。
+- 先检查 market-intel、self-evolve 和选定评测器是否可用。模型工作走 installed llmcall 当前策略；缺能力明确报告，验收入口本身不实现主观评测器或部署。
 - 它优化的是**正确、聚焦、被证明**的 skill，不是数量,按设计，它会拒绝加入会撑爆库 token 预算的 skill。
 
 ## 语言
 
 中文（`README_CN.md`）· English（`README.md`，权威版）
 
-## Roadmap · 贡献 · 许可
+## Roadmap · 许可
 
-见 [ROADMAP.md](ROADMAP.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [LICENSE](LICENSE)（MIT）。
+见 [ROADMAP.md](ROADMAP.md) · [LICENSE](LICENSE)（MIT）。

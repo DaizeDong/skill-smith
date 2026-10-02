@@ -4,14 +4,19 @@
 `__NAME__` is **config-bearing**, it reads per-user state (keys, installed-tool registry) from a
 **separate, private** companion config repo. Full contract: [CONFIG.md](CONFIG.md).
 
-- **Mount (discovery order):** `$__ENVVAR__` → `$__ENVVAR___DIR` → `~/__DEFAULTDIR__/` →
-  `~/.config/__NAME__-config/`. First that exists wins; absent = runs without config.
+- **Mount (discovery order):** CLI path → `$__ENVVAR__` → `$__ENVVAR___DIR` → the consumer's pinned
+  guard resolver (`$__DATAENV__`, proven sibling `__NAME__-config/`, home config/data defaults).
+  Explicit config paths never fall through. Missing config makes the doctor exit 1; missing guards
+  and unproven discovery fail with instructions. See [CONFIG.md](CONFIG.md) for the full contract.
 - **First time:**
   ```bash
-  python scripts/init_config.py     # stamp a conformant skeleton (deterministic)
-  export __ENVVAR__=~/__DEFAULTDIR__ # or pass --out <dir> to init
-  python scripts/verify_config.py    # doctor: PASS/FAIL, names what is missing
+  git submodule update --init --recursive guards
+  python scripts/init_config.py     # reuse discovered config; otherwise create ~/__DEFAULTDIR__/
+  python scripts/verify_config.py    # generic shape checks; prints selected config path
   ```
+  Use `--out <dir>` to initialize a custom path and set `$__ENVVAR__` to that path. Store real state
+  in a separate versioned companion verified as PRIVATE. A conformant skeleton does not establish
+  readiness: fill tool settings and run tool-specific checks plus a functional exercise.
 - **Switch configs (hot-swap):** point the env var at another config dir, configs are self-contained,
   no other change needed: `export __ENVVAR__=~/configs/work` ↔ `~/configs/personal`.
 - **Secrets:** Mode B, `secrets/*` is gitignored and never enters git; back up out-of-band.

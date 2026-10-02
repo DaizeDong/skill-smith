@@ -14,9 +14,10 @@ Phases:
 
 Safety: apply NEVER truncates blindly — it writes only the reviewed `new`. Always backs up. If a
 file changed since --scan (its current description != worklist `old`), that entry is SKIPPED.
-Stdlib only.
+Apply requires PyYAML to validate the complete replacement frontmatter before writing.
 """
 import argparse
+import hashlib
 import glob
 import json
 import os
@@ -24,6 +25,9 @@ import re
 import sys
 import shutil
 import datetime
+import importlib.util
+import uuid
+from budget_check import frontmatter_end, parse_frontmatter
 
 
 def find_skill_mds(base):
@@ -38,28 +42,16 @@ def find_skill_mds(base):
 
 
 def parse_desc(lines):
-    """Given frontmatter lines (between the --- fences), return (ds, de, name, desc) where
-    ds..de is the line span of the description (de exclusive); None if no description."""
-    name = None
-    for ln in lines:
-        m = re.match(r"^name:\s*(.*)$", ln)
-        if m:
-            name = m.group(1).strip().strip('"\'')
-            break
-    ds = de = None
-    desc = None
-    for i, ln in enumerate(lines):
-        m = re.match(r"^description:\s*(.*)$", ln)
-        if m:
-            ds = i
-            desc = m.group(1).strip().strip('"\'')
-            j = i + 1
-            while j < len(lines) and lines[j].startswith((" ", "\t")) and not re.match(r"^\s*\w[\w-]*:\s", lines[j]):
-                desc += " " + lines[j].strip()
-                j += 1
-            de = j
-            break
-    return ds, de, name, desc
+    """Return the description's line span and the loader's decoded string metadata."""
+    name, desc = parse_frontmatter("---\n" + "\n".join(lines) + "\n---\n")
+    for index, line in enumerate(lines):
+        if re.match(r"^description:\s*", line):
+            end = index + 1
+            while (end < len(lines) and lines[end].startswith((" ", "\t"))
+                   and not re.match(r"^\s*\w[\w-]*:\s", lines[end])):
+                end += 1
+            return index, end, name, desc
+    return None, None, name, desc
 
 
 def read_text(path):
@@ -68,15 +60,29 @@ def read_text(path):
 
 
 def yaml_scalar(s):
-    """Emit a YAML-safe single-line value: quote only when needed."""
-    needs = (s != s.strip() or re.search(r":\s", s) or " #" in s
-             or (s[:1] in "!&*?|>%@`\"'#-[]{}," if s else False))
-    if needs:
-        return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return s
+    """JSON quoting is a YAML-compatible string scalar, including escaped newlines."""
+    return json.dumps(s, ensure_ascii=True)
+
+
+def validate_replacement(text, name, description):
+    """Require both valid YAML and the loader's exact metadata round trip."""
+    try:
+        import yaml
+    except ImportError as exc:
+        raise ValueError("PyYAML is required to validate replacement frontmatter") from exc
+    lines = text.split("\n")
+    try:
+        end = frontmatter_end(lines)
+        metadata = yaml.safe_load("\n".join(lines[1:end]) + "\n")
+    except (StopIteration, yaml.YAMLError) as exc:
+        raise ValueError("Replacement frontmatter is malformed") from exc
+    if (not isinstance(metadata, dict) or metadata.get("description") != description
+            or metadata.get("name") != name or parse_frontmatter(text) != (name, description)):
+        raise ValueError("Replacement frontmatter did not preserve string metadata")
 
 
 def do_scan(base, cap, out_path):
+    out_path = _storage_path(out_path)
     rows = []
     for p in find_skill_mds(base):
         txt = read_text(p)
@@ -84,7 +90,7 @@ def do_scan(base, cap, out_path):
             continue
         lines = txt.split("\n")
         try:
-            c = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+            c = frontmatter_end(lines)
         except StopIteration:
             continue
         ds, de, name, desc = parse_desc(lines[1:c])
@@ -93,6 +99,8 @@ def do_scan(base, cap, out_path):
         rows.append({"path": p, "name": name or os.path.basename(os.path.dirname(p)),
                      "cap": cap, "old": desc, "old_len": len(desc), "new": ""})
     rows.sort(key=lambda r: -r["old_len"])
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    _storage_module().reject_output_aliases(out_path)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(rows, f, ensure_ascii=False, indent=2)
     print("scan: %d skills over cap %d -> %s" % (len(rows), cap, out_path))
@@ -101,14 +109,23 @@ def do_scan(base, cap, out_path):
 
 
 def do_apply(worklist_path, dry_run, backup_dir):
+    worklist_path = _storage_path(worklist_path)
+    if not dry_run:
+        backup_dir = _storage_path(backup_dir, directory=True)
     with open(worklist_path, "r", encoding="utf-8") as f:
         rows = json.load(f)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup_root = os.path.join(os.path.expanduser(backup_dir), "desc-trim-%s" % stamp)
+    backup_root = None if dry_run else os.path.join(backup_dir, "desc-trim-%s-%s" % (stamp, uuid.uuid4().hex))
     applied = skipped = 0
+    pending = []
+    backup_paths = set()
     for r in rows:
-        new = (r.get("new") or "").strip()
-        if not new:
+        new = r.get("new")
+        if new is None or new == "":
+            continue
+        if not isinstance(new, str):
+            raise ValueError("Reviewed description must be a string")
+        if not new.strip():
             continue
         p = r["path"]
         if not os.path.isfile(p):
@@ -116,9 +133,11 @@ def do_apply(worklist_path, dry_run, backup_dir):
             skipped += 1
             continue
         txt = read_text(p)
+        if parse_frontmatter(txt)[1] is None:
+            raise ValueError("Current frontmatter has missing or malformed metadata")
         lines = txt.split("\n")
         try:
-            c = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+            c = frontmatter_end(lines)
         except StopIteration:
             print("  SKIP (no frontmatter): %s" % p)
             skipped += 1
@@ -135,20 +154,37 @@ def do_apply(worklist_path, dry_run, backup_dir):
             continue
         if len(new) > r.get("cap", 9999):
             print("  WARN over cap (%d>%d), applying anyway: %s" % (len(new), r.get("cap"), name))
+        new_fm = fm[:ds] + ["description: " + yaml_scalar(new)] + fm[de:]
+        new_text = "\n".join([lines[0]] + new_fm + lines[c:])
+        validate_replacement(new_text, name, new)
         print("\n* %s  (%d -> %d chars)" % (name or os.path.basename(os.path.dirname(p)), len(cur), len(new)))
         print("  OLD: %s" % cur)
         print("  NEW: %s" % new)
         if dry_run:
             applied += 1
             continue
-        bdir = os.path.join(backup_root, re.sub(r"[:\\/]+", "_", p))
-        os.makedirs(os.path.dirname(bdir), exist_ok=True)
-        shutil.copy2(p, bdir)
-        new_fm = fm[:ds] + ["description: " + yaml_scalar(new)] + fm[de:]
-        new_lines = [lines[0]] + new_fm + lines[c:]
-        with open(p, "w", encoding="utf-8", newline="\n") as f:
-            f.write("\n".join(new_lines))
-        applied += 1
+        identity = os.path.normcase(os.path.abspath(p))
+        bdir = os.path.join(backup_root, hashlib.sha256(os.fsencode(identity)).hexdigest() + ".bak")
+        if bdir in backup_paths:
+            raise ValueError("Duplicate source identity in description worklist")
+        backup_paths.add(bdir)
+        _storage_module().reject_output_aliases(bdir)
+        if os.path.lexists(bdir):
+            raise FileExistsError("Description backup destination already exists: " + bdir)
+        pending.append((p, bdir, new_text))
+    if pending:
+        _storage_module().reject_output_aliases(backup_root)
+        os.makedirs(backup_root, exist_ok=False)
+        # Finish every exclusive backup before changing any source file.
+        for p, bdir, _new_text in pending:
+            _storage_module().reject_output_aliases(bdir)
+            with open(p, "rb") as source, open(bdir, "xb") as backup:
+                shutil.copyfileobj(source, backup)
+            shutil.copystat(p, bdir)
+        for p, _bdir, new_text in pending:
+            with open(p, "w", encoding="utf-8", newline="\n") as source:
+                source.write(new_text)
+            applied += 1
     print("\n%s: %d entr%s %s, %d skipped." % (
         "DRY-RUN" if dry_run else "APPLIED", applied, "y" if applied == 1 else "ies",
         "to apply" if dry_run else "written", skipped))
@@ -160,57 +196,30 @@ def do_apply(worklist_path, dry_run, backup_dir):
 _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
 
 
-def _companion_root():
-    """Where this skill's private companion is, via tools/datadir.py. None when there is none."""
-    p = os.path.join(_REPO_ROOT, "tools", "datadir.py")
-    if not os.path.isfile(p):
-        return None
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("_dd_for_trim", p)
+def _storage_module():
+    """Use the same pinned-resolver and provider checks as the fleet report writer."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fleet_check.py")
+    spec = importlib.util.spec_from_file_location("_fleet_storage_for_trim", path)
     if spec is None or spec.loader is None:
-        return None
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    fn = getattr(mod, "resolve_companion_root", None)
-    return fn("skill-smith") if fn else None
+        raise ImportError("fleet storage validator is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.HERE = os.path.join(_REPO_ROOT, "skills", "skill-smith", "scripts")
+    return module
 
 
 def _default_out_path():
-    """The default worklist destination, which must not be inside this public repo.
-
-    `--out` used to default to the bare relative name `worklist.json`, written from the current
-    directory, which is the repo root whenever anyone runs this the obvious way. The file is not a
-    scratch artifact: every row carries an ABSOLUTE on-disk path, so it contains the operator's
-    username, and the live `description` of every over-cap SKILL.md under ~/.claude/skills, which
-    includes skills that are not in any public repository. It was neither tracked nor gitignored, so
-    one `git add -A` after a scan would have committed it.
-
-    That is real-run output about a person's machine, and this repo is the template every other
-    skill is scaffolded from, so the defect propagated by construction.
-    """
-    root = _companion_root()
-    if root is not None:
-        return os.path.join(str(root), "data", "worklist.json")
-    return os.path.expanduser(os.path.join("~", ".skill-smith", "worklist.json"))
+    """Require initialized companion storage; never fall back to an unmanaged folder."""
+    return _storage_module().default_data_path("worklist.json")
 
 
-def _reject_in_repo(path):
-    """A worklist inside this repo is refused, whatever route produced the path.
-
-    Covers the default, an explicit --out, and a relative path resolved against a current directory
-    that happens to be the repo. One check instead of three, and it raises rather than silently
-    relocating: a tool that writes somewhere other than where it was told is a worse surprise than
-    one that stops and says why.
-    """
-    p = os.path.abspath(os.path.expanduser(path))
-    if os.path.commonpath([p, _REPO_ROOT]) == _REPO_ROOT:
-        raise SystemExit(
-            "trim_descriptions: refusing to write the worklist inside this public repo:\n"
-            "  %s\n"
-            "Every row carries an absolute on-disk path and the live description of skills that may\n"
-            "not be public. Pass --out with a path outside this repo, or leave it unset to use\n"
-            "  %s" % (p, _default_out_path()))
-    return p
+def _storage_path(path, directory=False):
+    module = _storage_module()
+    result, proof = module.resolve_status_path(
+        path, module.DEFAULT_VISIBILITY, default_name="description-backups" if directory else "worklist.json",
+        directory=directory)
+    print("storage: " + proof)
+    return result
 
 
 def main():
@@ -220,18 +229,20 @@ def main():
     ap.add_argument("--scan", action="store_true")
     ap.add_argument("--apply", metavar="WORKLIST.json")
     ap.add_argument("--out", default=None,
-                    help="where to write the scan worklist. Defaults OUTSIDE this repo; see "
-                         "_default_out_path for why a bare relative name was wrong.")
+                    help="worklist in a verified PRIVATE Git repository; default uses the pinned companion resolver")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--backup-dir", default=os.environ.get("SKILL_SMITH_BACKUP_DIR", "~/.skill-smith/backup"))
+    ap.add_argument("--backup-dir", default=os.environ.get("SKILL_SMITH_BACKUP_DIR"),
+                    help="verified PRIVATE backup directory; defaults to companion DATA/description-backups")
     a = ap.parse_args()
     base = os.path.abspath(os.path.expanduser(a.skills_dir))
-    if a.scan:
-        out = _reject_in_repo(a.out if a.out else _default_out_path())
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        return do_scan(base, a.cap, out)
-    if a.apply:
-        return do_apply(a.apply, a.dry_run, a.backup_dir)
+    try:
+        if a.scan:
+            return do_scan(base, a.cap, a.out)
+        if a.apply:
+            return do_apply(a.apply, a.dry_run, a.backup_dir)
+    except (OSError, ValueError, RuntimeError, ImportError) as exc:
+        print("trim rejected: %s" % exc, file=sys.stderr)
+        return 1
     ap.print_help()
     return 2
 

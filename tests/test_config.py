@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """A-provider signal for the config-bearing standard (config-spec E1-E7, Gate G8).
 
-Verifies scaffold --with-config emits a conformant config-bearing skill, the G8 gate accepts it,
-skips non-config skills, and rejects a broken one. Mirrors test_tools.py conventions.
+Verifies scaffold --with-config emits a conformant template, keeps configured G8 pending,
+skips non-config skills, and rejects a broken one. Configured lifecycle tests are separate.
 
 Run:  python -m pytest -q
 Stdlib + pytest only. No network. Cross-platform.
@@ -22,7 +22,6 @@ _SCRIPTS = os.path.join(_REPO, "skills", "skill-smith", "scripts")
 SCAFFOLD = os.path.join(_SCRIPTS, "scaffold_skill.py")
 CFGCONF = os.path.join(_SCRIPTS, "check_config_conformance.py")
 CONFORM = os.path.join(_SCRIPTS, "check_conformance.py")
-INIT_ASSET = os.path.join(_REPO, "skills", "skill-smith", "assets", "config", "init_config.py")
 
 
 
@@ -53,23 +52,24 @@ def scaffold(out, name, *extra):
 
 
 def test_config_assets_present():
-    for rel in ("init_config.py", "verify_config.py", "CONFIG.md.tmpl",
+    for rel in ("init_config.py", "verify_config.py", "config_runtime.py", "CONFIG.md.tmpl",
                 "readme-config-section.md.tmpl", "readme-config-section.cn.md.tmpl",
                 "skill-gitignore.tmpl"):
         p = os.path.join(_REPO, "skills", "skill-smith", "assets", "config", rel)
         assert os.path.isfile(p), "missing config asset: %s" % p
 
 
-def test_with_config_scaffold_passes_g8_and_g6(tmp_path):
+def test_with_config_scaffold_keeps_configured_g8_pending_and_passes_static_g6(tmp_path):
     out = str(tmp_path / "out")
     r = scaffold(out, "cfg-skill", "--with-config")
     assert r.returncode == 0, r.stdout + r.stderr
     repo = os.path.join(out, "cfg-skill")
-    # G8: full dynamic run (init x2 determinism + hot-swap) must accept
+    # E4 can run immediately; E5 needs independently configured A/B directories.
     g8 = run([CFGCONF, repo])
     _x = unexpected_failures(g8.stdout)
-    assert not _x, "config-bearing scaffold must pass G8:\n%s" % '\n'.join(_x)
-    assert "7/7 elements pass" in g8.stdout
+    assert not _x, "config-bearing template must satisfy executed checks:\n%s" % '\n'.join(_x)
+    assert g8.returncode == 2 and "6/7 elements pass" in g8.stdout
+    assert "configuration_required" in g8.stdout
     # G6: Spec v1 conformance unaffected by the config additions
     g6 = run([CONFORM, repo])
     _x = unexpected_failures(g6.stdout)
@@ -110,11 +110,14 @@ def test_g8_rejects_missing_verify_script(tmp_path):
 
 
 def test_init_deterministic_and_self_contained(tmp_path):
-    """Generic init asset: two inits are byte-identical (E4) and leak no absolute paths (E5)."""
+    """Emitted init: two inits are byte-identical (E4) and leak no absolute paths (E5)."""
+    result = scaffold(str(tmp_path / "out"), "demo", "--with-config")
+    assert result.returncode == 0, result.stdout + result.stderr
+    initializer = str(tmp_path / "out/demo/scripts/init_config.py")
     a = str(tmp_path / "A")
     b = str(tmp_path / "B")
-    r1 = run([INIT_ASSET, "--skill", "demo", "--out", a])
-    r2 = run([INIT_ASSET, "--skill", "demo", "--out", b])
+    r1 = run([initializer, "--skill", "demo", "--out", a])
+    r2 = run([initializer, "--skill", "demo", "--out", b])
     assert r1.returncode == 0 and r2.returncode == 0, r1.stdout + r2.stdout
     reg_a = open(os.path.join(a, "registry.json"), encoding="utf-8").read()
     reg_b = open(os.path.join(b, "registry.json"), encoding="utf-8").read()

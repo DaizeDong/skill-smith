@@ -48,6 +48,9 @@ DEDUP = os.path.join(_SCRIPTS, "dedup_check.py")
 NEEDS_A_HUMAN = ("data boundary: repo is an uninitialized tool",)
 
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "tools"))
+from make_fixtures import review15_capacity_policy
+
 def unexpected_failures(stdout):
     """FAIL lines that are not one of the known-and-required-open items."""
     return [ln for ln in stdout.splitlines()
@@ -156,6 +159,7 @@ def test_dedup_candidate_case_insensitive(tmp_path):
     lib = str(tmp_path / "lib")
     make_skill(lib, "alpha", "parse pdf invoices and extract totals.")
     r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4",
+             "--installed-plugins", empty_plugins(tmp_path),
              "--desc", "PARSE PDF INVOICES AND EXTRACT TOTALS", "--name", "C"])
     assert r.returncode == 1, "uppercase duplicate must be flagged:\n%s" % r.stdout
 
@@ -313,10 +317,11 @@ def test_budget_plugin_tier_comes_from_installed_plugins(tmp_path):
     make_skill(lib, "user-one", "a user skill.")
     r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
              "--installed-plugins", str(inst)])
-    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "BUDGET: UNKNOWN" in r.stdout and "unresolved=1" in r.stdout
     assert "tier plugin 1 skills" in squeeze(r.stdout), "stale version or duplicate record counted:\n%s" % r.stdout
     assert "the stale one" not in r.stdout, r.stdout
-    assert "UNRESOLVABLE plugin records" in r.stdout and "ghost@market" in r.stdout, \
+    assert "UNRESOLVABLE inventory records" in r.stdout and "ghost@market" in r.stdout, \
         "a plugin whose installPath is gone must be named, not treated as zero:\n%s" % r.stdout
 
 
@@ -405,7 +410,7 @@ def test_budget_ok_when_the_library_fits(tmp_path):
     r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
              "--installed-plugins", empty_plugins(tmp_path)])
     assert r.returncode == 0, r.stdout[-2000:]
-    assert "The library fits inside the observed capacity" in r.stdout, r.stdout[-2000:]
+    assert "Arithmetic estimate:" in r.stdout and "measurement=not_supplied" in r.stdout, r.stdout[-2000:]
     assert "BUDGET: OK" in r.stdout and "lever=n/a" in r.stdout, r.stdout[-2000:]
 
 
@@ -424,7 +429,7 @@ def test_budget_blocked_is_not_red_and_is_priced(tmp_path):
         "big@market": [{"installPath": str(cache)}]}}), encoding="utf-8")
     lib = str(tmp_path / "lib")
     make_skill(lib, "mine", "y" * 100)                                  # nothing to trim
-    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+    r = run([BUDGET, "--capacity", str(review15_capacity_policy()), "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
              "--installed-plugins", str(inst)])
     assert r.returncode == 3, "an overflow no edit can clear must be BLOCKED, not FAIL:\n%s" \
         % r.stdout[-2500:]
@@ -444,7 +449,7 @@ def test_budget_trimmable_overflow_is_red_not_blocked(tmp_path):
     lib = str(tmp_path / "lib")
     for i in range(24):
         make_skill(lib, "fat%02d" % i, "y" * 1000)     # ~24k, and ~20k of it is trimmable
-    r = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+    r = run([BUDGET, "--capacity", str(review15_capacity_policy()), "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
              "--installed-plugins", empty_plugins(tmp_path)])
     assert r.returncode == 1, "trimming clears this, so it is red:\n%s" % r.stdout[-2000:]
     assert "lever=trim" in r.stdout, r.stdout[-2000:]
@@ -467,7 +472,7 @@ def test_budget_our_cap_violation_does_not_swallow_the_overflow(tmp_path):
     inst = tmp_path / "installed_plugins.json"
     inst.write_text(json.dumps({"version": 2, "plugins": {
         "big@market": [{"installPath": str(cache)}]}}), encoding="utf-8")
-    r = run([BUDGET, "--skills-dir", str(lib), "--code-root", str(code_root),
+    r = run([BUDGET, "--capacity", str(review15_capacity_policy()), "--skills-dir", str(lib), "--code-root", str(code_root),
              "--installed-plugins", str(inst)])
     assert r.returncode == 1, "our own over-cap description is red:\n%s" % r.stdout[-2500:]
     assert "cap_over_ours=1" in r.stdout, r.stdout[-2500:]
@@ -514,11 +519,11 @@ def test_budget_fingerprint_moves_only_when_the_finding_set_moves(tmp_path):
         "extra@market": [{"installPath": str(cache / "extra" / "1.0")}]}}), encoding="utf-8")
     lib = str(tmp_path / "lib")
     make_skill(lib, "mine", "y" * 100)
-    a = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+    a = run([BUDGET, "--capacity", str(review15_capacity_policy()), "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
              "--installed-plugins", str(one)])
-    b = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+    b = run([BUDGET, "--capacity", str(review15_capacity_policy()), "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
              "--installed-plugins", str(one)])
-    cc = run([BUDGET, "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
+    cc = run([BUDGET, "--capacity", str(review15_capacity_policy()), "--skills-dir", lib, "--code-root", str(tmp_path / "nope"),
               "--installed-plugins", str(two)])
     assert fp_of(a.stdout) == fp_of(b.stdout), "identical libraries fingerprinted differently"
     assert fp_of(a.stdout) != fp_of(cc.stdout), \
@@ -561,7 +566,8 @@ def test_dedup_flags_pair(tmp_path):
     lib = str(tmp_path / "lib")
     make_skill(lib, "alpha", "parse pdf invoices and extract totals.")
     make_skill(lib, "beta", "parse pdf invoices and extract totals fast.")
-    r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4"])
+    r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4",
+             "--installed-plugins", empty_plugins(tmp_path)])
     assert r.returncode == 1, "near-duplicate pair must be flagged (exit 1):\n%s" % r.stdout
     assert "alpha" in r.stdout and "beta" in r.stdout
 
@@ -570,7 +576,8 @@ def test_dedup_distinct_ok(tmp_path):
     lib = str(tmp_path / "lib")
     make_skill(lib, "alpha", "parse pdf invoices and extract totals.")
     make_skill(lib, "gamma", "schedule recurring kubernetes cluster backups nightly.")
-    r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4"])
+    r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4",
+             "--installed-plugins", empty_plugins(tmp_path)])
     assert r.returncode == 0, "distinct descriptions must pass:\n%s" % r.stdout
 
 
@@ -579,11 +586,13 @@ def test_dedup_desc_candidate_mode(tmp_path):
     make_skill(lib, "alpha", "parse pdf invoices and extract totals.")
     # candidate nearly identical to alpha -> overlap, exit 1
     r = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4",
+             "--installed-plugins", empty_plugins(tmp_path),
              "--desc", "parse pdf invoices and extract totals", "--name", "cand"])
     assert r.returncode == 1, "overlapping candidate must exit 1:\n%s" % r.stdout
     assert "OVERLAP" in r.stdout
     # distinct candidate -> exit 0
     r2 = run([DEDUP, "--skills-dir", lib, "--threshold", "0.4",
+              "--installed-plugins", empty_plugins(tmp_path),
               "--desc", "render 3d terrain meshes from gis elevation rasters", "--name", "cand2"])
     assert r2.returncode == 0, "distinct candidate must exit 0:\n%s" % r2.stdout
 
