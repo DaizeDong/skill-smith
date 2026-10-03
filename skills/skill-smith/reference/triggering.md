@@ -41,14 +41,20 @@ each draft so the change is auditable:
 5. *Human-scan*, readable in one glance, no jargon wall.
 6. *Every word earns its place*, cut anything that does not change when it fires.
 
-**B. The official trigger-rate optimizer (rigorous, for flagship skills).** Delegate to Anthropic's
-`skill-creator` `run_loop.py` (do not reimplement): it generates ~20 should / should-not-trigger
-queries, splits **60% train / 40% held-out**, runs each query 3x for a reliable rate, proposes
-improved descriptions from failures, and returns `best_description` **selected by held-out score**
-(anti-overfit). Record the resulting held-out trigger rate, the gate (Step 5) needs it.
+**B. Measured trigger optimization.** Use training queries to propose changes and a separate
+validation split to select the description. Run model and agent work through the installed
+`llmcall` interface and its current policy. A score used to select `best_description` is a
+validation score, even if an optimizer calls that split "held-out". Record it as selection evidence.
+
+Freeze a separate evaluator-owned final test set before implementation. Keep its queries and
+answers out of the implementation and optimizer prompts. After selecting and freezing the
+description, the evaluator measures that candidate on the untouched final test set. Only this
+independent final score can satisfy G2. If its feedback informs another revision, retire that
+test set from final acceptance and obtain a new untouched evaluator-owned set.
 
 ## Output
 
-A SKILL.md whose description has a **measured** held-out trigger rate (method B) or at least a
-documented 6-lens pass (method A), plus the should/should-not query set saved for regression use.
-"It looks like a good description" is not acceptance, a number is.
+A SKILL.md candidate, its documented manual pass, training/validation results and the independent
+final G2 measurement when available. Keep all real queries, prompts and evaluation artifacts in
+verified PRIVATE versioned DATA. Training and validation queries can support regression tests;
+the evaluator retains the final test set. A manual pass or selection score alone leaves G2 missing.

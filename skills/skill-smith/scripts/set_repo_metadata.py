@@ -33,6 +33,9 @@ import shutil
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from github_identity import github_environment, owner_repo_from_homepage
+
 # Skill Repo Spec v1 -- base-9 GitHub topics (identity fingerprint, every repo MUST carry all 9).
 BASE9 = ["claude-code", "claude-plugin", "claude-skill", "claude",
          "ai", "ai-agent", "agent", "llm", "skill"]
@@ -57,16 +60,6 @@ def load_plugin(repo_dir):
         return json.loads(raw)
     except Exception:
         return {}
-
-
-def owner_repo_from_homepage(homepage):
-    """Parse github.com/<owner>/<repo> out of a plugin.json homepage URL."""
-    if not homepage:
-        return None, None
-    m = re.search(r"github\.com/([^/]+)/([^/#?]+)", homepage)
-    if m:
-        return m.group(1), m.group(2).rstrip("/")
-    return None, None
 
 
 def sanitize_topic(t):
@@ -122,7 +115,7 @@ def run_gh(args, input_text=None):
     gh = gh_path()
     if not gh:
         return None
-    return subprocess.run([gh] + args, capture_output=True, text=True,
+    return subprocess.run([gh] + args, capture_output=True, text=True, env=github_environment(),
                           encoding="utf-8", errors="replace", input=input_text)
 
 
@@ -149,6 +142,10 @@ def main():
     if not (owner and repo):
         print("ERROR: could not resolve owner/repo. Pass --owner/--repo or a repo_dir with a "
               "plugin.json homepage (github.com/<owner>/<repo>).", file=sys.stderr)
+        return 2
+
+    if owner_repo_from_homepage("https://github.com/%s/%s" % (owner, repo)) != (owner, repo):
+        print("ERROR: owner and repo must identify one github.com repository.", file=sys.stderr)
         return 2
 
     extra = [t for t in (a.topics.split(",") if a.topics else []) if t.strip()]
