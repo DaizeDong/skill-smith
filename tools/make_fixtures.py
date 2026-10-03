@@ -467,6 +467,59 @@ def directory_link(link, target):
         link.symlink_to(target, target_is_directory=True)
 
 
+def fleet_alias_fixture(root, source_root):
+    """Place actual tool modules behind generated installed aliases and a synthetic companion."""
+    import shutil
+    import textwrap
+
+    root, source_root = Path(root), Path(source_root)
+    consumer = root / "consumer"
+    for relative in ("skills/skill-smith/scripts/fleet_check.py",
+                     "guards/tools/datadir.py", "guards/tools/data_boundary.py"):
+        destination = consumer / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_root / relative, destination)
+    data = root / "skill-smith-config/data"
+    data.mkdir(parents=True)
+    (data.parent / ".companion").write_text("skill-smith\n", encoding="utf-8")
+    home = root / "home"
+    entries = {"physical": consumer / "skills/skill-smith"}
+    for name in ("claude", "agents"):
+        alias = home / ("." + name) / "skills/skill-smith"
+        alias.parent.mkdir(parents=True)
+        directory_link(alias, entries["physical" if name == "claude" else "claude"])
+        entries[name] = alias
+    unrelated = root / "unrelated"
+    unrelated.mkdir()
+    probe = root / "probe.py"
+    probe.write_text(textwrap.dedent('''\
+        import json
+        import runpy
+        import subprocess
+        import sys
+
+        def no_subprocess(*args, **kwargs):
+            raise AssertionError("The alias resolver probe must not execute subprocesses")
+
+        subprocess.run = no_subprocess
+        subprocess.Popen = no_subprocess
+        fleet = runpy.run_path(sys.argv[1], run_name="fleet_alias_probe")
+        destination = fleet["default_data_path"]("synthetic-status.json")
+        boundary = fleet["_private_output_boundary"]()
+        try:
+            fleet["resolve_status_path"](sys.argv[2], None)
+        except ValueError as exc:
+            refusal = str(exc)
+        else:
+            raise AssertionError("A status path inside the source tool was accepted")
+        print(json.dumps({"destination": destination, "boundary": boundary.__file__,
+                          "refusal": refusal}))
+        '''), encoding="utf-8")
+    return {"consumer": consumer, "data": data, "home": home, "entries": entries,
+            "unrelated": unrelated, "probe": probe,
+            "source_output": consumer / "synthetic-status.json"}
+
+
 def config_initializer_destination(root, consumer, child="secrets", contained=False):
     """Generate a selected config with a linked child and sentinel files to preserve."""
     selected = Path(root) / "selected config"

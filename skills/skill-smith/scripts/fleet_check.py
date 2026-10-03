@@ -189,7 +189,7 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import quote, urlsplit
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.realpath(__file__))
 CONFORMANCE = os.path.join(HERE, "check_conformance.py")
 BUDGET = os.path.join(HERE, "budget_check.py")
 
