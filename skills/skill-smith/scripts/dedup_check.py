@@ -7,51 +7,35 @@ before you create a near-duplicate.
 
 Usage:
   python dedup_check.py [--skills-dir ~/.claude/skills] [--threshold 0.4]
+                        [--installed-plugins ~/.claude/plugins/installed_plugins.json]
                         [--desc "candidate description"] [--name candidate-name]
-Stdlib only. Similarity = Jaccard over content-word sets. Exits 1 if any pair >= threshold.
+Uses the same active user and plugin inventory as G3. Stale cache copies are not scanned.
+Stdlib only. Similarity = Jaccard over content-word sets. Exits 1 if any pair >= threshold,
+2 if coverage is incomplete without a known overlap, and 0 only for a complete distinct library.
 """
 import argparse
+import math
 import os
 import re
 import sys
-import glob
+import unicodedata
+from budget_check import library_inventory, parse_frontmatter
 
 STOP = set("a an the of to for and or in on with without via your you this that is are be use used "
            "when use-when from into as at by it its their use-cases skill skills claude code agent "
            "user users new create creates creating using".split())
 
 
-def parse_frontmatter(text):
-    text = text.lstrip("﻿")  # tolerate a UTF-8 BOM (common from Windows editors)
-    if not text.startswith("---"):
-        return None, None
-    end = text.find("\n---", 3)
-    if end == -1:
-        return None, None
-    block = text[3:end]
-    name = desc = None
-    lines = block.splitlines()
-    i = 0
-    while i < len(lines):
-        m = re.match(r"^name:\s*(.*)$", lines[i])
-        if m:
-            name = m.group(1).strip().strip('"\'')
-        m = re.match(r"^description:\s*(.*)$", lines[i])
-        if m:
-            desc = m.group(1).strip().strip('"\'')
-            j = i + 1
-            while j < len(lines) and lines[j].startswith((" ", "\t")) and not re.match(r"^\s*\w[\w-]*:\s", lines[j]):
-                desc += " " + lines[j].strip()
-                j += 1
-            i = j
-            continue
-        i += 1
-    return name, desc
-
-
 def words(desc):
-    toks = re.findall(r"[a-z0-9][a-z0-9-]+", (desc or "").lower())
-    return set(t for t in toks if t not in STOP and len(t) > 2)
+    """Compare Unicode words and CJK bigrams; an empty set remains unmeasurable."""
+    text = unicodedata.normalize("NFKC", desc or "").casefold()
+    cjk = re.findall(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+", text)
+    text = re.sub(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+", " ", text)
+    tokens = {token for token in re.findall(r"[^\W_]+(?:-[^\W_]+)*", text)
+              if token not in STOP and len(token) > 2}
+    for run in cjk:
+        tokens.update(run[index:index + 2] for index in range(max(1, len(run) - 1)))
+    return tokens
 
 
 def jaccard(a, b):
@@ -63,62 +47,64 @@ def jaccard(a, b):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--skills-dir", default=os.path.expanduser("~/.claude/skills"))
+    ap.add_argument("--installed-plugins",
+                    default=os.path.expanduser("~/.claude/plugins/installed_plugins.json"))
     ap.add_argument("--threshold", type=float, default=0.4)
     ap.add_argument("--desc", default="", help="candidate description to compare against library")
     ap.add_argument("--name", default="<candidate>")
     a = ap.parse_args()
+    if not math.isfinite(a.threshold) or not 0 <= a.threshold <= 1:
+        ap.error("--threshold must be finite and between 0 and 1 inclusive")
 
     base = os.path.abspath(os.path.expanduser(a.skills_dir))
-    if not os.path.isdir(base):
-        print("skills dir not found: %s" % base)
-        return 2
-
-    paths = set(glob.glob(os.path.join(base, "*", "SKILL.md")))
-    paths |= set(glob.glob(os.path.join(base, "*", "*", "SKILL.md")))
-    items = []
-    for p in sorted(paths):
-        try:
-            with open(p, "r", encoding="utf-8") as f:
-                txt = f.read()
-        except Exception:
-            continue
-        name, desc = parse_frontmatter(txt)
-        if desc:
-            items.append((name or os.path.basename(os.path.dirname(p)), words(desc)))
+    rows, problems = library_inventory(base, os.path.expanduser("~/CodesClaude"),
+                                      os.path.abspath(os.path.expanduser(a.installed_plugins)))
+    items = [("%s:%s" % (row.owner, row.name) if row.owner else row.name, words(row.desc))
+             for row in rows]
+    problems.extend("description has no measurable lexical tokens: %s" % name
+                    for name, tokens in items if not tokens)
+    cand = words(a.desc) if a.desc else None
+    if a.desc and not cand:
+        problems.append("candidate description has no measurable lexical tokens")
+    if problems:
+        print("INCOMPLETE library coverage:")
+        for problem in problems:
+            print("  %s" % problem)
 
     flagged = 0
 
     if a.desc:
-        cand = words(a.desc)
         print("Candidate '%s' vs library (threshold %.2f):" % (a.name, a.threshold))
         sims = sorted(((jaccard(cand, w), nm) for nm, w in items), reverse=True)
+        flagged = sum(s >= a.threshold for s, _nm in sims)
         for s, nm in sims[:8]:
             mark = "  <== OVERLAP" if s >= a.threshold else ""
             print("  %.2f  %s%s" % (s, nm, mark))
-            if s >= a.threshold:
-                flagged += 1
         print("-" * 50)
         if flagged:
             print("RESULT: %d overlap(s) >= %.2f -> consider improving the existing skill "
                   "(self-evolve) instead of creating a duplicate." % (flagged, a.threshold))
-            return 1
-        print("RESULT: distinct enough. OK to create.")
-        return 0
-
-    # pairwise across the library
-    print("Pairwise description overlap (threshold %.2f), %d skills:" % (a.threshold, len(items)))
-    for i in range(len(items)):
-        for j in range(i + 1, len(items)):
-            s = jaccard(items[i][1], items[j][1])
-            if s >= a.threshold:
-                flagged += 1
-                print("  %.2f  %s  <->  %s" % (s, items[i][0], items[j][0]))
-    print("-" * 50)
-    if flagged:
-        print("RESULT: %d overlapping pair(s) -> dedup/merge or sharpen descriptions." % flagged)
-        return 1
-    print("RESULT: no overlaps >= threshold. OK.")
-    return 0
+        elif not problems:
+            print("RESULT: distinct enough. OK to create.")
+    else:
+        print("Pairwise description overlap (threshold %.2f), %d skills:" % (a.threshold, len(items)))
+        for i in range(len(items)):
+            for j in range(i + 1, len(items)):
+                s = jaccard(items[i][1], items[j][1])
+                if s >= a.threshold:
+                    flagged += 1
+                    print("  %.2f  %s  <->  %s" % (s, items[i][0], items[j][0]))
+        print("-" * 50)
+        if flagged:
+            print("RESULT: %d overlapping pair(s) -> dedup/merge or sharpen descriptions." % flagged)
+        elif not problems:
+            print("RESULT: no overlaps >= threshold. OK.")
+    state = "FAIL" if flagged else ("UNKNOWN" if problems else "OK")
+    if problems:
+        print("RESULT: coverage incomplete; overlap results cover only the measured skills.")
+    print("DEDUP: %s skills=%d overlaps=%d unresolved=%d"
+          % (state, len(items), flagged, len(problems)))
+    return {"FAIL": 1, "UNKNOWN": 2, "OK": 0}[state]
 
 
 if __name__ == "__main__":

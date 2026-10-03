@@ -38,7 +38,7 @@ It does **only what nothing else does**, and delegates everything else:
 4. **Auto-iteration handoff**, hand the accepted skill to `self-evolve` (back engine) for regression-gated improvement.
 5. **Batch**, fan out a *series* of candidate skills, each through the gate, under one global library-budget manager.
 
-It is **not**: a from-scratch generator (it calls Skill_Seekers / the official skill-creator), an eval framework (it calls agent-skills-eval / scenario-eval), or an iteration engine (it calls self-evolve). It is the glue + the gate.
+It is **not**: a from-scratch generator (it calls Skill_Seekers / the official skill-creator), an eval framework (it validates results from available evaluators), or an iteration engine (it calls self-evolve). It is the glue + the gate.
 
 It is **not for**: improving an *existing* skill (that is `self-evolve`), or answering "is there a ready-made skill for X" (that is `market-intel`'s `ready-skills` domain).
 
@@ -51,7 +51,7 @@ It is **not for**: improving an *existing* skill (that is `self-evolve`), or ans
 Or clone manually:
 
 ```bash
-git clone https://github.com/DaizeDong/skill-smith.git ~/.claude/plugins/skill-smith
+git clone --recurse-submodules https://github.com/DaizeDong/skill-smith.git ~/.claude/plugins/skill-smith
 ```
 
 (Maintainer setup: source lives in `CodesClaude/skill-smith`, deployed to `~/.claude/skills/skill-smith` via a PowerShell junction, see [`reference/deploy.md`](skills/skill-smith/reference/deploy.md).)
@@ -78,6 +78,64 @@ python skills/skill-smith/scripts/dedup_check.py                             # d
 python skills/skill-smith/scripts/fleet_check.py                             # whole fleet, read only
 ```
 
+Budget and dedup use the same user skills and active plugin inventory. Pass `--skills-dir` and
+`--installed-plugins` to both scripts for a different library. Missing, unreadable or ambiguous
+entries produce `UNKNOWN` and an `unresolved` count; a measured overflow or overlap remains visible
+alongside incomplete coverage. Stale versions in the plugin cache are excluded.
+`budget_check.py` without `--listing` reports an arithmetic estimate with
+`measurement=not_supplied`; it does not establish live visibility. Supply the current capture via
+`--listing FILE` to either budget or fleet checks. A supplied unreadable, mismatched or ambiguous
+listing is `UNKNOWN`; measured description loss is `FAIL`. Fleet requires a complete measurement
+before reporting G3 as `PASS`.
+
+Description trimming writes its worklist and backups into the initialized PRIVATE versioned
+companion, resolved through `guards/tools/datadir.py`. Explicit `--out` and `--backup-dir` paths
+must meet the same checks. Initialize the companion and verify its GitHub visibility first;
+unmanaged directories, public or unknown repositories, and linked output paths are refused.
+The shared Guards check verifies physical and effective fetch/push URLs for every configured
+remote, including URL rewrites and additional push URLs. All destinations must be verified PRIVATE
+in a fresh local visibility receipt. Any remote name is supported. Unsupported or unresolved
+routing is refused, and writers recheck the destination immediately before writing.
+Keep worklists and backups committed and pushed in that private companion with other run data.
+Apply requires PyYAML and validates the entire frontmatter before writing each quoted replacement.
+
+### Initialize private run storage
+
+The reporting and trimming commands need a separate Git companion. From this tool repository,
+replace `OWNER` with the account that will own the private repository:
+
+```bash
+gh repo create OWNER/skill-smith-config --private
+gh repo clone OWNER/skill-smith-config ../skill-smith-config
+printf 'skill-smith\n' > ../skill-smith-config/.companion
+mkdir -p ../skill-smith-config/data
+touch ../skill-smith-config/data/.gitkeep
+git -C ../skill-smith-config add .companion data/.gitkeep
+git -C ../skill-smith-config commit -m "Initialize private companion"
+git -C ../skill-smith-config push -u origin HEAD
+gh repo view OWNER/skill-smith-config --json visibility --jq .visibility
+export SKILL_SMITH_CONFIG="$(cd ../skill-smith-config && pwd)"
+```
+
+For an existing companion, clone it beside the tool and set the same environment variable.
+Before using a writer, refresh `~/.pii-guard/visibility.json` with your trusted visibility collector.
+The receipt needs a current `_refreshed` timestamp and PRIVATE entries for all configured fetch
+and push destinations. `gh repo view` checks live visibility but does not update that receipt.
+The fleet command accepts `--visibility PATH`; trimming uses the default receipt path. See the
+[Guards transport contract](guards/COMPANION.md#verifying-a-companion) for supported configurations.
+The visibility command must report `PRIVATE`. Each writer also verifies the fetch identity and
+every effective push destination, including routing overrides; the ownership marker alone is
+not visibility proof. `SKILL_SMITH_CONFIG` selects the companion; its existing `data/` directory
+holds reports, worklists and description backups. `SKILL_SMITH_DATA_DIR` can select an explicit
+data directory, which must pass the same storage checks. Never create either directory inside
+the public tool repository.
+
+Run `python skills/skill-smith/scripts/trim_descriptions.py --scan` to produce a reviewable worklist;
+scanning does not change skill descriptions. Commit and push the resulting data in the private
+companion. `python skills/skill-smith/scripts/fleet_check.py --no-status` needs no report destination.
+The generic G8 self-check does not test
+this storage setup; the writer's storage proof is the relevant check.
+
 `check_conformance.py` also measures the SKILL.md itself, because that file is paid for on **every**
 invocation of the skill: **warn above 12,000 characters, fail above 16,000**, every relative path it
 names must resolve on disk, and instruction text must state the rule rather than which iteration
@@ -98,21 +156,21 @@ plugin), and prints both the documented 15,000-char budget and the capacity actu
 skills kept their description, 84 appeared as a bare name, and the surviving lines totalled 21,565
 chars against a declared library of 53,821.
 
-That measurement retired three claims this tool used to make. Truncation is **not** a contiguous tail
-in load order, so the tool no longer guesses victim names: without `--listing FILE` it prints a
-**floor** on how many skills must lose their description and says the names are not derivable from
-disk; with one, it **measures** them. The loss is not confined to the user tier, it falls mostly on
-plugins. And uninstalling a plugin is not inert, it is the largest lever there is.
+Current prompt omissions require a captured `--listing FILE`. Without one, omissions remain
+unmeasured and victim names cannot be derived from disk. The historical capacity estimate is
+advisory. Supply `--capacity N` to enforce an explicit current policy; any minimum removal count
+then describes what would be needed to meet that policy. The digest keeps observed listing losses
+in `min_lost` and the policy projection in `projected_min_removals`. Read `measurement` alongside
+those counts: zero recorded losses without a listing does not establish that every description is
+visible. An incomplete listing or inventory cannot establish full coverage.
 
-The verdict follows the **lever**, not the severity. A finding closable tonight by editing (one of
-our descriptions over the 180-char cap, or an overflow small enough that trimming would clear it) is
-**FAIL**, red, with the specific cuts named. An overflow that no amount of editing can absorb is
-**BLOCKED**, amber, stated in full every run with the arithmetic on both sides and a ranked, priced
-list of which plugin removals would clear it, because "uninstall something" without a number is a
-shrug rather than a lever. Amber is not a softer red: it means the remaining move is a decision about
-what to stop having, and a colour that never changes stops being read. Only the per-skill description
-**cap** stays limited to our tier, because it is a Spec-v1 authoring rule for skills this repo
-produces, not a judgement about skills that predate it. Run `--plugins` for the full ranking.
+Our descriptions above the 180-char cap still **FAIL**. Under an explicit capacity policy, an
+overflow that trimming can clear also **FAILS**, with the proposed cuts listed. An overflow that
+requires a removal decision is **BLOCKED** and maps to an amber fleet warning, with the projected
+removal count and the plugin ranking available through `--plugins`. A description missing from a
+supplied listing is reported as an observed loss. Fleet PASS requires complete listing evidence.
+Without `--capacity`, the historical estimate does not enforce removals. The per-skill cap remains
+limited to our tier because it is the Spec-v1 authoring rule for skills this repo produces.
 
 `fleet_check.py` is the driver the linter above never had. It fans `check_conformance.py` over every
 plugin repo and adds what nothing else checks: skill junctions resolve, a repo marked PUBLIC carries
@@ -174,16 +232,34 @@ it never commits or pushes: cutting a release stays a human decision.
 
 Trigger words: *create a skill, build a skill, scaffold a skill, author a new skill, batch-create skills, make a series of skills, optimize a skill's trigger / description, skill factory.*
 
+## Evidence and runtime prerequisites
+
+Use Python 3.10 or later. Install `requirements.txt` for runtime YAML metadata validation and workflow inspection; install `requirements-dev.txt` for the offline test suite. G6 rejects invalid or unavailable YAML parsing, and library inventory reports those entries as unresolved. Scaffolder tests use temporary local kit mirrors and forbid network Git protocols. Fleet reports resolve through the shared private companion resolver; explicit output paths must also be in verified PRIVATE versioned storage. Use `--no-status` for console-only inspection.
+
+The local test suite also requires Git and a POSIX `sh` on `PATH`. On Windows, run it in Git Bash,
+or add the `bin` directory of Git for Windows to the current shell's `PATH`; installing Git with
+only its `cmd` directory on `PATH` does not expose `sh`. From a recursive clone, run:
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -c pytest.ini tests/ tools/ -q -ra
+```
+
+Keep both submodules initialized. The suite clones their checked-out revisions into temporary
+local mirrors, so missing kits fail instead of being fetched from the network.
+
+Collect one [delivery brief](skills/skill-smith/reference/intake-delivery.md), freeze the evaluator-owned policy, then use `acceptance_gate.py --snapshot` and the documented manifest command. Keep the JSON result and raw evaluator logs privately.
+
 ## Limitations
 
-- v0.1 ships the **framework**: research-first workflow + deterministic scaffolder + Spec-v1 linter + budget/dedup checks. The acceptance gate's eval-lift wiring (agent-skills-eval / scenario-eval) and the self-evolve handoff land in v0.2/v0.3 (see [ROADMAP.md](ROADMAP.md)).
-- It assumes `market-intel` and `self-evolve` are installed; without them it degrades to plain web research and a manual gate, and says so (never silently).
+- The evidence CLI validates G1/G2 completion and scores plus all required artifacts against the pinned policy and candidate. Its verdict is contract-only: even non-fixture attestations require independent approval. Candidate hashes bind bytes, executable modes and submodule revisions. G8 separates generated templates from explicitly configured A/B doctor checks. See [the evidence contract](skills/skill-smith/reference/acceptance-gate.md).
+- Preflight `market-intel`, self-evolve and the selected evaluator. Use installed llmcall policy for model work. Missing runtime capabilities remain explicit; the evidence gate does not implement subjective scenario-eval or live deployment.
 - It optimizes for *correct, focused, proven* skills, not raw volume, by design it will refuse to add a skill that overflows the library token budget.
 
 ## Languages
 
 English (`README.md`, authoritative) · 中文 (`README_CN.md`)
 
-## Roadmap · Contributing · License
+## Roadmap · License
 
-See [ROADMAP.md](ROADMAP.md) · [CONTRIBUTING.md](CONTRIBUTING.md) · [LICENSE](LICENSE) (MIT).
+See [ROADMAP.md](ROADMAP.md) · [LICENSE](LICENSE) (MIT).

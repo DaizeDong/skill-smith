@@ -28,6 +28,9 @@ import pytest
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
+sys.path.insert(0, os.path.join(_REPO, "tools"))
+from make_fixtures import ci_execution_fixture, storage_review_fixture, write_json, review10_legacy_budget_digest, review15_plugin_metadata
+
 _SCRIPTS = os.path.join(_REPO, "skills", "skill-smith", "scripts")
 FLEET = os.path.join(_SCRIPTS, "fleet_check.py")
 
@@ -45,17 +48,16 @@ def make_repo(root, name, plugin=False, workflow=False, datadir=False, origin=No
     """A minimal fake fleet repo. Only the files the driver actually looks at."""
     d = root / name
     (d / ".git").mkdir(parents=True)            # enough for local_repos(); no real git needed
-    if plugin:
-        (d / ".claude-plugin").mkdir()
-        (d / ".claude-plugin" / "plugin.json").write_text('{"name": "%s"}' % name, encoding="utf-8")
+    if plugin or datadir:
+        review15_plugin_metadata(d, name)
     if workflow:
         (d / ".github" / "workflows").mkdir(parents=True)
         (d / ".github" / "workflows" / "pii-guard.yml").write_text("name: pii-guard\n",
                                                                    encoding="utf-8")
     if datadir:
-        (d / "tools").mkdir(exist_ok=True)
-        # A stand-in with the same contract as the vendored tools/datadir.py.
-        (d / "tools" / "datadir.py").write_text(
+        (d / "guards" / "tools").mkdir(parents=True, exist_ok=True)
+        # Synthetic stand-in at the pinned resolver's current path.
+        (d / "guards" / "tools" / "datadir.py").write_text(
             "import os\n"
             "from pathlib import Path\n"
             "def resolve_data_dir(skill, create=False):\n"
@@ -75,10 +77,13 @@ def make_repo(root, name, plugin=False, workflow=False, datadir=False, origin=No
     ("https://github.com/DaizeDong/skill-smith", "daizedong/skill-smith"),
     ("git@github.com:DaizeDong/skill-smith.git", "daizedong/skill-smith"),
     # the ssh host-alias form this fleet actually uses; the old naive parser got this one wrong
-    ("git@daizedong:DaizeDong/skill-smith.git", "daizedong/skill-smith"),
+    ("git@acme-code:AcmeCorp/acme-report.git", "acmecorp/acme-report"),
     ("ssh://git@github.com/DaizeDong/skill-smith.git", "daizedong/skill-smith"),
 ])
-def test_slug_from_url(url, want):
+def test_slug_from_url(url, want, tmp_path, monkeypatch):
+    fixture = storage_review_fixture(tmp_path)
+    monkeypatch.setenv("HOME", str(fixture["home"]))
+    monkeypatch.setenv("USERPROFILE", str(fixture["home"]))
     assert fc.slug_from_url(url) == want
 
 
@@ -90,7 +95,7 @@ def test_slug_from_url_garbage():
 # --- check 2: PUBLIC implies the guards are ON THE REMOTE ---------------------------------------
 def _vis(tmp_path, mapping):
     p = tmp_path / "visibility.json"
-    p.write_text(json.dumps(mapping), encoding="utf-8")
+    write_json(p, dict(mapping, _refreshed=datetime.now(timezone.utc).isoformat()))
     return str(p)
 
 
@@ -105,6 +110,10 @@ def _fake_remote(monkeypatch, table):
             return None, "stubbed outage"
         return names, ""
     monkeypatch.setattr(fc, "remote_workflow_files", fake)
+    monkeypatch.setattr(fc.VisibilityOracle, "_ask_gh", lambda self, slug: (None, "synthetic outage"))
+    # These scenarios supply canonical guard actions for their named fake workflows. Body parsing
+    # and misleading filenames have independent cases in test_fleet_acceptance_boundaries.py.
+    monkeypatch.setattr(fc, "remote_guard_coverage", lambda slug, names, *a: (fc.guards_present(names), ""))
 
 
 BOTH = ["dash-guard.yml", "pii-guard.yml"]
@@ -263,7 +272,12 @@ def _companion(tmp_path, name, origin):
     return d
 
 
-def test_data_dir_inside_a_public_repo_fails(tmp_path, monkeypatch):
+@pytest.fixture
+def private_boundary(private_output, monkeypatch):
+    monkeypatch.setattr(fc, "_private_output_boundary", private_output["fleet"]._private_output_boundary)
+
+
+def test_data_dir_inside_a_public_repo_fails(tmp_path, monkeypatch, private_boundary):
     """The harm the check exists for: real-run output resolving somewhere the world can read."""
     root = tmp_path / "code"
     root.mkdir()
@@ -274,10 +288,10 @@ def test_data_dir_inside_a_public_repo_fails(tmp_path, monkeypatch):
     vis = _vis_map(tmp_path, {"owner/pub-repo": "PUBLIC"})
     c = fc.check_data_boundary(vis, repos={"leaky": str(root / "leaky")}, offline=True)
     assert [s for s, _n, _d in c.rows] == [fc.FAIL]
-    assert "PUBLIC repo owner/pub-repo" in c.rows[0][2]
+    assert "PUBLIC" in c.rows[0][2] and "owner/pub-repo" in c.rows[0][2]
 
 
-def test_data_dir_inside_a_private_repo_passes_and_names_it(tmp_path, monkeypatch):
+def test_data_dir_inside_a_private_repo_passes_and_names_it(tmp_path, monkeypatch, private_boundary):
     """A PASS must be legible as "examined and approved", not indistinguishable from a skip."""
     root = tmp_path / "code"
     root.mkdir()
@@ -292,7 +306,7 @@ def test_data_dir_inside_a_private_repo_passes_and_names_it(tmp_path, monkeypatc
     assert "owner/priv-repo" in detail and "PRIVATE" in detail
 
 
-def test_data_dir_in_repo_of_unknown_visibility_fails_closed(tmp_path, monkeypatch):
+def test_data_dir_in_repo_of_unknown_visibility_fails_closed(tmp_path, monkeypatch, private_boundary):
     """Same rule the PII gate uses: an unanswerable question is gated, never waved through."""
     root = tmp_path / "code"
     root.mkdir()
@@ -306,7 +320,7 @@ def test_data_dir_in_repo_of_unknown_visibility_fails_closed(tmp_path, monkeypat
     assert "failing closed" in c.rows[0][2]
 
 
-def test_data_dir_in_repo_with_no_origin_fails_closed(tmp_path, monkeypatch):
+def test_data_dir_in_repo_with_no_origin_fails_closed(tmp_path, monkeypatch, private_boundary):
     """No remote is not "safe by default": it is a repo whose destination nobody has stated."""
     root = tmp_path / "code"
     root.mkdir()
@@ -319,8 +333,8 @@ def test_data_dir_in_repo_with_no_origin_fails_closed(tmp_path, monkeypatch):
     assert [s for s, _n, _d in c.rows] == [fc.FAIL]
 
 
-def test_data_dir_outside_git_passes(tmp_path, monkeypatch):
-    """A plain directory clears the check, and the row says out loud that it is unversioned."""
+def test_data_dir_outside_git_requires_private_versioning(tmp_path, monkeypatch):
+    """Unversioned real-run storage remains a failure, with the remedy named."""
     root = tmp_path / "code"
     root.mkdir()
     make_repo(root, "clean", datadir=True)
@@ -330,7 +344,7 @@ def test_data_dir_outside_git_passes(tmp_path, monkeypatch):
 
     c = fc.check_data_boundary(_vis_map(tmp_path, {}),
                                repos={"clean": str(root / "clean")}, offline=True)
-    assert [s for s, _n, _d in c.rows] == [fc.PASS]
+    assert [s for s, _n, _d in c.rows] == [fc.FAIL]
     assert "unversioned" in c.rows[0][2]
 
 
@@ -342,9 +356,9 @@ def test_resolver_refusal_is_a_failure_not_an_unknown(tmp_path, monkeypatch):
     """
     root = tmp_path / "code"
     root.mkdir()
-    d = make_repo(root, "selfref")
-    (d / "tools").mkdir(exist_ok=True)
-    (d / "tools" / "datadir.py").write_text(
+    d = make_repo(root, "selfref", plugin=True)
+    (d / "guards" / "tools").mkdir(parents=True, exist_ok=True)
+    (d / "guards" / "tools" / "datadir.py").write_text(
         "class DataDirInsideOwnRepo(RuntimeError):\n    pass\n"
         "def resolve_data_dir(skill, create=False):\n"
         "    raise DataDirInsideOwnRepo('data dir is INSIDE its own repo')\n", encoding="utf-8")
@@ -369,7 +383,7 @@ def test_uninitialized_data_dir_skips(tmp_path, monkeypatch):
 
 
 def test_repo_without_datadir_says_so_instead_of_going_quiet(tmp_path):
-    """A repo with no resolver anywhere gets a WARN row, not silence.
+    """A repo with no pinned resolver gets an UNKNOWN row.
 
     It used to be skipped with the comment "this skill does not use datadir.py". That reading
     stopped being true when the kit became a submodule: an unchecked-out guards/ produces the
@@ -385,8 +399,8 @@ def test_repo_without_datadir_says_so_instead_of_going_quiet(tmp_path):
     rows = fc.check_data_boundary(_vis_map(tmp_path, {}),
                                   repos={"plain": str(root / "plain")}, offline=True).rows
     assert len(rows) == 1, rows
-    assert rows[0][0] == "WARN", rows[0]
-    assert "nothing here examined it" in rows[0][2], rows[0]
+    assert rows[0][0] == "UNKNOWN", rows[0]
+    assert "initialize the guards submodule" in rows[0][2], rows[0]
 
 
 def test_data_boundary_is_unknown_when_git_cannot_run(tmp_path, monkeypatch):
@@ -409,7 +423,7 @@ def test_data_boundary_is_unknown_when_git_cannot_run(tmp_path, monkeypatch):
     assert c.count(fc.PASS) == 0
 
 
-def test_visibility_map_is_never_written_back(tmp_path, monkeypatch):
+def test_visibility_map_is_never_written_back(tmp_path, monkeypatch, private_boundary):
     """Read-only contract. A checker that mutates the map to answer its own question is a checker
     whose second run tests something different from its first."""
     root = tmp_path / "code"
@@ -527,7 +541,7 @@ def test_the_stamp_is_not_mistaken_for_a_repo(tmp_path, monkeypatch):
     assert o.visibility(fc.VisibilityOracle.STAMP_KEY)[0] == "UNKNOWN"
 
 
-def test_expired_map_fails_the_data_boundary_check_closed(tmp_path, monkeypatch):
+def test_expired_map_fails_the_data_boundary_check_closed(tmp_path, monkeypatch, private_boundary):
     """End to end: a stale PRIVATE marking stops clearing a data dir, it does not keep clearing it."""
     root = tmp_path / "code"
     root.mkdir()
@@ -566,10 +580,10 @@ def test_data_boundary_nonexistent_resolved_dir_is_unknown(tmp_path, monkeypatch
     """`git -C <missing>` exits nonzero, which the probe would otherwise read as a clean pass."""
     root = tmp_path / "code"
     root.mkdir()
-    d = make_repo(root, "drifted")
-    (d / "tools").mkdir(exist_ok=True)
+    d = make_repo(root, "drifted", plugin=True)
+    (d / "guards" / "tools").mkdir(parents=True, exist_ok=True)
     ghost = tmp_path / "ghost-dir"
-    (d / "tools" / "datadir.py").write_text(
+    (d / "guards" / "tools" / "datadir.py").write_text(
         "from pathlib import Path\n"
         "def resolve_data_dir(skill, create=False):\n"
         "    return Path(r'%s')\n" % str(ghost), encoding="utf-8")
@@ -580,13 +594,21 @@ def test_data_boundary_nonexistent_resolved_dir_is_unknown(tmp_path, monkeypatch
 
 
 # --- check 5: the CI probe covers EVERY guard, and degrades without blocking ---------------------
+def _ci_api(args, default="main"):
+    """Generated execution evidence is separate from default-branch lookup."""
+    if args[-1] == ".default_branch":
+        return (0, default + "\n", "") if default else (1, "", "no such repo")
+    assert "/actions/runs/" in args[2], args
+    return 0, json.dumps(ci_execution_fixture()[1]), ""
+
+
 def _ci_with_gh(monkeypatch, rc, stdout, stderr="", targets=None, default="main"):
-    """gh that answers the default-branch probe, then `rc/stdout/stderr` for the run query."""
+    """gh with generated jobs and `rc/stdout/stderr` for the workflow run query."""
     monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
 
     def fake(args, **_k):
         if "api" in args:
-            return (0, default + "\n", "") if default else (1, "", "no such repo")
+            return _ci_api(args, default)
         return rc, stdout, stderr
 
     monkeypatch.setattr(fc, "run", fake)
@@ -594,8 +616,9 @@ def _ci_with_gh(monkeypatch, rc, stdout, stderr="", targets=None, default="main"
 
 
 def _runs(conclusion, status="completed", branch="main"):
-    return json.dumps([{"conclusion": conclusion, "status": status,
-                        "createdAt": "2026-01-01T00:00:00Z", "headBranch": branch}])
+    runs, _jobs = ci_execution_fixture(conclusion=conclusion)
+    runs[0].update(status=status, headBranch=branch)
+    return json.dumps(runs)
 
 
 def test_ci_success_passes(monkeypatch):
@@ -617,7 +640,7 @@ def test_ci_checks_every_guard_and_names_each_one(monkeypatch):
 
     def fake_run(args, **_k):
         if "api" in args:
-            return 0, "main\n", ""
+            return _ci_api(args)
         wf = args[args.index("-w") + 1]
         return 0, _runs("success" if wf == "pii-guard.yml" else "failure"), ""
 
@@ -641,7 +664,7 @@ def test_ci_asks_only_about_the_default_branch(monkeypatch):
 
     def fake_run(args, **_k):
         if "api" in args:
-            return 0, "master\n", ""
+            return _ci_api(args, "master")
         seen["args"] = args
         return 0, _runs("success", branch="master"), ""
 
@@ -657,7 +680,7 @@ def test_ci_does_not_report_a_topic_branch_run_as_the_default_branch(monkeypatch
 
     def fake_run(args, **_k):
         if "api" in args:
-            return 0, "master\n", ""
+            return _ci_api(args, "master")
         on_default = "-b" in args and args[args.index("-b") + 1] == "master"
         if on_default:
             return 0, _runs("failure", branch="master"), ""
@@ -675,7 +698,7 @@ def test_ci_no_run_on_the_default_branch_is_unknown_not_a_topic_branch_run(monke
 
     def fake_run(args, **_k):
         if "api" in args:
-            return 0, "main\n", ""
+            return _ci_api(args)
         if "-b" in args:
             return 0, "[]", ""
         return 0, _runs("success", branch="feat/topic"), ""
@@ -694,14 +717,15 @@ def test_ci_without_a_default_branch_is_unknown_never_a_fallback(monkeypatch):
 
 
 def test_ci_default_branch_is_looked_up_once_per_repo(monkeypatch):
-    """One extra gh call per REPO, not per workflow."""
+    """Default-branch lookup is once per repo; job inspection is per workflow."""
     api_calls = []
     monkeypatch.setattr(fc.shutil, "which", lambda _n: "gh")
 
     def fake_run(args, **_k):
         if "api" in args:
-            api_calls.append(args)
-            return 0, "main\n", ""
+            if args[-1] == ".default_branch":
+                api_calls.append(args)
+            return _ci_api(args)
         return 0, _runs("success"), ""
 
     monkeypatch.setattr(fc, "run", fake_run)
@@ -817,6 +841,7 @@ def test_ci_targets_includes_private_repos_check_workflow_never_walked(tmp_path,
     wf = fc.Check("workflow", "t")
     wf.all_remote_workflows = {"owner/public-repo": ["pii-guard.yml"]}
     vis = _vis_map(tmp_path, {"owner/public-repo": "PUBLIC", "owner/private-repo": "PRIVATE"})
+    monkeypatch.setattr(fc.VisibilityOracle, "_ask_gh", lambda self, slug: (None, "synthetic outage"))
     monkeypatch.setattr(fc, "remote_workflow_files",
                         lambda *_a, **_k: (["memory-health.yml"], ""))
     got = {slug: (names, visibility)
@@ -831,6 +856,7 @@ def test_ci_targets_reuses_the_public_listings_without_refetching(tmp_path, monk
     wf = fc.Check("workflow", "t")
     wf.all_remote_workflows = {"owner/public-repo": ["pii-guard.yml"]}
     vis = _vis_map(tmp_path, {"owner/public-repo": "PUBLIC"})
+    monkeypatch.setattr(fc.VisibilityOracle, "_ask_gh", lambda self, slug: (None, "synthetic outage"))
     monkeypatch.setattr(fc, "remote_workflow_files",
                         lambda *a, **k: (calls.append(a), ([], ""))[1])
     fc.ci_targets(wf, vis, {"owner/public-repo": "p"}, 5)
@@ -881,11 +907,7 @@ def test_conformance_exit_zero_with_warnings_is_not_a_pass(tmp_path, monkeypatch
 # --- the library budget check --------------------------------------------------------------------
 def budget_digest(state, **kw):
     """A minimal budget_check stdout carrying only the digest line, which is the whole interface."""
-    f = {"total": 1000, "capacity": 21565, "overflow": 0, "trim_headroom": 0, "min_lost": 0,
-         "cap_over_ours": 0, "plugins": 0, "lever": "n/a", "fp": "aaaaaaaa"}
-    f.update(kw)
-    return ("  STATUS: %s\n  BUDGET: %s %s\n"
-            % (state, state, " ".join("%s=%s" % kv for kv in f.items())))
+    return review10_legacy_budget_digest(state, **kw)
 
 
 @pytest.mark.parametrize("rc,want", [(0, "PASS"), (1, "FAIL"), (2, "UNKNOWN"), (None, "UNKNOWN")])
@@ -909,7 +931,7 @@ def test_budget_blocked_is_amber_and_names_the_remedy(monkeypatch):
     assert c.rows[0][0] == fc.WARN, c.rows
     detail = c.rows[0][2]
     assert "32256 chars over capacity" in detail, detail
-    assert ">=83 skill(s) have no description in the prompt" in detail, detail
+    assert "projected minimum removal: 83 skill(s) under the capacity policy" in detail, detail
     assert "--plugins" in detail, detail
     assert "fp=70719bc7" in detail, detail
 
@@ -930,7 +952,7 @@ def test_budget_pass_with_an_overflow_is_a_warning(monkeypatch):
     A caller that trusts an exit code over the report it just read is how the last clean sheet was
     produced over a fleet with four unreported defects.
     """
-    out = budget_digest("OK", overflow=900, min_lost=1)
+    out = budget_digest("OK", overflow=900, min_lost=0)
     monkeypatch.setattr(fc, "run", lambda *_a, **_k: (0, out, ""))
     c = fc.check_budget("skills", "code", 30)
     assert c.rows[0][0] == fc.WARN, c.rows
@@ -980,14 +1002,15 @@ def test_budget_missing_tool_is_unknown_not_pass(monkeypatch):
 
 
 # --- the output contract -------------------------------------------------------------------------
-def test_status_json_shape_and_timestamp(tmp_path):
+def test_status_json_shape_and_timestamp(private_output):
+    fc = private_output["fleet"]
     c = fc.Check("demo", "demo check")
     c.add(fc.PASS, "a")
     c.add(fc.FAIL, "b", "because")
     c.add(fc.WARN, "c", "not clean, not blocking")
     c.add(fc.SKIP, "d", "not looked at")
     tot = {"pass": 1, "fail": 1, "warn": 1, "skip": 1, "unknown": 0}
-    out = tmp_path / "nested" / "status.json"
+    out = private_output["data"] / "nested" / "status.json"
     fc.write_status(str(out), [c], tot, "2026-01-01T00:00:00Z", 1.5, 1)
 
     got = json.loads(out.read_text(encoding="utf-8"))
@@ -1002,7 +1025,7 @@ def test_status_json_shape_and_timestamp(tmp_path):
     assert got["verdict"] == "RED"
     assert "coverage 75% (3 of 4 rows)" in got["digest"], got["digest"]
     assert got["coverage"] == {"evaluated": 3, "not_evaluated": 1}
-    assert not list(tmp_path.glob("**/*.tmp"))       # written atomically, no debris
+    assert not list(private_output["data"].glob("**/*.tmp"))  # written atomically, no debris
 
 
 def test_digest_never_calls_a_skipped_run_green():
@@ -1024,12 +1047,17 @@ def test_no_status_flag_writes_nothing(tmp_path, capsys):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_exit_code_is_driven_by_fail_not_by_unknown(tmp_path, capsys, monkeypatch):
+def test_exit_code_is_driven_by_fail_not_by_unknown(private_output, capsys, monkeypatch):
     """UNKNOWN must never flip the exit code; that is what keeps the CI probe non-blocking."""
+    fc = private_output["fleet"]
     monkeypatch.setattr(fc.shutil, "which", lambda _n: None)   # forces the ci check to UNKNOWN
-    status = tmp_path / "s.json"
-    rc = fc.main(["--skills-dir", str(tmp_path / "none"), "--code-root", str(tmp_path / "none"),
-                  "--visibility", str(tmp_path / "none.json"), "--status-json", str(status)])
+    budget = fc.Check("budget", "description budget")
+    budget.add(fc.UNKNOWN, "current measurement", "synthetic unavailable observation")
+    monkeypatch.setattr(fc, "check_budget", lambda *args: budget)
+    status = private_output["data"] / "s.json"
+    absent = private_output["home"] / "none"
+    rc = fc.main(["--skills-dir", str(absent), "--code-root", str(absent),
+                  "--visibility", str(private_output["visibility"]), "--status-json", str(status)])
     capsys.readouterr()
     assert rc == 0
     assert json.loads(status.read_text(encoding="utf-8"))["totals"]["unknown"] >= 1
@@ -1047,8 +1075,8 @@ def test_report_rolls_up_repeated_skips(capsys):
 
 
 def test_there_is_no_fix_flag():
-    """Not a style preference. Three of the dirs this inspects have no companion repo on disk and
-    two hold live secrets and uncommitted state; auto-converging them would destroy data."""
+    """Automatic convergence could overwrite secrets or uncommitted configuration.
+    This read-only checker must report the condition without exposing a repair flag."""
     src = open(FLEET, encoding="utf-8").read()
     assert '"--fix"' not in src and "'--fix'" not in src
     p = subprocess.run([sys.executable, FLEET, "--fix"], capture_output=True, text=True, timeout=60)
@@ -1077,12 +1105,13 @@ def test_ci_each_row_gets_its_own_run_result_not_a_neighbours(monkeypatch):
 
     def fake(args, **_k):
         if "api" in args:
-            return 0, "main\n", ""
+            return _ci_api(args)
         slug = args[args.index("-R") + 1]
         wf = args[args.index("-w") + 1]
         concl = "failure" if (slug, wf) == red else "success"
-        return 0, json.dumps([{"conclusion": concl, "status": "completed",
-                               "createdAt": "%s|%s" % (slug, wf), "headBranch": "main"}]), ""
+        runs, _jobs = ci_execution_fixture(conclusion=concl)
+        runs[0]["createdAt"] = "%s|%s" % (slug, wf)
+        return 0, json.dumps(runs), ""
 
     monkeypatch.setattr(fc, "run", fake)
     targets = [(s, ["pii-guard.yml", "dash-guard.yml", "test.yml"], "", "PUBLIC")
@@ -1110,7 +1139,7 @@ def test_ci_rows_are_in_a_deterministic_order_regardless_of_completion_order(mon
 
     def fake(args, **_k):
         if "api" in args:
-            return 0, "main\n", ""
+            return _ci_api(args)
         time.sleep(delays[args[args.index("-R") + 1]])   # finish in the reverse of sorted order
         return 0, _runs("success"), ""
 

@@ -1,55 +1,92 @@
-# Step 5, The Acceptance Gate (P2: generation != usable)
+# Evidence contracts and independent acceptance
 
-This is skill-smith's core value and the answer to "tested-real". A skill is **accepted only if it
-passes every gate below**. Any failure is an **explicit reject with the reason surfaced**, never a
-silent ship (mirrors self-evolve's no-silent-degradation invariant). This is anti-self-deception: the
-skill must *prove* it works, not *look* like it does.
+The gate reads results produced by existing evaluators. It never launches a provider, sends a
+message or substitutes a fixture for live measurement. It validates the supplied contract and always
+leaves `accepted: false`; independent reviewers approve actual evaluator results. General model and agent work uses installed
+`llmcall` and inherits its current policy.
 
-| # | Gate | Rule (reject if not met) | How to check | Counters which risk |
-|---|---|---|---|---|
-| G1 | **Eval lift** | with-skill measurably beats a no-skill baseline on the brief's proof tasks | `agent-skills-eval` (with/without, judge-graded) or scenario-eval | 73% silently broken / faith-based |
-| G2 | **Trigger rate** | held-out trigger rate >= threshold (default 0.9) | `run_loop.py` held-out score (see `triggering.md`) | ~50% non-activation |
-| G3 | **Library prompt budget** | every description of OURS <= 180 chars, and the library inside the OBSERVED capacity. Measured 2026-08-01 by diffing a live skill listing against disk: 21,565 chars of description survived out of 53,821 declared, so 84 of 163 file-backed skills carried no description at all. The written rule says ~15k; believe the measurement. The verdict follows the LEVER: trimming clears it -> FAIL and the cuts are named; nothing editable clears it -> BLOCKED, amber, stated in full with a ranked and priced list of plugin removals (`--plugins`). Truncation is NOT a contiguous tail in load order, so without `--listing FILE` the tool reports a floor on the count and refuses to name victims. | `python scripts/budget_check.py` | silent truncation -> invisible skills; and an alarm nobody can clear -> an alarm nobody reads |
-| G4 | **Dedup** | description overlap with existing skills below threshold | `python scripts/dedup_check.py` | wrong-skill selection / dilution |
-| G5 | **Security** | generated scripts have no injection vectors / hardcoded secrets / destructive ops; audited before any run | manual + scan; never blind-run auto-generated code | prompt-injection / malware surface |
-| G6 | **Spec conformance (local)** | local files pass Skill Repo Spec v1, including the three SKILL.md checks: size (warn 12,000 chars, fail 16,000), every relative path resolves, instruction text states rules rather than version deltas | `python scripts/check_conformance.py <repo>` | repo inconsistency; an always-loaded file nobody measured; a shard pointer the agent cannot open |
-| G6b | **Remote conformance (GitHub)** | after publish: GitHub repo has base-9 + >=1 domain topic, non-empty description (homepage advisory) | `python scripts/check_remote_conformance.py <repo>` (deploy post-verify; SKIPs explicitly if no gh/offline) | topics=null / metadata never set by `git push` |
-| G7 | **Focus** | one job, <=3 modules; not a multi-purpose blob | review against the Step-0 brief | exhaustive < focused (SkillsBench) |
-| G8 | **Config standard** | IF config-bearing: passes the seven-element standard E1 to E7 (schema doc · env-var discovery mount · deterministic init · verify doctor · two configs hot-swappable · secrets gitignored Mode B · README Config section) | `python scripts/check_config_conformance.py <repo>` (auto-skips if not config-bearing) | "works on my machine" config / unconfigurable-by-others |
+| Gate | Required evidence |
+|---|---|
+| G1 | At least three distinct paired proof tasks; finite scores in [0,1]; positive mean lift meeting the frozen minimum |
+| G2 | Frozen held-out query IDs/content hashes and labels; no training overlap; both positive activation and negative rejection rates meet a threshold of at least 0.9 |
+| G3 | Current whole-library prompt budget result, not historical capacity |
+| G4 | Current overlap/dedup result across user skills and active plugins, with no unresolved inventory |
+| G5 | Independent security review and relevant scans |
+| G6 | Local Spec-v1 conformance on this candidate |
+| G7 | Review of one job and at most three modules against the brief |
+| G8 | Configuration standard; only an independently documented not-applicable decision can exclude it |
+| G6b | Remote conformance after publication; required by the published stage |
 
-## How to run the gate
+## Prepare once
+
+G3 and G4 share `--skills-dir` and `--installed-plugins` inputs. Both read the active install paths
+from the manifest and retain missing, unreadable or conflicting entries as `UNKNOWN`. G3 prints
+`BUDGET: ... unresolved=N`; G4 prints `DEDUP: ... unresolved=N`. Known overflow and overlap findings
+keep their failure status even when coverage is incomplete. An empty plugin set must be an explicit
+manifest with `plugins: {}`, not a missing file. These measurements do not authorize trimming or
+uninstalling anything.
+
+The evaluator owns a private policy JSON with `schema: 1`, a `brief` containing task, inputs,
+deliverables, platforms and at least three distinct `proof_tasks` IDs, plus `proof_task_sha256` mapping every task ID to its frozen input hash. It also contains `min_lift`
+(default 0, but measured lift must be positive), `trigger_threshold` (default/minimum 0.9), `queries`
+(each with id, query_sha256 and boolean expected), and `training_query_sha256`. Each held-out query
+appears once in the canonical result. An evaluator with repeated trials must preserve its raw
+trials and declare its aggregation before freezing the policy.
+
+The only supported exclusion is `not_applicable: ["G8"]`, together with a nonempty
+`config_not_applicable_reason`. An exclusion is an evaluator-owned applicability decision; the
+implementation agent cannot lower thresholds or introduce exclusions to clear failures.
+
+Freeze the policy hash before implementation and retain it independently of the manifest. Store
+policy, raw observations and results in the verified PRIVATE versioned companion. Paths in a
+shared-account filesystem are not physically unreadable; hash integrity is not isolation.
+
+## Run against the exact candidate
+
+From the skill-smith repository:
 
 ```bash
-python scripts/check_conformance.py ~/CodesClaude/<name>         # G6  (local files)
-python scripts/check_remote_conformance.py ~/CodesClaude/<name>  # G6b (GitHub remote, post-publish)
-python scripts/check_config_conformance.py ~/CodesClaude/<name>  # G8 (config-bearing; auto-skips otherwise)
-python scripts/budget_check.py                                   # G3 (whole library)
-python scripts/dedup_check.py                                    # G4
-# G1/G2 are not wired yet (agent-skills-eval / run_loop); run them manually and record the numbers.
+python skills/skill-smith/scripts/acceptance_gate.py --repo TARGET_REPO --snapshot
+python skills/skill-smith/scripts/acceptance_gate.py --repo TARGET_REPO --manifest PRIVATE_MANIFEST --policy PRIVATE_POLICY --policy-sha256 FROZEN_SHA256
 ```
 
-`check_conformance.py` prints three statuses. `FAIL` means an edit fixes it and the exit code is 1.
-`WARN` means the finding is real and no edit available today makes it clean, so it is printed and
-counted on the summary line and never blocks. `PASS` rows carry their measurement in the row label
-(`SKILL.md size (6376 chars)`, `shard pointers resolve (15)`) because a check that verified fifteen
-pointers and one that found none would otherwise print the same line.
+Add `--stage published` after publication to require G6b. Version-2 snapshot hashes cover tracked,
+deleted and untracked non-ignored file bytes and kinds, index modes, executable bits where the OS
+exposes them, submodule gitlinks, checked-out revisions and their inspected working trees. They describe the current working tree,
+not a claim about HEAD or installed content. Keep base HEAD and installed source identity in the
+handoff too.
 
-> **G6 and G6b are two layers, neither substitutes for the other.** G6 lints the committed files;
-> G6b queries the live GitHub repo and proves the remote topics/description were actually set (a plain
-> `git push` sets none). The topics=null incident happened because only G6 existed. After publishing,
-> set remote metadata with `python scripts/set_repo_metadata.py <repo>` and then G6b must PASS; if
-> `gh` is unavailable/offline, G6b SKIPs **explicitly** (stated, not silent), re-run before the
-> deploy is considered done.
+The manifest is a JSON object with `schema: 1`, `candidate_sha256`, `policy_sha256`, and `gates`.
+Each gate maps to an artifact reference with a relative `path` and `sha256`. Artifact paths must
+remain inside the manifest directory. The independently supplied policy pin must match the file;
+the manifest cannot choose its own policy hash.
 
-## Verdict semantics
+Every artifact, including G1/G2, carries its `gate` ID, `status: "passed"`, integer `exit_code: 0`,
+schema, candidate/policy hashes, `measurement: "measured"`, and provenance:
+`evaluator`, `request_id`, `backend`, and boolean `fixture`. The actual evaluator/backend identity
+must be reported; route names alone do not prove heterogeneous judges.
 
-- **accepted**, all gates pass. Proceed to self-evolve handoff (Step 6) for ongoing iteration.
-- **reject (fixable)**, name the failing gate(s); loop back to the relevant step (e.g. G2 -> Step 4,
-  G3 -> prune/merge the library, G7 -> split into a batch). Re-run the gate.
-- **reject (drop)**, if G1 shows no lift after iteration, the skill is negative-value; do not ship it.
-  An empty/negative result is a legitimate, honest outcome ("a skill that does not help is not a
-  skill").
+G1 adds `pairs`, with one record per frozen task ID, matching `input_sha256`, and `without_skill`/`with_skill` scores. G2 adds
+`held_out: true` and `trials`, each with the frozen id/query_sha256/expected plus boolean `triggered`.
+The gate recomputes lift and both trigger rates rather than trusting a supplied aggregate score.
+All records attest to external checks; retain their raw logs for independent review. Hashing a claimed
+pass does not authenticate that the check actually ran.
 
-The gate is **library-aware**: G3/G4 evaluate the candidate *in the context of everything already
-installed*, which is why a skill good in isolation can still be rejected (it would push the set over
-budget). That is the point, see `batch.md`.
+The public `tools/make_fixtures.py` generator creates test bundles with `fixture: true`. They may
+produce `contract_valid: true`, but always `accepted: false`, `verdict: "synthetic_only"`, exit 1.
+They are examples of format and gate behavior, never evidence of real skill effectiveness.
+
+## Result and resume
+
+The command prints JSON. Valid synthetic evidence yields `synthetic_only`; valid non-fixture
+attestations yield `independent_review_required`. Both have `contract_valid: true`, `accepted: false`
+and exit 1. Relabeling fixture provenance cannot grant acceptance. Independent reviewers must inspect
+the actual evaluator results and approve the frozen candidate outside this contract checker.
+Missing, malformed, stale, extrapolated, skipped, failed or unavailable results also exit nonzero, with
+per-gate reasons and `resume_gates`. Retain the JSON in the private evidence bundle.
+
+Resume failed/missing gates with existing evaluators. Do not resend successful external actions.
+A changed candidate or policy invalidates evidence tied to the old hash. Two independent clean
+review rounds must bind the same candidate, policy and raw results; any change resets the streak.
+The command checks evidence integrity and numeric contracts, not real-world truth or universal
+absence of defects. Installation, external readiness and publication need their own actual proof.

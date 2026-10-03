@@ -1,17 +1,22 @@
 
 ## 配置
 
-`__NAME__` 是**带 config 的 skill**, 它从一个**独立、私有**的伴随 config 仓读取每用户状态(密钥、已装工具
-注册表)。完整规范见 [CONFIG.md](CONFIG.md)。
+`__NAME__` 需要配置。它从一个**独立、私有**的配置伴生仓读取用户状态（密钥、已装工具注册表）。
+完整规范见 [CONFIG.md](CONFIG.md)。
 
-- **挂载(发现顺序):** `$__ENVVAR__` → `$__ENVVAR___DIR` → `~/__DEFAULTDIR__/` →
-  `~/.config/__NAME__-config/`。命中第一个即用;都没有则无 config 运行。
-- **首次配置:**
+- **配置发现顺序：**命令行路径 → `$__ENVVAR__` → `$__ENVVAR___DIR` → 当前 skill 仓固定版本的 guard
+  解析器（依次检查 `$__DATAENV__`、有归属证明的同级 `__NAME__-config/`、主目录下的默认 config/data 路径）。
+  显式指定的 config 路径不会回退。找不到配置时 doctor 退出 1；缺少 guards 或无法证明配置归属时会报错并给出说明。
+- **首次配置：**
   ```bash
-  python scripts/init_config.py      # 生成符合规范的 config 骨架(确定性)
-  export __ENVVAR__=~/__DEFAULTDIR__  # 或给 init 传 --out <dir>
-  python scripts/verify_config.py     # doctor:逐项 PASS/FAIL,明确报缺什么
+  git submodule update --init --recursive guards
+  python scripts/init_config.py      # 复用已发现的配置；都不存在时创建 ~/__DEFAULTDIR__/
+  python scripts/verify_config.py     # 检查通用结构，打印选中的配置路径
   ```
-- **切换 config(即插即用):** 把环境变量指向另一个 config 目录即可, config 自包含,无需任何别的改动:
+  自定义路径时，给 init 传 `--out <dir>`，再把 `$__ENVVAR__` 设为该路径。真实状态应保存在独立、受版本管理且已确认
+  为 PRIVATE 的伴生仓。空配置通过结构检查后，还需要填写工具设置，并运行工具自己的就绪检查和功能验证。
+- **切换 config：**把环境变量指向另一个 config 目录即可，config 自包含，无需修改其他路径：
   `export __ENVVAR__=~/configs/work` ↔ `~/configs/personal`。
-- **密钥:** Mode B, `secrets/*` 已 gitignore,永不入库;请用库外备份。
+- **密钥：**生成的忽略规则用于防止误暂存。可以单独备份，也可以明确选定需要备份的凭据，
+  将其纳入已核验为 PRIVATE 的伴生仓，并在该仓记录备份和恢复方式。真实凭据绝不能进入公开工具仓。
+  详见 [CONFIG.md](CONFIG.md)。
