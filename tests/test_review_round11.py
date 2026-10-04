@@ -170,10 +170,16 @@ def test_dedup_supported_thresholds_keep_identical_overlap(monkeypatch, threshol
 def test_g6_requires_readable_metadata_and_instruction_body(tmp_path, monkeypatch, case, root_layout):
     target = module("check_conformance")
     skill = review11_skill(tmp_path, case, root_layout)
+    # This single-fault metadata test delegates documentation to its separately tested boundary.
+    from make_fixtures import documentation_checker_fixture, documentation_contract_report
+    documentation_checker_fixture(tmp_path, {})
     calls = []
     def scanner(args, **kwargs):
-        assert Path(args[1]).name in ("pii_guard.py", "data_boundary.py", "dash_guard.py"), args
+        assert Path(args[1]).name in ("pii_guard.py", "data_boundary.py", "dash_guard.py", "doc_contract.py"), args
         calls.append(args)
+        if Path(args[1]).name == "doc_contract.py":
+            import json
+            return SimpleNamespace(returncode=0, stderr="", stdout=json.dumps(documentation_contract_report()))
         return SimpleNamespace(returncode=0, stdout="synthetic scanner clean", stderr="")
     monkeypatch.setattr(target.subprocess, "run", scanner)
     if case == "unreadable":
@@ -181,7 +187,7 @@ def test_g6_requires_readable_metadata_and_instruction_body(tmp_path, monkeypatc
         monkeypatch.setattr(target, "read", lambda path: None if Path(path) == skill else real_read(path))
     with contextlib.redirect_stdout(io.StringIO()):
         rc = target.main(str(tmp_path))
-    assert len(calls) == 3
+    assert len(calls) == 4
     valid = case in ("valid", "quoted", "block")
     assert rc == (0 if valid else 1), target.results
     content_rows = [(name, ok, detail) for name, ok, detail in target.results

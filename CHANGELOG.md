@@ -3,6 +3,24 @@
 All notable changes to this project are documented here (Keep a Changelog style).
 
 ## [Unreleased]
+### Added
+- Documentation completion contract in `reference/documentation.md`: assign all applicable docs,
+  record impact per affected behavior and independently review bilingual meaning. Completed
+  implementation/docs/version metadata freeze before evidence; policy and holdout freeze before implementation.
+### Changed
+- Local conformance delegates document structure to the pinned Style checker, failing visibly on
+  missing/malformed output. Draft checks cannot establish acceptance.
+- Release preparation requires substantive Unreleased content or supplied notes, advancing
+  canonical versions and valid non-regressing dates. Historical entries stay intact; ROADMAP links
+  to release notes instead of creating placeholder release prose.
+- Entry documents now agree in English and Chinese on contract-only evidence, private transport
+  receipts and scaffold completion duties.
+- Evidence validation binds G1 paired scores and G2 held-out positive/negative trials to evaluator
+  policy and candidate snapshots; valid attestations still require independent review.
+- Report, trimming and backup writers verify physical/effective fetch and push destinations,
+  reject unresolved routing and recheck PRIVATE versioned DATA before writing.
+- Library checks share active user/plugin inventory and retain missing measurements; installed
+  aliases and remote workflow reports retain explicit observed scope.
 ### Changed
 - **`fleet_check.py` took over two minutes, and a report that takes over two minutes gets skipped.**
   Measured on one machine in one network window: **129,978 ms**, reproduced at **127,940 ms** and

@@ -24,5 +24,8 @@ from** (informed by the Step-0 brief):
 
 ## Output
 
-A first-draft SKILL.md body (whatever the source), re-homed into the conformant repo, ready for
-trigger optimization (Step 4) and the acceptance gate (Step 5).
+A draft repository with a generation owner assigned to finish every applicable document under
+[documentation.md](documentation.md), including both READMEs, philosophy, roadmap, changelog,
+SKILL, configuration and relevant references. The owner resolves placeholders and checks the
+current meaning across languages before the final candidate snapshot. Generator output alone
+does not satisfy acceptance; triggering and evaluator evidence still need the frozen policy.

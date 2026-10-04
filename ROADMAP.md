@@ -2,6 +2,20 @@
 
 Current: **v0.1.3**
 
+The plugin manifest defines the release version. Later work is recorded in CHANGELOG Unreleased;
+it does not imply another release or production readiness.
+
+## Current capabilities beyond the release baseline
+
+- Evidence CLI validates G1 paired scores, G2 held-out trials and required policy/candidate-bound
+  artifacts. It reports contract-only verdicts and never grants acceptance.
+- Completed implementation/docs/version metadata freeze before evidence and independent review;
+  evaluator policy and holdout freeze before implementation. Snapshots include document state.
+- Library, private transport and remote workflow checks retain missing/unobserved states.
+- Scaffold assigns all docs. Conformance delegates document structure to the pinned Style checker;
+  release preparation refuses placeholders, invalid dates and non-advancing versions.
+- Installed provider readiness, semantic accuracy and actual usefulness need their own evidence.
+
 ## v0.1.3 (current), the dash gate is scaffolded into every new skill
 
 - `scaffold_skill.py` initializes the pinned `guards/` security and `style/` presentation submodules.
@@ -45,10 +59,11 @@ Current: **v0.1.3**
 
 ## Planned
 
-### v0.2, the acceptance gate goes live
-- Wire eval-lift (with-skill vs baseline) via `agent-skills-eval` / scenario-eval.
-- Held-out trigger-rate optimization via the official `skill-creator` `run_loop.py` (60/40 split).
-- Security audit step for generated scripts. Gate becomes blocking end-to-end.
+### v0.2, evaluator integration
+- Contract validation is implemented; running external measurements remains an integration duty.
+  Select only installed providers and preserve unavailable status.
+- Keep final held-out triggering evaluation separate from selection/optimization.
+- Expand measured provider readiness without confusing validation with independent acceptance.
 
 ### v0.3, self-evolve handoff
 - `iterate-handoff` automates pointing `self-evolve` at an accepted skill (choose signal provider:

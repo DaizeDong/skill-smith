@@ -746,7 +746,7 @@ def main():
         emit_config_bearing(root, name, a.force, write)
 
     scripts = os.path.dirname(os.path.abspath(__file__))
-    print("\nDone. Next:")
+    print("\nDraft scaffold created; documentation and acceptance are unfinished. Next:")
     print("  0) PII gate: git init, then `git config core.hooksPath .githooks` (local config cannot")
     print("     be committed, so every clone must run it; CI does not depend on it).")
     print("     Commit identity MUST be the GitHub noreply address -- a real mailbox on the author")
@@ -757,7 +757,14 @@ def main():
     print("  1) Store the real Step 0 brief in verified PRIVATE versioned DATA/research/.")
     print("     docs/design-rationale.md is public TOOL documentation; use only reusable design and synthetic examples.")
     print("  2) python %s %s" % (shlex.quote(os.path.join(scripts, "check_conformance.py")), shlex.quote(root)))
-    print("  3) Draft SKILL.md body + optimize the description (Step 4), then run the acceptance gate.")
+    print("  3) The generation owner completes README.md + README_CN.md with matching philosophy,")
+    print("     prerequisites, usage, outputs and limitations; finish PHILOSOPHY.md, ROADMAP.md,")
+    print("     CHANGELOG.md, SKILL.md, public design rationale and applicable CONFIG/reference docs.")
+    print("     Follow reference/documentation.md; required current prose cannot remain a placeholder.")
+    print("  4) Freeze evaluator policy + holdout BEFORE implementation; finish implementation, docs")
+    print("     and version metadata BEFORE the candidate snapshot, evidence and independent review.")
+    print("  5) Optimize the description on the selection split; run accepted-stage conformance and")
+    print("     hand off docs_impact for each affected behavior with the frozen candidate evidence.")
     return 0
 
 

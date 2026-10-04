@@ -59,13 +59,17 @@ contracts and cannot award acceptance. Follow
    fail. Hooks use `.githooks`, never the potentially empty `guards/hooks` directory directly.
 9. Use `scripts/bump_version.py` to align version surfaces. Verify the installed alias, resources and
    published tree separately from the current worktree.
+10. Complete applicable documents under `reference/documentation.md`. Record `docs_impact` per
+    affected behavior; freeze final implementation/docs/version bytes before evidence and independent
+    review. Draft scaffolds and structural checks alone cannot establish document completion.
 
 ## Deliver and resume
 
 Return the candidate diff, brief, frozen policy hash, manifest, per-gate results, unresolved gaps,
 installation state and external-readiness matrix. A plan is not a measured result. Resume only the
 failed or missing gates while candidate and policy are unchanged; changes require fresh evidence.
-See `reference/intake-delivery.md` for the handoff contract.
+Include the reviewed document impact record. See `reference/intake-delivery.md` for the handoff
+contract and `reference/documentation.md` for its documentation duties.
 
 ## Fleet checks
 

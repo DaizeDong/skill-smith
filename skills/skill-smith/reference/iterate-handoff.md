@@ -2,6 +2,11 @@
 
 After acceptance, supply self-evolve with the brief, candidate snapshot, frozen policy, evaluator
 artifacts and remaining capability limits. Reuse its existing loop; do not build a second engine.
+Include the per-behavior `docs_impact` record from
+[documentation.md](documentation.md), with updated documents or a reviewed non-applicability reason
+and supporting evidence. Freeze final implementation, docs and version metadata before collecting
+candidate-bound evaluator artifacts and independent review; retain the earlier pre-implementation
+policy/holdout freeze. The next iteration owns the same document impact assessment.
 
 | Task | Evidence provider |
 |---|---|

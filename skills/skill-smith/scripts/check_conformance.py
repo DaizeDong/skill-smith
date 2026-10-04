@@ -421,7 +421,42 @@ def check_retrofit_markers(root, contents=None):
               True)
 
 
-def main(root):
+def check_documentation(root, stage="accepted"):
+    """Delegate structural documentation rules to the pinned presentation kit."""
+    checker = os.path.join(root, "style", "tools", "doc_contract.py")
+    if not os.path.isfile(checker):
+        check("documentation: checker available", False,
+              "style/tools/doc_contract.py missing; initialize the reviewed Style revision")
+        return
+    try:
+        result = subprocess.run([sys.executable, checker, "--root", root, "--profile", "skill",
+                                 "--stage", stage, "--json"], cwd=root, capture_output=True,
+                                text=True, encoding="utf-8", errors="replace", timeout=60)
+        report = json.loads(result.stdout)
+        rows = report["checks"]
+        if (report.get("schema_version") != 1 or report.get("profile") != "skill"
+                or report.get("stage") != stage or type(report.get("ok")) is not bool
+                or not isinstance(rows, list) or not rows):
+            raise ValueError("unsupported or incomplete checker report")
+        for row in rows:
+            if (not isinstance(row, dict) or not isinstance(row.get("name"), str)
+                    or not row["name"] or row.get("status") not in (PASS, FAIL, "NOT_APPLICABLE")
+                    or not isinstance(row.get("detail", ""), str)):
+                raise ValueError("invalid documentation check row")
+        passed = all(row["status"] != FAIL for row in rows)
+        if report["ok"] != passed or result.returncode != (0 if passed else 1):
+            raise ValueError("checker exit status disagrees with report")
+    except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError) as exc:
+        check("documentation: check completed", False, str(exc))
+        return
+    for row in rows:
+        detail = row.get("detail", "")
+        if row["status"] == "NOT_APPLICABLE":
+            detail = "NOT_APPLICABLE: " + detail
+        check("documentation: " + row["name"], row["status"] != FAIL, detail)
+
+
+def main(root, stage="accepted"):
     root = os.path.abspath(os.path.expanduser(root))
     name = os.path.basename(root)
 
@@ -558,13 +593,8 @@ def main(root):
     check("README badge: Languages (blue)",
           bool(re.search(r"Languages-EN%20%2F%20CN(?:%20%2F%20[A-Z]{2})*-blue", readme)))
     check("README badge: Roadmap (purple)", "Roadmap-v" in readme and "-purple" in readme)
-    i_phil = readme.find("## ⭐ Read this first")
-    i_inst = readme.find("## Install")
-    check("README philosophy-first (before Install)",
-          i_phil != -1 and (i_inst == -1 or i_phil < i_inst),
-          "phil@%d install@%d" % (i_phil, i_inst))
     check("README bilingual switch line", "[English](README.md)" in readme and "README_CN.md" in readme)
-    check("README_CN philosophy-first", "## ⭐" in readme_cn)
+    check_documentation(root, stage)
 
     # report
     print("Skill Repo Spec v1 conformance: %s" % root)
@@ -619,4 +649,7 @@ def main(root):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Check a skill repository against Skill Repo Spec v1.")
     parser.add_argument("repo_dir", help="skill repository directory")
-    sys.exit(main(parser.parse_args().repo_dir))
+    parser.add_argument("--stage", choices=("draft", "accepted", "release"), default="accepted",
+                        help="trusted invocation stage; draft checks never establish acceptance")
+    args = parser.parse_args()
+    sys.exit(main(args.repo_dir, args.stage))
