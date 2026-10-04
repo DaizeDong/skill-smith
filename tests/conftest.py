@@ -1,9 +1,25 @@
 """Keep scaffolder integration tests on the checked-out local kit revisions."""
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture
+def native_sh():
+    """Run real hook tests with the shell installed beside Git on Windows."""
+    shell = shutil.which("sh")
+    if shell:
+        return shell
+    git = shutil.which("git")
+    if os.name == "nt" and git:
+        git_dir = Path(git).parent
+        for candidate in (git_dir / "sh.exe", git_dir.parent / "bin/sh.exe"):
+            if candidate.is_file():
+                return str(candidate)
+    pytest.fail("Native hook tests require sh; install Git with its shell or add sh to PATH")
 
 
 @pytest.fixture(scope="session")

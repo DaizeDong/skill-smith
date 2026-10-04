@@ -85,7 +85,7 @@ init/verify scripts are generic (they auto-detect the skill from `plugin.json`) 
 After scaffolding, immediately verify:
 
 ```bash
-python scripts/check_conformance.py ~/CodesClaude/<name>          # G6 Spec v1
+python scripts/check_conformance.py ~/CodesClaude/<name> --stage draft  # unfinished scaffold only
 python scripts/check_config_conformance.py ~/CodesClaude/<name>   # G8 (auto-skips if not config-bearing)
 ```
 

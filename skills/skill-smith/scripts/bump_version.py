@@ -53,9 +53,12 @@ def validate_release_date(value):
     if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
         raise ValueError("release date must be YYYY-MM-DD")
     try:
-        return datetime.date.fromisoformat(value)
+        date = datetime.date.fromisoformat(value)
     except ValueError as exc:
         raise ValueError("release date is not a valid calendar date: %s" % value) from exc
+    if date > datetime.date.today():
+        raise ValueError("release date cannot be in the future")
+    return date
 
 
 def release_body(text, heading):
@@ -67,14 +70,20 @@ def substantive_notes(text):
     """Reject unfinished target release prose; historical/future sections are not inspected."""
     prose = re.sub(r"<!--.*?-->", "", text or "", flags=re.S)
     prose = re.sub(r"```.*?```", "", prose, flags=re.S)
-    lines = [line.strip() for line in prose.splitlines() if line.strip() and not line.lstrip().startswith("#")]
-    if any(unfinished_note(line) for line in lines):
+    if any(unfinished_note(line) for line in prose.splitlines()):
         return False
+    lines = [line.strip() for line in prose.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     return any(len(re.sub(r"[^\w]", "", line)) >= 12 for line in lines)
 
 
 def unfinished_note(line):
-    return bool(re.search(r"^\s*(?:[-*+]\s+)?(?:TODO|TBD|FIXME|placeholder)\b|<\s*(?:fill|insert)[^>]*>", line, re.I))
+    return bool(re.search(
+        r"^\s*(?:[-*+]\s+|#+\s+)?(?:TODO|TBD|FIXME|placeholder)\b|"
+        r"<\s*(?:fill|insert)[^>]*>|\{\{[^}\n]+\}\}|"
+        r"\b(?:YOUR_|REPLACE_ME|INSERT_HERE)\w*|"
+        r"待填写|待填寫|待补充|待補充|占位正文|"
+        r"placeholder\s+(?:text|body)|fill\s+(?:this|in|out)|"
+        r"write\s+(?:the|your)\s+(?:description|philosophy)", line, re.I))
 
 
 def release_notes(text, notes):
@@ -90,7 +99,10 @@ def release_notes(text, notes):
         remaining = re.sub(r"<!--.*?-->", "", body, flags=re.S)
         remaining = "\n".join(line for line in remaining.splitlines()
                               if not unfinished_note(line))
-        if substantive_notes(remaining):
+        # Even a short completed change belongs to the author. A length heuristic
+        # must never authorize dropping it while replacing unfinished notes.
+        if any(re.search(r"\w", line) for line in remaining.splitlines()
+               if not line.lstrip().startswith("#")):
             raise ValueError("finish the partially completed Unreleased body; --notes cannot discard existing changes")
         return "### Changed\n- %s\n" % notes.strip()
     raise ValueError("release requires substantive Unreleased content or --notes; no placeholder release is written")

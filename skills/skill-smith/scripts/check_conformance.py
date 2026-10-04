@@ -445,7 +445,7 @@ def check_documentation(root, stage="accepted"):
             raise ValueError("unsupported or incomplete checker report")
         for row in rows:
             if (not isinstance(row, dict) or not isinstance(row.get("name"), str)
-                    or not row["name"] or row.get("status") not in (PASS, FAIL, "NOT_APPLICABLE")
+                    or not row["name"] or row.get("status") not in (PASS, FAIL)
                     or not isinstance(row.get("detail", ""), str)):
                 raise ValueError("invalid documentation check row")
         names = [row["name"] for row in rows]
@@ -472,8 +472,6 @@ def check_documentation(root, stage="accepted"):
         return
     for row in rows:
         detail = row.get("detail", "")
-        if row["status"] == "NOT_APPLICABLE":
-            detail = "NOT_APPLICABLE: " + detail
         check("documentation: " + row["name"], row["status"] != FAIL, detail)
     check("documentation: unverified boundaries", WARN, "; ".join(unverified))
 

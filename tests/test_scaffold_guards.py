@@ -30,6 +30,15 @@ def test_fresh_scaffold_tracks_fail_closed_forwarders(tmp_path):
         assert 'exit 1' in text and f'guards/hooks/{hook}' in text
     assert './style/ci/dash-guard' in (tmp_path / '.github/workflows/dash-guard.yml').read_text()
     assert './style/ci/load-budget' in (tmp_path / '.github/workflows/load-budget.yml').read_text()
+    # Local draft validation must not weaken the published acceptance workflow.
+    import yaml
+    workflow = yaml.safe_load((tmp_path / '.github/workflows/doc-contract.yml').read_text())
+    assert set(workflow.get('on', workflow.get(True))) == {'push', 'pull_request'}
+    assert workflow['permissions'] == {'contents': 'read'}
+    steps = workflow['jobs']['docs']['steps']
+    assert steps[0]['with']['submodules'] is True
+    assert steps[-1]['uses'] == './style/ci/doc-contract'
+    assert steps[-1]['with'] == {'profile': 'skill', 'stage': 'accepted'}
 
 
 def test_failed_hooks_config_is_not_success(tmp_path, monkeypatch):

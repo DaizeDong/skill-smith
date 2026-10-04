@@ -15,7 +15,10 @@ import check_conformance as conformance
 import version_sites
 
 
-@pytest.mark.parametrize("notes", [None, "", "TODO: describe this release.", "<!-- pending -->"])
+@pytest.mark.parametrize("notes", [None, "", "TODO: describe this release.", "<!-- pending -->",
+                                  "Adds {{SYNTHETIC_NOTES}} report validation.",
+                                  "Adds YOUR_NOTES report validation.",
+                                  "Adds synthetic report validation.\n### TODO: additional synthetic notes"])
 def test_unfinished_release_refuses_before_any_write(tmp_path, notes):
     repo = release_documentation_fixture(tmp_path, notes=notes)
     before = {name: (repo / name).read_bytes() for name in version_sites.SITE_FILES.values()}
@@ -23,7 +26,7 @@ def test_unfinished_release_refuses_before_any_write(tmp_path, notes):
     assert all((repo / name).read_bytes() == original for name, original in before.items())
 
 
-@pytest.mark.parametrize("value", ["2020-02-30", "2020-1-2", "2019-12-31"])
+@pytest.mark.parametrize("value", ["2020-02-30", "2020-1-2", "2019-12-31", "2099-01-02"])
 def test_bad_or_regressing_release_date_refuses(tmp_path, value):
     repo = release_documentation_fixture(tmp_path)
     assert bump.main([str(repo), "--level", "patch", "--date", value]) == 1
@@ -61,12 +64,13 @@ def test_release_notes_can_describe_placeholder_rejection(tmp_path):
     assert bump.main([str(repo), "--level", "patch", "--date", "2020-01-02"]) == 0
 
 
-def test_supplied_notes_cannot_discard_partially_finished_unreleased(tmp_path):
-    repo = release_documentation_fixture(tmp_path, notes="Adds synthetic report validation.\n- TODO: add another change.")
-    before = (repo / "CHANGELOG.md").read_bytes()
+@pytest.mark.parametrize("completed", ["Adds synthetic report validation.", "Fix UTF-8."])
+def test_supplied_notes_cannot_discard_partially_finished_unreleased(tmp_path, completed):
+    repo = release_documentation_fixture(tmp_path, notes=completed + "\n- TODO: add another change.")
+    before = {name: (repo / name).read_bytes() for name in version_sites.SITE_FILES.values()}
     assert bump.main([str(repo), "--level", "patch", "--date", "2020-01-02",
                       "--notes", "Rejects invalid synthetic report inputs."]) == 1
-    assert (repo / "CHANGELOG.md").read_bytes() == before
+    assert all((repo / name).read_bytes() == original for name, original in before.items())
 
 
 checker_report = documentation_contract_report
@@ -83,7 +87,8 @@ def test_delegate_pass_and_named_failure(tmp_path):
 
 
 @pytest.mark.parametrize("fault", ["missing", "malformed", "empty", "wrong_stage", "wrong_exit", "wrong_ok",
-                                  "omitted", "duplicate", "unknown", "missing_boundaries", "wrong_failures"])
+                                  "omitted", "duplicate", "unknown", "missing_boundaries", "wrong_failures",
+                                  "not_applicable", "all_not_applicable"])
 def test_unobserved_or_invalid_checker_is_a_visible_failure(tmp_path, fault):
     report = checker_report()
     if fault == "empty":
@@ -102,6 +107,11 @@ def test_unobserved_or_invalid_checker_is_a_visible_failure(tmp_path, fault):
         report.pop("unverified")
     if fault == "wrong_failures":
         report["failures"] = [{"name": "docs.required", "detail": "synthetic false failure"}]
+    if fault == "not_applicable":
+        report["checks"][0]["status"] = "NOT_APPLICABLE"
+    if fault == "all_not_applicable":
+        for row in report["checks"]:
+            row["status"] = "NOT_APPLICABLE"
     if fault != "missing":
         documentation_checker_fixture(tmp_path, report, 1 if fault == "wrong_exit" else 0,
                                       "not json" if fault == "malformed" else None)
