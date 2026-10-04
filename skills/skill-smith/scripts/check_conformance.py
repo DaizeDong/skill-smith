@@ -26,7 +26,6 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import version_sites  # noqa: E402  (sibling module: the one definition of where a version lives)
 from budget_check import frontmatter_end, parse_frontmatter  # noqa: E402
 
 PASS, FAIL, WARN = "PASS", "FAIL", "WARN"
@@ -433,16 +432,38 @@ def check_documentation(root, stage="accepted"):
                                  "--stage", stage, "--json"], cwd=root, capture_output=True,
                                 text=True, encoding="utf-8", errors="replace", timeout=60)
         report = json.loads(result.stdout)
+        if not isinstance(report, dict):
+            raise ValueError("documentation report must be an object")
         rows = report["checks"]
-        if (report.get("schema_version") != 1 or report.get("profile") != "skill"
+        expected = {"docs.required", "readme.philosophy", "readme.install", "docs.placeholders",
+                    "version.source", "version.current", "changelog.releases", "roadmap.current",
+                    "links.local"}
+        if (type(report.get("schema_version")) is not int or report["schema_version"] != 1
+                or report.get("profile") != "skill"
                 or report.get("stage") != stage or type(report.get("ok")) is not bool
-                or not isinstance(rows, list) or not rows):
+                or not isinstance(rows, list) or len(rows) != len(expected)):
             raise ValueError("unsupported or incomplete checker report")
         for row in rows:
             if (not isinstance(row, dict) or not isinstance(row.get("name"), str)
                     or not row["name"] or row.get("status") not in (PASS, FAIL, "NOT_APPLICABLE")
                     or not isinstance(row.get("detail", ""), str)):
                 raise ValueError("invalid documentation check row")
+        names = [row["name"] for row in rows]
+        if len(set(names)) != len(names) or set(names) != expected:
+            raise ValueError("schema v1 requires each of the nine named documentation checks exactly once")
+        unverified = report.get("unverified")
+        if (not isinstance(unverified, list) or not unverified
+                or any(not isinstance(item, str) or not item.strip() for item in unverified)):
+            raise ValueError("documentation report must retain explicit unverified boundaries")
+        failures = report.get("failures")
+        if not isinstance(failures, list) or any(
+                not isinstance(row, dict) or not isinstance(row.get("name"), str)
+                or not isinstance(row.get("detail"), str) for row in failures):
+            raise ValueError("invalid documentation failure list")
+        failed_names = [row["name"] for row in failures]
+        if (len(set(failed_names)) != len(failed_names)
+                or set(failed_names) != {row["name"] for row in rows if row["status"] == FAIL}):
+            raise ValueError("documentation failure list disagrees with check rows")
         passed = all(row["status"] != FAIL for row in rows)
         if report["ok"] != passed or result.returncode != (0 if passed else 1):
             raise ValueError("checker exit status disagrees with report")
@@ -454,6 +475,7 @@ def check_documentation(root, stage="accepted"):
         if row["status"] == "NOT_APPLICABLE":
             detail = "NOT_APPLICABLE: " + detail
         check("documentation: " + row["name"], row["status"] != FAIL, detail)
+    check("documentation: unverified boundaries", WARN, "; ".join(unverified))
 
 
 def main(root, stage="accepted"):
@@ -570,20 +592,12 @@ def main(root, stage="accepted"):
     else:
         check("plugin.json readable", False)
 
-    # 3) version four-source sync
+    # Documentation version surfaces belong to the shared checker. Plugin packaging above
+    # remains skill-only; repository kinds without a plugin use the shared checker directly.
     readme = read(os.path.join(root, "README.md")) or ""
     readme_cn = read(os.path.join(root, "README_CN.md")) or ""
 
-    # The five site patterns live in version_sites.py, shared with scaffold_skill.py (which stamps
-    # them) and bump_version.py (which rewrites them). They used to be re-typed here, and the copy
-    # had drifted: it demanded a bare "Roadmap-vX.Y.Z-purple" badge, so a repo whose badge carries a
-    # deliberate pre-release marker ("Roadmap-v0.2.2%20alpha-purple") read as having NO version and
-    # was reported drifted while all five of its sites agreed. A linter that cries wolf gets muted,
-    # which is worse than no linter.
-    versions = version_sites.collect(root)
-    check("version four-source synced", version_sites.is_synced(versions), str(versions))
-
-    # 4) README philosophy-first + badge block
+    # 4) packaging badge block; version badges and current-source declarations are shared rules.
     check("README badge: Claude Code Skill (orange)",
           "Claude%20Code-Skill-orange" in readme)
     check("README badge: License MIT (blue)", "License-MIT-blue" in readme)
@@ -592,7 +606,6 @@ def main(root, stage="accepted"):
     # substring test read that as a MISSING badge, i.e. it penalized a repo for translating more.
     check("README badge: Languages (blue)",
           bool(re.search(r"Languages-EN%20%2F%20CN(?:%20%2F%20[A-Z]{2})*-blue", readme)))
-    check("README badge: Roadmap (purple)", "Roadmap-v" in readme and "-purple" in readme)
     check("README bilingual switch line", "[English](README.md)" in readme and "README_CN.md" in readme)
     check_documentation(root, stage)
 
@@ -610,7 +623,7 @@ def main(root, stage="accepted"):
             tag = FAIL
             n_fail += 1
         line = "  [%s] %s" % (tag, nm)
-        if detail and tag != PASS:
+        if detail and (tag != PASS or detail.startswith("NOT_APPLICABLE:")):
             line += "  -> %s" % detail
         print(line)
     # The grandfathered always-loaded debt, restated on its own, every run, whatever the verdict.
