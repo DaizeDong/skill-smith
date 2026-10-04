@@ -1,108 +1,98 @@
 # skill-smith
 
-Create Claude Code skills, one or a whole series, to an industry-leading, tested-real bar: research the field first, scaffold to spec, then refuse to ship anything that does not pass a hard acceptance gate.
+Create focused skills through research, guarded scaffolding and independent review of measured evidence.
 
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-orange?style=flat)](https://docs.anthropic.com/en/docs/claude-code)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Research-first](https://img.shields.io/badge/Design-research--first-green?style=flat)](skills/skill-smith/reference/research-first.md)
-[![Acceptance gate](https://img.shields.io/badge/Ships-only%20if%20it%20passes-green?style=flat)](skills/skill-smith/reference/acceptance-gate.md)
+[![Acceptance gate](https://img.shields.io/badge/Evidence-independent%20review-green?style=flat)](skills/skill-smith/reference/acceptance-gate.md)
 [![Languages](https://img.shields.io/badge/Languages-EN%20%2F%20CN-blue?style=flat)](#languages)
 [![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.3-purple?style=flat)](ROADMAP.md)
 
 [English](README.md) | [中文版](README_CN.md)
 
----
-
 ## ⭐ Read this first, the design philosophy
 
-skill-smith is built on one principle: **a skill is not "done" when it is generated, it is done when it is proven.** Two ideas follow from that, and they shape every decision in this repo:
+Generating a plausible SKILL.md does not establish that it triggers correctly or improves a task.
+skill-smith therefore places research before generation and measured evidence after it. Research
+defines the problem, alternatives and proof cases; an independent evaluator freezes policy and
+holdout before implementation. The final candidate includes completed docs and version metadata.
 
-1. **Research before you design (P1).** You cannot build something "industry-leading" by guessing. Before a single line of a new skill is written, skill-smith delegates a broad recon to [`market-intel`](https://github.com/DaizeDong/market-intel), best reference implementations, frontier designs to borrow, and known anti-patterns to avoid. The design target is the state of the art, surveyed, not asserted.
-2. **Generation != usable (P2).** The whole community ships auto-generated skills that look fine and silently fail (~50% never even trigger; field audits put a majority below a usable quality bar). So skill-smith treats "accepted" exactly the way [`self-evolve`](https://github.com/DaizeDong/self-evolve) treats "improved": only after an anti-self-deception **acceptance gate** (measured eval lift vs baseline + held-out trigger rate + token budget + dedup + security + spec conformance + single-responsibility focus).
+Existing research, generation, evaluation and iteration engines do the heavy work. This thin
+orchestrator owns their handoff, guarded repository structure and evidence contracts. The tradeoff
+is that missing evaluator capabilities remain visible blockers. A deterministic checker cannot
+replace live measurements, and an artifact hash cannot authenticate a claimed result.
 
-So skill-smith does **not** try to be a bigger generator. It is a **thin orchestrator** that owns only the seam nothing else owns, and delegates the heavy parts to tools you already run.
+Acceptance needs independent approval of the same completed candidate and evidence. A scaffold is
+a draft; the evidence CLI always returns `accepted: false`. See [PHILOSOPHY.md](PHILOSOPHY.md) for
+the design choices and [the documentation contract](skills/skill-smith/reference/documentation.md)
+for completion, review and release duties.
 
-📜 **[Read the full design philosophy -> PHILOSOPHY.md](PHILOSOPHY.md)** (6 principles, each with the patch-vs-root contrast and the real decision it produced).
+## What it does
 
----
+- Route new single or batch skill creation through research, overlap checks and available generators.
+- Emit a version-aligned skeleton with pinned Guards and Style submodules and fail-closed hooks.
+- Validate evaluator G1/G2 scores and required G3-G8 artifacts against frozen policy and candidate.
+- Measure whole-library budget and overlap, preserving missing inventory and listing evidence.
+- Hand accepted evidence to an available self-evolve provider and verify requested installation or publication separately.
 
-## What it is (and isn't)
-
-You already have the pieces: `market-intel` (research orchestration), `self-evolve` (anti-self-deception auto-iteration), and Skill Repo Spec v1 (output conventions). What was missing is the layer that **composes** them into "create a new skill, well." That is skill-smith.
-
-It does **only what nothing else does**, and delegates everything else:
-
-1. **Research-first recon**, delegate landscape + frontier-design survey to `market-intel` (front engine).
-2. **Spec-conformant scaffolding**, deterministically emit a Skill-Repo-Spec-v1 repo skeleton (7 required files, badges, version four-source-synced, plugin fingerprint).
-3. **Acceptance gate**, eval lift, trigger rate, system-prompt token budget, cross-library dedup, security audit, spec conformance, focus. Fail = explicit reject, never silent ship.
-4. **Auto-iteration handoff**, hand the accepted skill to `self-evolve` (back engine) for regression-gated improvement.
-5. **Batch**, fan out a *series* of candidate skills, each through the gate, under one global library-budget manager.
-
-It is **not**: a from-scratch generator (it calls Skill_Seekers / the official skill-creator), an eval framework (it validates results from available evaluators), or an iteration engine (it calls self-evolve). It is the glue + the gate.
-
-It is **not for**: improving an *existing* skill (that is `self-evolve`), or answering "is there a ready-made skill for X" (that is `market-intel`'s `ready-skills` domain).
+For an existing skill repair, use [self-evolve](https://github.com/DaizeDong/self-evolve). For finding
+a ready-made skill, use [market-intel](https://github.com/DaizeDong/market-intel). Batch work still
+needs evidence for each candidate and one shared library budget.
 
 ## Install
 
-```
+```text
 /plugin install github:DaizeDong/skill-smith
 ```
 
-Or clone manually:
+For a source checkout:
 
 ```bash
-git clone --recurse-submodules https://github.com/DaizeDong/skill-smith.git ~/.claude/plugins/skill-smith
+git clone --recurse-submodules https://github.com/DaizeDong/skill-smith.git
+cd skill-smith
+git config core.hooksPath .githooks
+python -m pip install -r requirements.txt
 ```
 
-(Maintainer setup: source lives in `CodesClaude/skill-smith`, deployed to `~/.claude/skills/skill-smith` via a PowerShell junction, see [`reference/deploy.md`](skills/skill-smith/reference/deploy.md).)
+Keep both submodules initialized; an existing clone uses `git submodule update --init --recursive`.
+Use a public-safe commit identity before contributing. Installed aliases and resource paths require
+their own verification; see [deployment](skills/skill-smith/reference/deploy.md).
 
 ## Quick start
 
-> "Use skill-smith to create a skill that <does X>."   (single)
-> "Use skill-smith to batch-create skills for <A, B, C>."   (series)
-
-skill-smith will: research the field via market-intel -> dedup-check your library -> scaffold a spec repo -> draft + trigger-optimize the SKILL.md -> run the acceptance gate -> hand off to self-evolve -> deploy.
-
-You can also run the scripts directly:
+Ask “Use skill-smith to create a skill that performs this task,” or provide a series of distinct jobs.
+Collect the [delivery brief](skills/skill-smith/reference/intake-delivery.md), research alternatives,
+freeze evaluator policy/holdout, and assign the generation owner all applicable documents.
 
 ```bash
-python skills/skill-smith/scripts/scaffold_skill.py my-skill \
-  --tagline "One line, verb-first, quantified." \
-  --description "When to trigger + what it does + scope, one paragraph." \
-  --topics "domain-a,domain-b"
-
-python skills/skill-smith/scripts/check_conformance.py ~/CodesClaude/my-skill   # Spec v1 linter
-python skills/skill-smith/scripts/bump_version.py ~/CodesClaude/my-skill --level patch  # all 5 sites
-python skills/skill-smith/scripts/budget_check.py                            # library prompt budget
-python skills/skill-smith/scripts/dedup_check.py                             # description overlap
-python skills/skill-smith/scripts/fleet_check.py                             # whole fleet, read only
+python skills/skill-smith/scripts/scaffold_skill.py my-skill --description "Create a reusable report from supplied public input." --topics "reporting"
+python skills/skill-smith/scripts/check_conformance.py ../my-skill --stage draft
 ```
 
-Budget and dedup use the same user skills and active plugin inventory. Pass `--skills-dir` and
-`--installed-plugins` to both scripts for a different library. Missing, unreadable or ambiguous
-entries produce `UNKNOWN` and an `unresolved` count; a measured overflow or overlap remains visible
-alongside incomplete coverage. Stale versions in the plugin cache are excluded.
-`budget_check.py` without `--listing` reports an arithmetic estimate with
-`measurement=not_supplied`; it does not establish live visibility. Supply the current capture via
-`--listing FILE` to either budget or fleet checks. A supplied unreadable, mismatched or ambiguous
-listing is `UNKNOWN`; measured description loss is `FAIL`. Fleet requires a complete measurement
-before reporting G3 as `PASS`.
+Draft checking does not establish acceptance. Complete implementation, both READMEs, philosophy,
+SKILL, roadmap, changelog and applicable config/reference docs. Record document impact per affected
+behavior. Run accepted-stage conformance before the final snapshot, then collect candidate-bound
+evidence and independent review:
 
-Description trimming writes its worklist and backups into the initialized PRIVATE versioned
-companion, resolved through `guards/tools/datadir.py`. Explicit `--out` and `--backup-dir` paths
-must meet the same checks. Initialize the companion and verify its GitHub visibility first;
-unmanaged directories, public or unknown repositories, and linked output paths are refused.
-The shared Guards check verifies physical and effective fetch/push URLs for every configured
-remote, including URL rewrites and additional push URLs. All destinations must be verified PRIVATE
-in a fresh local visibility receipt. Any remote name is supported. Unsupported or unresolved
-routing is refused, and writers recheck the destination immediately before writing.
-Keep worklists and backups committed and pushed in that private companion with other run data.
-Apply requires PyYAML and validates the entire frontmatter before writing each quoted replacement.
+```bash
+python skills/skill-smith/scripts/check_conformance.py ../my-skill
+python skills/skill-smith/scripts/acceptance_gate.py --repo ../my-skill --snapshot
+python skills/skill-smith/scripts/acceptance_gate.py --repo ../my-skill --manifest PRIVATE_MANIFEST --policy PRIVATE_POLICY --policy-sha256 FROZEN_SHA256
+```
 
-### Initialize private run storage
+The evidence command validates contracts, prints JSON and exits nonzero pending independent review.
+Synthetic bundles remain `synthetic_only`; supplied non-fixture attestations remain
+`independent_review_required`. Two clean reviews bind the same candidate, policy and raw results.
+Changes to code, docs, fixtures or metadata invalidate the previous snapshot and review streak.
+The reviewer checks bilingual meaning and actual behavior, beyond structural documentation checks.
 
-The reporting and trimming commands need a separate Git companion. From this tool repository,
-replace `OWNER` with the account that will own the private repository:
+## Private run storage
+
+Reports, real briefs, evaluator logs, worklists and backups belong in a verified PRIVATE versioned
+companion. Public TOOL documentation contains reusable rationale and generated synthetic examples.
+
+From the tool checkout, substitute the account that owns your private companion:
 
 ```bash
 gh repo create OWNER/skill-smith-config --private
@@ -117,148 +107,86 @@ gh repo view OWNER/skill-smith-config --json visibility --jq .visibility
 export SKILL_SMITH_CONFIG="$(cd ../skill-smith-config && pwd)"
 ```
 
-For an existing companion, clone it beside the tool and set the same environment variable.
-Before using a writer, refresh `~/.pii-guard/visibility.json` with your trusted visibility collector.
-The receipt needs a current `_refreshed` timestamp and PRIVATE entries for all configured fetch
-and push destinations. `gh repo view` checks live visibility but does not update that receipt.
-The fleet command accepts `--visibility PATH`; trimming uses the default receipt path. See the
-[Guards transport contract](guards/COMPANION.md#verifying-a-companion) for supported configurations.
-The visibility command must report `PRIVATE`. Each writer also verifies the fetch identity and
-every effective push destination, including routing overrides; the ownership marker alone is
-not visibility proof. `SKILL_SMITH_CONFIG` selects the companion; its existing `data/` directory
-holds reports, worklists and description backups. `SKILL_SMITH_DATA_DIR` can select an explicit
-data directory, which must pass the same storage checks. Never create either directory inside
-the public tool repository.
+For an existing companion, clone it and set the same variable. The visibility query must return
+`PRIVATE`. Before a writer runs, refresh `~/.pii-guard/visibility.json` with the trusted collector.
+Its `_refreshed` timestamp and every physical/effective fetch and push destination must be current
+and PRIVATE, including URL rewrites, SSH aliases and additional push URLs. `gh repo view` does not
+update that receipt; `.companion` alone proves ownership. Unsupported or unresolved routing fails.
+See [the Guards transport contract](guards/COMPANION.md#verifying-a-companion).
 
-Run `python skills/skill-smith/scripts/trim_descriptions.py --scan` to produce a reviewable worklist;
-scanning does not change skill descriptions. Commit and push the resulting data in the private
-companion. `python skills/skill-smith/scripts/fleet_check.py --no-status` needs no report destination.
-The generic G8 self-check does not test
-this storage setup; the writer's storage proof is the relevant check.
+`guards/tools/datadir.py` resolves `SKILL_SMITH_CONFIG` or `SKILL_SMITH_DATA_DIR`; the existing
+`data/` directory must pass the same PRIVATE versioned-storage proof. Linked, unmanaged,
+PUBLIC/UNKNOWN or ignored output destinations are refused, including explicit `--out` and
+`--backup-dir`. Writers recheck just before writing and never fall back inside the tool repo.
+Commit and push run data in the private companion. Restore by cloning that companion, setting
+the variable, refreshing visibility proof and verifying paths before resuming.
 
-`check_conformance.py` also measures the SKILL.md itself, because that file is paid for on **every**
-invocation of the skill: **warn above 12,000 characters, fail above 16,000**, every relative path it
-names must resolve on disk, and instruction text must state the rule rather than which iteration
-added it. Files already over the size line on 2026-07-31 are grandfathered by name at their measured
-size and may shrink, never grow, so the allowlist can only get shorter. Each entry also carries a
-**dated shrink target**: it WARNs loudly on every run with the arithmetic spelled out, the per-repo
-summary line states `N grandfathered, M chars over target`, and once the target date passes with the
-file still over target the entry FAILS. The allowlist was seeded with exactly the five files over the
-line, so without that the gate's first fleet run had zero FAIL rows over 17% of the files and 40% of
-the always-loaded characters, and a run with no failures reads as "the fleet is within budget".
+`trim_descriptions.py --scan` creates a private review worklist without changing descriptions.
+Apply requires reviewed authorization and PyYAML frontmatter validation. `fleet_check.py --no-status`
+is console-only and needs no report destination. Generic G8 does not prove this storage setup.
 
-`budget_check.py` answers the one question whose failure is invisible by construction: past a budget
-the loader silently drops skill descriptions, so a skill keeps existing and simply never fires. It
-reports three tiers separately (`ours`, `local` user skills, `plugin` skills), reads the plugin tier
-from `installed_plugins.json` rather than globbing the cache (which holds 2 to 4 stale versions per
-plugin), and prints both the documented 15,000-char budget and the capacity actually **measured** on
-2026-08-01 by diffing a live skill listing against every `SKILL.md` on disk: 79 of 163 file-backed
-skills kept their description, 84 appeared as a bare name, and the surviving lines totalled 21,565
-chars against a declared library of 53,821.
+## Library and fleet checks
 
-Current prompt omissions require a captured `--listing FILE`. Without one, omissions remain
-unmeasured and victim names cannot be derived from disk. The historical capacity estimate is
-advisory. Supply `--capacity N` to enforce an explicit current policy; any minimum removal count
-then describes what would be needed to meet that policy. The digest keeps observed listing losses
-in `min_lost` and the policy projection in `projected_min_removals`. Read `measurement` alongside
-those counts: zero recorded losses without a listing does not establish that every description is
-visible. An incomplete listing or inventory cannot establish full coverage.
+Budget and dedup use the same user skills and active-plugin inventory. Override both with
+`--skills-dir` and `--installed-plugins`. Missing, unreadable or conflicting entries remain
+`UNKNOWN` with unresolved counts; stale cache versions do not count as active skills.
+Budget requires a current captured `--listing FILE` to prove visibility. Historical capacity is
+advisory; `--capacity N` supplies a current policy. Observed listing losses and projected removals
+are separate. A removal decision remains BLOCKED; incomplete observations cannot produce G3 PASS.
 
-Our descriptions above the 180-char cap still **FAIL**. Under an explicit capacity policy, an
-overflow that trimming can clear also **FAILS**, with the proposed cuts listed. An overflow that
-requires a removal decision is **BLOCKED** and maps to an amber fleet warning, with the projected
-removal count and the plugin ranking available through `--plugins`. A description missing from a
-supplied listing is reported as an observed loss. Fleet PASS requires complete listing evidence.
-Without `--capacity`, the historical estimate does not enforce removals. The per-skill cap remains
-limited to our tier because it is the Spec-v1 authoring rule for skills this repo produces.
+`fleet_check.py` is read-only and checks aliases, local conformance, budget, DATA boundaries,
+remote guard workflows and each default-branch workflow. `--offline` leaves remote rows unobserved.
+Quote its coverage-bearing VERDICT, not only the failure count. Workflow inspection distinguishes
+executed jobs from zero-step/no-runner failure without attributing an unproven cause.
 
-`fleet_check.py` is the driver the linter above never had. It fans `check_conformance.py` over every
-plugin repo and adds what nothing else checks: skill junctions resolve, a repo marked PUBLIC carries
-every guard workflow (`pii-guard` **and** `dash-guard`) **on its remote default branch**, the
-installed library still fits in the system prompt, a resolved real-run data directory is not inside a
-**PUBLIC or UNKNOWN** repo, and **every workflow on every repo of ours**, public and private alike,
-is actually green **on the remote default branch**, one row per repo and workflow. It
-is **read-only, with no `--fix`** and no `git fetch`, exits nonzero on any FAIL, and writes a
-UTC-stamped status JSON so a scheduled caller can tell "the run happened" apart from "the run
-passed". Add `--offline` to skip the network-backed probes.
+Local conformance retains security and packaging checks and delegates structural documentation to
+`style/tools/doc_contract.py --root . --profile skill --stage accepted`. A missing checker fails.
+SKILL size warns above 12,000 characters and fails above 16,000, with existing dated shrink
+exceptions reported explicitly. Required relative resources must resolve. These checks do not
+establish live usefulness, remote CI or semantic correctness.
 
-Two of those answers were quietly about the wrong subject until 2026-07-31. The CI probe asked for
-the newest run on **any ref**, so a green push to a topic branch was printed as the default branch's
-status; on 2026-07-22 that would have shown a repo's `pii-guard` as PASS from a green topic-branch
-run while its own `master` run was a FAILURE. It now filters on the default branch, and "no run on
-the default branch" is `UNKNOWN` rather than a quiet fallback to whatever run exists. The visibility
-answer behind the data-boundary check read a cached map **first** and asked `gh` only on a miss, so
-one stale line of JSON could clear a data directory sitting in a public repo, forever, with nothing
-on the machine refreshing that file. `gh` is now asked live and the map only votes when `gh` cannot
-answer, and only while it is younger than its trust window: a cache that can never expire is not a
-cache, it is an assertion.
+## Version and maintenance
 
-The remote is the subject of that workflow check on purpose. It used to stat the local clone, so a
-guard workflow that was committed but never pushed scored PASS for a PUBLIC repo whose remote carried
-no guard at all. `UNKNOWN` now means one thing only, "this run could not observe the answer" (no
-`gh`, unauthenticated, rate limited, offline), which is why it is safe for it to never affect the
-exit code; a definitive negative from a remote that did answer is a `FAIL`. Unobserved rows are
-printed under their own `UNOBSERVED` heading and listed in the status JSON, because a fleet nobody
-could look at must not read like a clean one.
+The plugin manifest is the version source; both README badges, ROADMAP Current and latest numeric
+CHANGELOG release stay aligned. Record meaningful later changes under Unreleased and preserve history.
+The [documentation contract](skills/skill-smith/reference/documentation.md) is the rule's sole home.
 
-Every run ends with one **VERDICT** line carrying a coverage fraction, and a caller is meant to quote
-that line rather than build its own sentence out of the counts. On 2026-07-30 the nightly digest
-turned "pass 86, fail 0, skip 82" into the words "all green" while every defect the next day's audit
-found was already in the fleet: nearly half the checked surface was never evaluated and the report
-still read as a clean sheet. `GREEN` may now mean only "nothing that was evaluated failed", `AMBER`
-means there are findings that no edit fixes today, and the same line says how much was looked at.
+```bash
+python skills/skill-smith/scripts/bump_version.py . --level patch --dry-run
+```
 
-The coverage clause sits **immediately after the verdict word**, not at the end of the line, and it
-shouts when the sample is partial: `VERDICT GREEN OVER 56% OF ROWS (112 of 200; 88 NOT EVALUATED)`.
-Putting the fraction merely somewhere on the line was not enough. It sat four fields to the right of
-the verdict on a run where 88 of 200 rows were never evaluated, so a reader scanning for the word
-after `VERDICT` got `GREEN` and stopped, which is the old "all green" with the correction printed
-where nobody reached it. The `TOTAL` line carries the same clause underneath its counts. The
-machine-readable `verdict` key in the status JSON is still the bare word.
-
-The report is also **concurrent**. Its remote questions run on a thread pool and every answer is
-memoized per distinct slug, so a whole-fleet run takes about 28s rather than the 128s it cost when
-each `gh` round trip blocked the next. Wall clock is a correctness property for a report a human runs
-by hand: a two minute report gets abandoned, which lands in the same place as a gate nobody runs.
-Nothing was bought by asking less, and the rule is enforced by test: the row set, every per-section
-count and the whole report body are byte-identical to the serial version, in the clean case and in
-the failing case alike.
-
-`bump_version.py` moves the version at all five sites at once (plugin.json, both README badges,
-ROADMAP, CHANGELOG). It refuses on an already-drifted repo instead of papering over the drift, and
-it never commits or pushes: cutting a release stays a human decision.
-
-## How to invoke
-
-Trigger words: *create a skill, build a skill, scaffold a skill, author a new skill, batch-create skills, make a series of skills, optimize a skill's trigger / description, skill factory.*
+Release preparation refuses drift, non-advancing/noncanonical versions, invalid or regressing dates,
+and empty/placeholder target notes. Existing substantive Unreleased needs no duplicate `--notes`;
+otherwise supply actual notes. ROADMAP refers to CHANGELOG rather than inventing release history.
+The tool aligns five surfaces and never commits, tags or pushes. A prepared version is not a publication.
 
 ## Evidence and runtime prerequisites
 
-Use Python 3.10 or later. Install `requirements.txt` for runtime YAML metadata validation and workflow inspection; install `requirements-dev.txt` for the offline test suite. G6 rejects invalid or unavailable YAML parsing, and library inventory reports those entries as unresolved. Scaffolder tests use temporary local kit mirrors and forbid network Git protocols. Fleet reports resolve through the shared private companion resolver; explicit output paths must also be in verified PRIVATE versioned storage. Use `--no-status` for console-only inspection.
+Use Python 3.10+, Git and PyYAML from `requirements.txt`. Model and agent work uses installed
+`llmcall` current routing, timeout and fallback policy. Preflight the selected research, generation
+and evaluator capabilities; unavailable capabilities remain explicit.
 
-The local test suite also requires Git and a POSIX `sh` on `PATH`. On Windows, run it in Git Bash,
-or add the `bin` directory of Git for Windows to the current shell's `PATH`; installing Git with
-only its `cmd` directory on `PATH` does not expose `sh`. From a recursive clone, run:
+For the offline suite, install `requirements-dev.txt`. Git's POSIX `sh` must be on PATH. On Windows,
+use Git Bash or add Git for Windows' `bin` directory for the current shell:
 
 ```bash
 python -m pip install -r requirements-dev.txt
 python -m pytest -c pytest.ini tests/ tools/ -q -ra
 ```
 
-Keep both submodules initialized. The suite clones their checked-out revisions into temporary
-local mirrors, so missing kits fail instead of being fetched from the network.
-
-Collect one [delivery brief](skills/skill-smith/reference/intake-delivery.md), freeze the evaluator-owned policy, then use `acceptance_gate.py --snapshot` and the documented manifest command. Keep the JSON result and raw evaluator logs privately.
+Tests use local mirrors of checked-out kit revisions and forbid network Git protocols. Generated
+fixtures exercise contracts; they cannot prove real task improvement or live integration.
 
 ## Limitations
 
-- The evidence CLI validates G1/G2 completion and scores plus all required artifacts against the pinned policy and candidate. Its verdict is contract-only: even non-fixture attestations require independent approval. Candidate hashes bind bytes, executable modes and submodule revisions. G8 separates generated templates from explicitly configured A/B doctor checks. See [the evidence contract](skills/skill-smith/reference/acceptance-gate.md).
-- Preflight `market-intel`, self-evolve and the selected evaluator. Use installed llmcall policy for model work. Missing runtime capabilities remain explicit; the evidence gate does not implement subjective scenario-eval or live deployment.
-- It optimizes for *correct, focused, proven* skills, not raw volume, by design it will refuse to add a skill that overflows the library token budget.
+The evidence CLI does not run evaluator models or award acceptance. G8 template checks differ from
+configured A/B doctor checks. Scenario-eval and external providers must actually exist to be selected.
+Same-account private paths provide procedural separation, not proven read denial. Installation,
+publication, external readiness and actual outcomes each need their own observed evidence.
 
 ## Languages
 
-English (`README.md`, authoritative) · 中文 (`README_CN.md`)
+English (`README.md`) · 中文 (`README_CN.md`). Both describe the same current contract.
 
 ## Roadmap · License
 

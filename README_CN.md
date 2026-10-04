@@ -1,183 +1,93 @@
 # skill-smith
 
-创建 Claude Code skill,单个或一整套,并达到业界领先、经测试真实可用的标准：先调研全行业，再按规范脚手架，最后对任何过不了验收闸的产物一律拒绝上线。
+通过调研、受守卫保护的脚手架和独立证据评审，创建职责清楚的 skill。
 
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-orange?style=flat)](https://docs.anthropic.com/en/docs/claude-code)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![理念先行](https://img.shields.io/badge/%E8%AE%BE%E8%AE%A1-%E8%B0%83%E7%A0%94%E5%85%88%E8%A1%8C-green?style=flat)](skills/skill-smith/reference/research-first.md)
-[![验收闸](https://img.shields.io/badge/%E4%B8%8A%E7%BA%BF-%E8%BF%87%E9%97%B8%E6%89%8D%E7%AE%97-green?style=flat)](skills/skill-smith/reference/acceptance-gate.md)
-[![语言](https://img.shields.io/badge/%E8%AF%AD%E8%A8%80-EN%20%2F%20CN-blue?style=flat)](#语言)
+[![Research-first](https://img.shields.io/badge/Design-research--first-green?style=flat)](skills/skill-smith/reference/research-first.md)
+[![Acceptance gate](https://img.shields.io/badge/Evidence-independent%20review-green?style=flat)](skills/skill-smith/reference/acceptance-gate.md)
+[![Languages](https://img.shields.io/badge/Languages-EN%20%2F%20CN-blue?style=flat)](#语言)
 [![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.3-purple?style=flat)](ROADMAP.md)
 
 [English](README.md) | [中文版](README_CN.md)
 
----
+## ⭐ 先读设计理念
 
-## ⭐ 先读这里, 设计理念
+生成一份像样的 SKILL.md，还不能证明它会正确触发或改善任务结果。
+skill-smith 在生成之前安排调研，在生成之后要求测量证据。调研明确问题、替代方案和证明案例；
+独立评测者在实施前冻结 policy 与保留测试集。最终候选包含完成后的文档和版本信息。
 
-skill-smith 立足一条原则：**skill 不是"生成出来"就算完成，而是"被证明可用"才算完成。** 由此推出两点，贯穿整个仓库的每个决策：
+调研、生成、评测和迭代交给已有工具；本工具负责交接、仓库结构和证据契约。
+这种设计的代价是：评测能力缺失时，流程会明确停在缺口上。确定性检查不能替代真实测量，
+文件 hash 也不能证明一份自述结果确实发生过。
 
-1. **先调研，再设计（P1）。** 靠猜做不出"业界领先"。在写新 skill 的第一行之前，skill-smith 先把一次广泛调研委托给 [`market-intel`](https://github.com/DaizeDong/market-intel),业界最佳参考实现、可借鉴的前沿设计、需规避的 anti-patterns。设计目标是**调研出来的当下最高水准**，不是嘴上声称的。
-2. **生成 ≠ 可用（P2）。** 社区到处在量产"看着没问题、却静默失效"的自动生成 skill（约 50% 根本不触发；实测审计显示多数低于可用质量线）。所以 skill-smith 对"被接纳"的态度，与 [`self-evolve`](https://github.com/DaizeDong/self-evolve) 对"真改进"的态度完全一致：只有过了反自欺**验收闸**（相对 baseline 的可测 eval 提升 + held-out 触发率 + token 预算 + 去重 + 安全 + 规范一致 + 单一职责聚焦）才算数。
+接受候选需要独立评审批准同一份最终候选和证据。脚手架只是草稿，证据 CLI 始终返回
+`accepted: false`。设计选择见 [PHILOSOPHY.md](PHILOSOPHY.md)；
+文档完成、评审与发版责任见[文档契约](skills/skill-smith/reference/documentation.md)。
 
-因此 skill-smith **不**做又一个更大的生成器。它是一个**薄编排层**，只 own 别人不 own 的那道缝，把重活委托给你已经在跑的工具。
+## 能做什么
 
-📜 **[完整设计理念 -> PHILOSOPHY.md](PHILOSOPHY.md)**（6 条原则，每条都给"打补丁 vs 改根因"对照和它产生的真实决策）。
+- 为单个或一组新 skill 安排调研、重叠检查和可用生成器。
+- 生成版本一致的骨架，固定 Guards / Style 子模块，并安装缺失时会阻断的钩子。
+- 按冻结的 policy 与候选核对 G1/G2 分数及必需的 G3-G8 证据。
+- 测量整个技能库的预算与重叠情况，保留缺失清单和缺少可见性测量的事实。
+- 将已获独立批准的证据交给可用的 self-evolve provider，另行核验授权范围内的安装或发布。
 
----
-
-## 它是什么（不是什么）
-
-零件你都有了：`market-intel`（调研编排）、`self-evolve`（反自欺自迭代）、Skill Repo Spec v1（输出规范）。缺的是把它们**缝合成"把一个新 skill 做好"**的那一层。这就是 skill-smith。
-
-它只做别人不做的，其余全部委托：
-
-1. **调研先行**, 把"业界标杆 + 前沿设计"调研委托给 `market-intel`（前端引擎）。
-2. **规范脚手架**, 确定性吐出符合 Skill Repo Spec v1 的仓库骨架（必备 7 文件、徽章、版本四源同步、plugin 指纹）。
-3. **验收闸**, eval 提升、触发率、系统提示 token 预算、跨库去重、安全审计、规范一致、聚焦度。不过 = 显式拒绝，绝不静默上线。
-4. **自迭代交棒**, 把已接纳的 skill 交给 `self-evolve`（后端引擎）做回归门控的迭代优化。
-5. **批量**, 扇出一**系列**候选 skill，逐个过闸，统一受一个全局"库预算管家"约束。
-
-它复用 Skill_Seekers / 官方 skill-creator 生成技能，读取已有评测器的结果，并把迭代交给可用的 self-evolve provider。自己负责流程衔接和证据验收。
-
-它**不用于**：改进**已有** skill（那是 `self-evolve`），或回答"有没有现成的 X skill"（那是 `market-intel` 的 `ready-skills` 域）。
+改进已有 skill 用 [self-evolve](https://github.com/DaizeDong/self-evolve)，
+寻找现成 skill 用 [market-intel](https://github.com/DaizeDong/market-intel)。
+批量创建仍需逐个候选提供证据，并共享同一个技能库预算。
 
 ## 安装
 
-```
+```text
 /plugin install github:DaizeDong/skill-smith
 ```
 
-或手动克隆：
+源码安装：
 
 ```bash
-git clone --recurse-submodules https://github.com/DaizeDong/skill-smith.git ~/.claude/plugins/skill-smith
+git clone --recurse-submodules https://github.com/DaizeDong/skill-smith.git
+cd skill-smith
+git config core.hooksPath .githooks
+python -m pip install -r requirements.txt
 ```
 
-（维护者部署：源在 `CodesClaude/skill-smith`，用 PowerShell junction 部署到 `~/.claude/skills/skill-smith`,见 [`reference/deploy.md`](skills/skill-smith/reference/deploy.md)。）
+两个子模块都要初始化；已有 clone 可运行 `git submodule update --init --recursive`。
+参与提交前设置适合公开的身份。已安装别名和资源路径需要另行核验，见[部署说明](skills/skill-smith/reference/deploy.md)。
 
 ## 快速开始
 
-> "用 skill-smith 创建一个能 <做 X> 的 skill。"（单个）
-> "用 skill-smith 批量创建 <A、B、C> 这几个 skill。"（一套）
-
-skill-smith 会：market-intel 调研全行业 -> dedup 查你现有库 -> 脚手架规范仓库 -> 起草并优化触发描述 -> 跑验收闸 -> 交给 self-evolve -> 部署。
-
-也可直接跑脚本：
+提出“用 skill-smith 创建一个完成某任务的技能”，或提供一组不同职责。
+集中填写[交付 brief](skills/skill-smith/reference/intake-delivery.md)，调研替代方案，
+冻结评测 policy / 保留测试集，并由生成负责人完成全部适用文档。
 
 ```bash
-python skills/skill-smith/scripts/scaffold_skill.py my-skill \
-  --tagline "一行,动词开头,量化收益。" \
-  --description "何时触发 + 做什么 + 覆盖范围,一段写完。" \
-  --topics "domain-a,domain-b"
-
-python skills/skill-smith/scripts/check_conformance.py ~/CodesClaude/my-skill   # Spec v1 检查器
-python skills/skill-smith/scripts/bump_version.py ~/CodesClaude/my-skill --level patch  # 五处版本
-python skills/skill-smith/scripts/budget_check.py                            # 库的系统提示词预算
-python skills/skill-smith/scripts/dedup_check.py                             # 描述重叠
-python skills/skill-smith/scripts/fleet_check.py                             # 全 fleet 体检, 只读
+python skills/skill-smith/scripts/scaffold_skill.py my-skill --description "Create a reusable report from supplied public input." --topics "reporting"
+python skills/skill-smith/scripts/check_conformance.py ../my-skill --stage draft
 ```
 
-预算脚本未收到 `--listing FILE` 时只做算术估算，并输出 `measurement=not_supplied`。
-预算脚本和 fleet 脚本都可接收当前清单：清单不可读、缺项或身份不明确时为 `UNKNOWN`，
-测到描述丢失时为 `FAIL`。只有完整测量才能让 fleet 将 G3 判为 `PASS`。
-
-描述精简的工作清单和备份必须存入已核验的私有版本库。检查会覆盖 origin 的全部有效推送 URL，
-以及分支和远端配置选出的默认推送目的地；公开、未知或无法解释的目的地都会被拒绝。
-应用精简需要 PyYAML，会先校验完整 frontmatter，再备份和写入，换行与布尔样式文本均保留为字符串。
-
-`check_conformance.py` 还会量 SKILL.md 自身, 因为这个文件在该 skill **每一次**被调用时都要付费:
-**超过 12,000 字符告警, 超过 16,000 字符判失败**; 它写下的每个相对路径都必须在盘上解析得到;
-指令文本要直接写规则, 而不是写"第几轮加了什么"。2026-07-31 当天已经超线的文件按名字连同实测大小
-进白名单, 只许变小不许变大, 所以那份名单只会越来越短。每条白名单还带一个**有日期的缩减目标**:
-它每一轮都要大声 WARN 并把算式写出来, 每个仓的汇总行会写明 `N grandfathered, M chars over target`,
-一旦过了目标日期还没降到目标以下就直接判 FAIL。白名单当初正好就是那五个超线文件, 所以如果不这样,
-这道闸第一次跑全 fleet 就是零条 FAIL, 而那覆盖着 17% 的文件和 40% 的常驻字符,
-一次没有失败的运行读起来就等于"全 fleet 在预算内"。
-
-`budget_check.py` 回答的是唯一一个"失败本身就看不见"的问题: 超过预算后 loader 会静默丢掉 skill 描述,
-于是那个 skill 依然存在, 只是永远不再触发。它分三层分别报数(`ours`、`local` 用户 skill、`plugin` skill),
-plugin 那层从 `installed_plugins.json` 读而不是 glob 缓存目录(缓存里每个 plugin 存着 2 到 4 个旧版本),
-同时打印文档写的 15,000 字符预算, 和 2026-08-01 用一份真实 skill 清单逐条对拍磁盘上每个 `SKILL.md`
-**实测**出来的容量: 163 个有文件的 skill 里 79 个保住了描述, 84 个只剩一个光名字, 活下来的行合计 21,565 字符,
-而整个库声明了 53,821 字符。
-
-要判断当前提示词里丢了哪些描述，需要提供抓取的 `--listing FILE`。没有清单，就只能说当前缺失情况未知，
-也无法从磁盘推算出具体名单。历史容量估计只作参考；传入 `--capacity N` 才会按明确的容量策略检查超额。
-这时的最少移除数量表示“要满足该策略，至少需要移除多少项”。摘要用 `min_lost` 记录清单中已观察到的缺失，
-用 `projected_min_removals` 记录策略推算，两者都要结合 `measurement` 阅读。没有清单时记录为零，
-不能据此认定所有描述都可见。清单或安装记录不完整时，也不能认定检查已覆盖整个库。
-
-我们自己的描述超过 180 字符上限，仍判 **FAIL**。明确指定容量后，能靠裁短描述解决的超额也判 **FAIL**，
-并列出建议裁剪项；必须决定移除哪些技能才能解决的超额判 **BLOCKED**，在舰队报告中显示黄灯，
-同时给出预计移除数量，完整的 plugin 成本排名可用 `--plugins` 查看。提供的清单里确实没有描述的技能，
-会单独报告为已观察到的缺失。舰队预算项只有在清单证据完整时才可能 PASS。没有 `--capacity`，
-历史估计不会触发强制移除。单项描述上限仍只约束本仓产出的技能，因为它属于 Spec-v1 写作规则。
-
-`fleet_check.py` 是上面那个检查器一直缺的 driver。它把 `check_conformance.py` 铺到每个 plugin 仓上,
-再补上没人查的五件事: skill junction 能否解析、标为 PUBLIC 的仓**在远端默认分支上**是否带齐每个 guard
-workflow(`pii-guard` **和** `dash-guard`)、已安装的库是否还塞得进系统提示词、解析出的真实运行数据目录
-是否落在某个 **PUBLIC 或可见性未知**的仓里(落在私有伴生仓里是**正确形态**, 该行 PASS 并写明是哪个仓)、
-以及**我们自己每个仓的每个 workflow**(公开私有都算)**在远端默认分支上**到底绿没绿(每个仓每个
-workflow 各出一行)。
-它**只读, 没有 `--fix`**, 也从不 `git fetch`, 任一项 FAIL 即非零退出, 并写一份带 UTC 时间戳的状态 JSON,
-让定时调用方能把"这轮真跑了"和"这轮通过了"分开判断。加 `--offline` 可跳过需要联网的探针。
-
-到 2026-07-31 为止, 上面有两条答案其实一直在答另一个问题。CI 那项问的是**任意 ref** 上最新的一次运行,
-于是往话题分支推一次绿, 就被当成默认分支的状态打出来; 2026-07-22 那天, 某个仓的 `pii-guard` 会因为话题
-分支上一次绿的运行而显示 PASS, 而它自己 `master` 上最新那次是 FAILURE。现在它按默认分支过滤, 而
-"默认分支上没有任何运行"记为 `UNKNOWN`, 不再悄悄拿别的 ref 顶上。数据边界那项背后的可见性判断, 过去是
-**先读**缓存的可见性表、只有查不到才问 `gh`, 于是一行过期的 JSON 就能把一个躺在公开仓里的数据目录永远
-放行, 而这台机器上根本没有任何东西会去刷新那份文件。现在改成先问 `gh`, 只有 `gh` 答不上来时缓存才有投
-票权, 而且只在信任窗口内有效: 一份永不过期的缓存不是缓存, 是断言。
-
-workflow 这一项查的是**远端**而不是本地工作树, 这是刻意的: 以前它 stat 本地 clone, 于是一个已经 commit
-但从未 push 的 guard workflow, 会让一个远端根本没有任何 guard 的 PUBLIC 仓判成 PASS。现在 `UNKNOWN`
-只有一个含义: "这轮没能观测到答案"(没有 `gh`、未认证、被限流、离线), 所以它不影响退出码才是安全的;
-而一个真的回答了的远端给出的否定答案是 `FAIL`。没观测到的行会单独打在 `UNOBSERVED` 标题下并写进状态
-JSON, 因为"没人看得了的 fleet"绝不能读起来像"干净的 fleet"。
-
-每轮结束会打出一行 **VERDICT**, 上面带着覆盖率, 调用方应当原样引用这一行, 而不是拿计数自己拼形容词。
-2026-07-30 那晚, 夜间简报把 "pass 86, fail 0, skip 82" 说成了"全绿", 而第二天审计翻出的每一条缺陷
-当时就已经在 fleet 里了: 近一半被检面根本没评估, 报告却读起来像干净的。现在 `GREEN` 只能表示
-"评估过的都没失败", `AMBER` 表示有今天无法用一次修改消掉的发现, 而同一行会写明到底看了多少。
-
-覆盖率子句紧跟在 verdict 那个词后面, 而不是排在行尾; 抽样不完整时它会喊出来:
-`VERDICT GREEN OVER 56% OF ROWS (112 of 200; 88 NOT EVALUATED)`。只是"把比例写在这一行上"并不够:
-它原本排在 verdict 右边第四个字段, 而那一轮 200 行里有 88 行根本没被评估, 于是扫到 `VERDICT` 后面
-第一个词的读者看见 `GREEN` 就停了。这还是当年那句"全绿", 只不过把更正印在了没人读到的地方。`TOTAL`
-行的计数下面也带同一句。状态 JSON 里那个给机器读的 `verdict` 字段仍然只是那个裸词。
-
-这份报告现在是并发的。所有远端问题跑在线程池上, 每个不同的 slug 只问一次并缓存, 于是整轮从 128s
-降到约 28s。对一份要人手动跑的报告来说, 墙钟时间就是正确性的一部分: 两分钟的报告会被中途放弃, 而这
-和"没人跑的闸门"是同一个下场。加速不是靠少问换来的, 并且这条规则由测试守住: 行集合、每个分节的计数、
-以及整个报告正文, 都和串行版本逐字节相同, 干净场景和失败场景都一样。
-
-`bump_version.py` 一次改齐五处版本(plugin.json、两个 README 徽章、ROADMAP、CHANGELOG)。仓库已经
-版本不一致时它直接拒跑而不是把不一致掩盖掉;它也从不 commit / push,发版是人的决定。
-
-## 如何触发
-
-触发词：*创建 skill、做一个 skill、脚手架 skill、写新 skill、批量创建 skill、做一套 skill、优化 skill 的触发/描述、skill 工厂。*
-
-## 证据与运行准备
-
-使用 Python 3.10 或更新版本。运行元数据与 YAML 工作流校验前安装 `requirements.txt`；离线测试使用 `requirements-dev.txt`。YAML 解析器缺失或 frontmatter 无效时，G6 不会通过，库清单会保留未完成检查的记录。
-本地测试还需要 PATH 中有 Git 和 POSIX `sh`。Windows 上可在 Git Bash 中运行，或把 Git for Windows 的 `bin` 目录加入当前终端的 PATH；只有 `cmd` 目录时找不到 `sh`。在包含子模块的克隆中运行：
+草稿检查不代表接受候选。先完成实现、双语 README、设计理念、SKILL、ROADMAP、CHANGELOG
+以及适用的配置和参考文档。按每项受影响行为记录文档影响。
+最终 snapshot 前运行 accepted 检查，随后收集绑定候选的证据并独立评审：
 
 ```bash
-python -m pip install -r requirements-dev.txt
-python -m pytest -c pytest.ini tests/ tools/ -q -ra
+python skills/skill-smith/scripts/check_conformance.py ../my-skill
+python skills/skill-smith/scripts/acceptance_gate.py --repo ../my-skill --snapshot
+python skills/skill-smith/scripts/acceptance_gate.py --repo ../my-skill --manifest PRIVATE_MANIFEST --policy PRIVATE_POLICY --policy-sha256 FROZEN_SHA256
 ```
 
-两个子模块都必须初始化。测试使用当前检出的 kit 版本；缺失时直接失败。
-脚手架测试从临时本地 kit 镜像克隆，并禁止网络 Git 协议。Fleet 报告及显式输出路径
-都要通过 PRIVATE 版本化存储检查；只读控制台模式用 `--no-status`。
+证据命令只校验契约，输出 JSON，在独立评审完成前返回非零。
+合成证据仍为 `synthetic_only`；非合成的自述证据仍为 `independent_review_required`。
+两轮通过的独立评审必须绑定同一候选、policy 和原始结果。
+代码、文档、fixture 或元数据变化会使旧 snapshot 与评审连续轮次失效。
+评审还要核对双语含义和实际行为，不能只看结构检查。
 
-### 初始化私有运行数据仓
+## 私有运行数据仓
 
-报告、裁剪清单和描述备份需要独立的 Git 伴生仓。在工具仓根目录执行以下命令，
-把 `OWNER` 换成私有仓所属账号：
+报告、真实 brief、评测日志、裁剪清单和备份住在已核实为 PRIVATE 的版本化伴生仓。
+公开 TOOL 文档只保留可复用理念和生成器制作的合成例子。
+
+在工具仓根目录执行，把 OWNER 换成私有伴生仓所属账号：
 
 ```bash
 gh repo create OWNER/skill-smith-config --private
@@ -192,29 +102,85 @@ gh repo view OWNER/skill-smith-config --json visibility --jq .visibility
 export SKILL_SMITH_CONFIG="$(cd ../skill-smith-config && pwd)"
 ```
 
-已有伴生仓时，把它克隆到工具仓旁边，再设置同一个环境变量。可见性查询必须返回 `PRIVATE`。
-写入命令还会核验拉取来源、全部实际推送目标及路由覆盖；`.companion` 只能证明归属。
-`SKILL_SMITH_CONFIG` 指向伴生仓，已有的 `data/` 子目录用于存放运行产物。
-也可用 `SKILL_SMITH_DATA_DIR` 指定数据目录，它同样必须通过私有版本化存储检查。
-这些目录都不能建在公开工具仓里面。
+已有伴生仓时 clone 并设置同一变量。可见性查询必须返回 `PRIVATE`。
+写入前用可信的采集工具刷新 `~/.pii-guard/visibility.json`：
+`_refreshed` 时间和全部实际 fetch / push 目标都要保持有效且为 PRIVATE，
+包括 URL 重写、SSH 别名和额外 push URL。`gh repo view` 不会刷新该回执，
+`.companion` 只能证明归属。无法解析或不支持的路由会失败。
+见 [Guards 传输契约](guards/COMPANION.md#verifying-a-companion)。
 
-`python skills/skill-smith/scripts/trim_descriptions.py --scan` 会生成待审清单，不改 skill 描述。
-生成的数据要在私有伴生仓中提交并推送。
-`python skills/skill-smith/scripts/fleet_check.py --no-status` 只在控制台显示结果，不需要报告目录。
-通用 G8 自检不检查这套存储配置，应以写入命令给出的存储核验结果为准。
+`guards/tools/datadir.py` 解析 `SKILL_SMITH_CONFIG` 或 `SKILL_SMITH_DATA_DIR`。
+已有的 `data/` 目录仍需通过 PRIVATE 版本化存储核验。
+链接路径、无版本管理的目录、PUBLIC / UNKNOWN 仓和被忽略的输出会被拒绝；
+显式 `--out`、`--backup-dir` 同样受检。写入前再次核验，绝不退回工具仓内。
+运行数据在私有伴生仓提交并推送。恢复时 clone 伴生仓、设置变量、刷新可见性回执，
+核对路径后再续跑。
 
-先集中填写[交付 brief](skills/skill-smith/reference/intake-delivery.md)，冻结独立 policy，
-再运行 snapshot 和 manifest 验收命令。JSON 结果与原始评测日志保存在私有伴生仓。
+`trim_descriptions.py --scan` 只生成私有待审清单，不改描述。
+实际裁剪需要已有授权，并用 PyYAML 校验完整 frontmatter。
+`fleet_check.py --no-status` 只输出控制台结果，不需要报告目录。通用 G8 不证明这套存储已就绪。
+
+## 技能库与 Fleet 检查
+
+预算和去重共用用户技能及活动插件清单。可同时用 `--skills-dir`、
+`--installed-plugins` 指定另一套清单。缺失、不可读或冲突条目保留为 `UNKNOWN`
+并计入 unresolved；插件缓存里的旧版本不算活动技能。
+预算需要当前捕获的 `--listing FILE` 才能证明可见性。
+历史容量仅供参考，`--capacity N` 表示当前策略。实测丢失与预计移除分别记录；
+需要用户决定移除时保留 BLOCKED，不完整观测不能给出 G3 PASS。
+
+`fleet_check.py` 只读检查别名、本地 conformance、预算、DATA 边界、远端 guard workflow
+和默认分支的每个 workflow。`--offline` 将远端项目标为未观测。
+引用带覆盖率的 VERDICT，不要只引用失败数。
+CI 说明会区分已执行的 job 和零步骤 / 无 runner 的失败，不能据此猜测原因。
+
+本地 conformance 保留安全与包格式检查，将文档结构交给
+`style/tools/doc_contract.py --root . --profile skill --stage accepted`；检查器缺失会失败。
+SKILL 超过 12,000 字符警告，超过 16,000 字符失败；已有的限期缩减例外会明确显示。
+必需相对资源路径必须存在。这些检查不证明真实效果、远端 CI 或文档语义准确。
+
+## 版本与维护
+
+plugin manifest 是版本来源；双语 README 徽章、ROADMAP Current 和最新数字版 CHANGELOG
+保持一致。后续重要变化先写 Unreleased，保留旧历史。
+规则只在[文档契约](skills/skill-smith/reference/documentation.md)维护。
+
+```bash
+python skills/skill-smith/scripts/bump_version.py . --level patch --dry-run
+```
+
+发版准备会拒绝版本漂移、不递增或不规范的版本号、无效或早于最近记录的日期，
+以及空白 / 占位的目标发布正文。已有实质 Unreleased 不需要重复提供 `--notes`；
+否则须补真实变更说明。ROADMAP 引用 CHANGELOG，不编写另一份发布历史。
+工具同步五处版本，不提交、不打 tag、不推送；版本准备不代表已经发布。
+
+## 证据与运行前提
+
+需要 Python 3.10+、Git 和 `requirements.txt` 中的 PyYAML。
+模型和 agent 工作使用 installed `llmcall` 当前路由、超时与回退策略。
+先核对所选调研、生成器和评测能力；缺失时明确保留缺口。
+
+离线测试需要 `requirements-dev.txt` 和 PATH 中的 POSIX `sh`。
+Windows 可使用 Git Bash，或在当前 shell 加入 Git for Windows 的 `bin`：
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -c pytest.ini tests/ tools/ -q -ra
+```
+
+测试从当前检出的 kit 版本建立本地镜像，禁止网络 Git 协议。
+生成的 fixture 只能验证契约，不能证明真实任务改进或外部集成。
 
 ## 局限
 
-- 证据入口按固定的 policy 与候选 hash 核对 G1/G2 完成状态、分数和其他必需证据。它只校验契约；非合成的自述结果也必须经过独立审查。候选 hash 包含文件内容、可执行模式和子模块版本。G8 分开检查空模板生成与已配置的 A/B 目录，空模板不代表功能就绪。见[证据契约](skills/skill-smith/reference/acceptance-gate.md)。
-- 先检查 market-intel、self-evolve 和选定评测器是否可用。模型工作走 installed llmcall 当前策略；缺能力明确报告，验收入口本身不实现主观评测器或部署。
-- 它优化的是**正确、聚焦、被证明**的 skill，不是数量,按设计，它会拒绝加入会撑爆库 token 预算的 skill。
+证据 CLI 不运行评测模型，也不批准候选。G8 空模板检查与已配置 A/B doctor 检查不同。
+scenario-eval 和外部 provider 必须实际存在才能选择。
+同账号私有路径只提供流程隔离，不能证明无法读取。
+安装、发布、外部就绪和实际结果都需要分别观测。
 
 ## 语言
 
-中文（`README_CN.md`）· English（`README.md`，权威版）
+English（`README.md`）· 中文（`README_CN.md`）。两份描述同一套当前契约。
 
 ## Roadmap · 许可
 

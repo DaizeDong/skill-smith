@@ -78,6 +78,12 @@ They are examples of format and gate behavior, never evidence of real skill effe
 
 ## Result and resume
 
+Complete the documentation duties and per-behavior `docs_impact` in
+[documentation.md](documentation.md) before taking the final candidate snapshot. Evaluator policy
+and holdout freeze remains BEFORE implementation; the final implementation/docs/version snapshot
+comes AFTER completion and BEFORE bound evidence and independent review. Reviewers compare the
+actual diff, current behavior, bilingual meaning and evidence, rather than accepting file presence.
+
 The command prints JSON. Valid synthetic evidence yields `synthetic_only`; valid non-fixture
 attestations yield `independent_review_required`. Both have `contract_valid: true`, `accepted: false`
 and exit 1. Relabeling fixture provenance cannot grant acceptance. Independent reviewers must inspect

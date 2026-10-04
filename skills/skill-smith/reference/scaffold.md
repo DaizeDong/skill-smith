@@ -61,6 +61,10 @@ A pre-release marker in the badge (`Roadmap-v0.2.2%20alpha-purple`) round-trips 
 `--prerelease TAG` sets one, `--no-prerelease` drops it. It lives in the badge only, because the
 other four sites are read by machines that expect plain semver.
 
+Release preflight requires substantive Unreleased content or actual `--notes`, an advancing canonical
+version and a valid date not earlier than the latest recorded release. ROADMAP links to CHANGELOG
+instead of duplicating release prose. Completion duties live in [documentation.md](documentation.md).
+
 **Badge order (hard):** Claude Code Skill (orange) -> License MIT (blue) -> 0 to 2 feature (green) ->
 Languages EN/CN (blue) -> Roadmap vX.Y.Z (purple).
 
@@ -87,6 +91,10 @@ python scripts/check_config_conformance.py ~/CodesClaude/<name>   # G8 (auto-ski
 
 Conformance is part of the acceptance gate (Step 5), a non-conformant repo is not shippable, and a
 config-bearing repo failing E1 to E7 is rejected.
+
+After generation, use `check_conformance.py <repo> --stage draft` for unfinished templates;
+that result cannot establish acceptance. Default accepted-stage checks require completed current
+docs via the pinned Style checker. Complete assigned docs before the candidate snapshot and review.
 
 ## What the scaffolder does NOT do
 

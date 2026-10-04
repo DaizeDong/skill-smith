@@ -43,8 +43,7 @@ DEDUP = os.path.join(_SCRIPTS, "dedup_check.py")
 # knowable before the skill has run, so pre-filling _audited would be the tool asserting, on the
 # author's behalf, something nobody checked. That is the exact failure the key exists to prevent.
 #
-# So the assertion is not "a fresh scaffold is conformant". It is "a fresh scaffold is conformant
-# except for the items that require a human to look, and those are exactly these".
+# Draft-stage checks test structural scaffolding. Accepted-stage documentation remains unfinished.
 NEEDS_A_HUMAN = ("data boundary: repo is an uninitialized tool",)
 
 
@@ -122,7 +121,7 @@ def test_scaffold_then_conformance(tmp_path):
     assert r.returncode == 0, r.stdout + r.stderr
     repo = os.path.join(out, "my-skill")
     assert os.path.isdir(repo)
-    c = run([CONFORM, repo])
+    c = run([CONFORM, repo, "--stage", "draft"])
     extra = unexpected_failures(c.stdout)
     assert not extra, "scaffold output failed something other than the audit key:\n%s" % '\n'.join(extra)
     # and the open item is genuinely open, not quietly passing because the check went away

@@ -22,6 +22,7 @@ The final handoff contains:
 - Candidate repo, base HEAD, current content hash, uncommitted diff and submodule revisions.
 - Brief, research references, policy hash, evaluator identity and actual backend metadata.
 - Manifest with artifact hashes, measurements, test commands and exit codes.
+- Per-behavior `docs_impact` and independent document review under [documentation.md](documentation.md).
 - External readiness: measured, unavailable, not run or not selected, per selected capability.
 - Installed alias/resource and remote checks if those actions were part of the request.
 - Remaining gates and a resume command using the same candidate and pinned policy.
@@ -33,3 +34,6 @@ invalidate artifacts bound to the previous hash; policy changes require a newly 
 For two clean rounds, use separate reviewer contexts and retain their source/result hashes. Changes
 to code, docs, packaging, fixtures, scope or oracle reset the streak. Hashes protect integrity;
 they do not make files unreadable to another process under the same account.
+
+Finish implementation, affected docs and version metadata before the final snapshot, evidence and
+review. This completion freeze follows the evaluator's policy/holdout freeze BEFORE implementation.

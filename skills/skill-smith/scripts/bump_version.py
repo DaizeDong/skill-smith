@@ -18,8 +18,8 @@ TWO RULES THAT ARE THE POINT OF THE TOOL:
      version, and the half-applied release would never be understood. Resolve the drift by hand
      first, deliberately, then bump.
 
-  2. It NEVER commits, tags or pushes. Cutting a release is a human decision; this only moves the
-     numbers so that decision is one command instead of five error-prone edits.
+  2. It requires completed release prose, valid dates and advancing canonical versions before
+     writing. It NEVER commits, tags or pushes; review the planned release within authorization.
 
 Usage:
   python bump_version.py <repo> --level patch|minor|major
@@ -27,18 +27,73 @@ Usage:
   python bump_version.py <repo> --level minor --prerelease alpha    # badge reads v0.3.0%20alpha
   python bump_version.py <repo> --level minor --no-prerelease       # drop an existing marker
 
-Stdlib only. Exit 0 on success, 1 on refusal (drift), 2 on bad usage / unreadable repo.
+Stdlib only. Exit 0 on success, 1 on release preflight refusal, 2 on bad CLI usage.
 """
 from __future__ import annotations
 
 import argparse
 import datetime
 import os
+import re
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import version_sites as vs  # noqa: E402
+
+
+def validate_release_version(version):
+    """Require canonical numeric semver, without ambiguous leading zeroes."""
+    if not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
+        raise ValueError("release version must be canonical X.Y.Z: %r" % version)
+    return vs.parse_semver(version)
+
+
+def validate_release_date(value):
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        raise ValueError("release date must be YYYY-MM-DD")
+    try:
+        return datetime.date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("release date is not a valid calendar date: %s" % value) from exc
+
+
+def release_body(text, heading):
+    end = re.search(r"^##\s", text[heading.end():], re.M)
+    return text[heading.end():heading.end() + end.start()] if end else text[heading.end():]
+
+
+def substantive_notes(text):
+    """Reject unfinished target release prose; historical/future sections are not inspected."""
+    prose = re.sub(r"<!--.*?-->", "", text or "", flags=re.S)
+    prose = re.sub(r"```.*?```", "", prose, flags=re.S)
+    lines = [line.strip() for line in prose.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    if any(unfinished_note(line) for line in lines):
+        return False
+    return any(len(re.sub(r"[^\w]", "", line)) >= 12 for line in lines)
+
+
+def unfinished_note(line):
+    return bool(re.search(r"^\s*(?:[-*+]\s+)?(?:TODO|TBD|FIXME|placeholder)\b|<\s*(?:fill|insert)[^>]*>", line, re.I))
+
+
+def release_notes(text, notes):
+    """Use completed Unreleased notes, or supplied notes when the staging body is unfinished."""
+    headings = list(vs.RE_CHANGELOG_UNRELEASED.finditer(text))
+    if len(headings) > 1:
+        raise ValueError("CHANGELOG.md: multiple Unreleased sections; reconcile before releasing")
+    heading = headings[0] if headings else None
+    body = release_body(text, heading) if heading else ""
+    if substantive_notes(body):
+        return body
+    if substantive_notes(notes):
+        remaining = re.sub(r"<!--.*?-->", "", body, flags=re.S)
+        remaining = "\n".join(line for line in remaining.splitlines()
+                              if not unfinished_note(line))
+        if substantive_notes(remaining):
+            raise ValueError("finish the partially completed Unreleased body; --notes cannot discard existing changes")
+        return "### Changed\n- %s\n" % notes.strip()
+    raise ValueError("release requires substantive Unreleased content or --notes; no placeholder release is written")
 
 
 # --- atomic-ish write -----------------------------------------------------------------------------
@@ -106,8 +161,9 @@ def plan_roadmap(text, new_ver, notes):
         return out, "ROADMAP.md: no '## vX.Y.Z (current)' heading found, body left untouched"
 
     demoted = m.group(0).replace(" (current)", "", 1)
-    body = notes or "TODO: summarize this release."
-    new_section = "## v%s (current)%s- %s%s%s" % (new_ver, nl, body, nl, nl)
+    # ROADMAP is a current capability view, not a second copy of release history.
+    body = "See [CHANGELOG.md](CHANGELOG.md) for this release; current capabilities follow below."
+    new_section = "## v%s (current)%s%s%s%s" % (new_ver, nl, body, nl, nl)
     out = out[:m.start()] + new_section + demoted + out[m.end():]
     return out, "ROADMAP.md: demoted the previous heading, opened '## v%s (current)'" % new_ver
 
@@ -122,15 +178,18 @@ def plan_changelog(text, new_ver, date, notes):
     Returns (new_text, note_for_the_operator).
     """
     nl = vs.newline_of(text)
+    validate_release_version(new_ver)
+    validate_release_date(date)
     heading = vs.changelog_heading(new_ver, date)
+    body = release_notes(text, notes).strip().replace("\r\n", "\n").replace("\n", nl)
 
     m = vs.RE_CHANGELOG_UNRELEASED.search(text)
     if m:
-        out = text[:m.start()] + heading + text[m.end():]
+        end = m.end() + len(release_body(text, m))
+        out = text[:m.start()] + heading + nl + body + nl + nl + text[end:]
         return out, "CHANGELOG.md: absorbed the Unreleased body into %s" % heading
 
-    body = notes or "TODO: describe this release."
-    section = "%s%s### Added%s- %s%s%s" % (heading, nl, nl, body, nl, nl)
+    section = "%s%s%s%s%s" % (heading, nl, body, nl, nl)
     m = vs.RE_CHANGELOG_HEADING.search(text)
     if m:
         out = text[:m.start()] + section + text[m.start():]
@@ -143,6 +202,19 @@ def plan_changelog(text, new_ver, date, notes):
 # --- main ---------------------------------------------------------------------------------------
 def build_plan(root, new_ver, cur_ver, date, notes, prerelease):
     """Compute the new content of all five sites. Raises before anything is written if any fails."""
+    if validate_release_version(new_ver) <= validate_release_version(cur_ver):
+        raise ValueError("target release version must advance the current version")
+    release_date = validate_release_date(date)
+    changelog = vs.read_text(os.path.join(root, vs.SITE_FILES["CHANGELOG"]))
+    if changelog is None:
+        raise ValueError("CHANGELOG.md: unreadable")
+    latest = vs.RE_CHANGELOG_HEADING.search(changelog)
+    if latest:
+        current_line = changelog[latest.start():].splitlines()[0]
+        match = re.fullmatch(r"##\s*\[[0-9]+\.[0-9]+\.[0-9]+\]\s*-\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\s*", current_line)
+        if not match or release_date < validate_release_date(match.group(1)):
+            raise ValueError("release date must be valid and not precede the latest recorded release")
+    release_notes(changelog, notes)
     planned, notes_out = [], []
 
     def site(key):
@@ -256,9 +328,9 @@ def main(argv=None):
 
     try:
         planned, notes_out = build_plan(root, new_ver, cur_ver, date, a.notes, prerelease)
-    except Exception as e:
-        print("ERROR: %s" % e)
-        return 2
+    except ValueError as e:
+        print("REFUSING: %s" % e)
+        return 1
 
     print("%s: %s -> %s%s" % (root, cur_ver, new_ver, "  (dry run)" if a.dry_run else ""))
     kept = existing_pre.get("README") or ""

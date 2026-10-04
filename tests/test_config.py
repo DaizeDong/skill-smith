@@ -71,7 +71,7 @@ def test_with_config_scaffold_keeps_configured_g8_pending_and_passes_static_g6(t
     assert g8.returncode == 2 and "6/7 elements pass" in g8.stdout
     assert "configuration_required" in g8.stdout
     # G6: Spec v1 conformance unaffected by the config additions
-    g6 = run([CONFORM, repo])
+    g6 = run([CONFORM, repo, "--stage", "draft"])
     _x = unexpected_failures(g6.stdout)
     assert not _x, "must remain Spec-v1 conformant, and not merely the audit key:\n%s" % '\n'.join(_x)
     assert any(k in g6.stdout for k in NEEDS_A_HUMAN), g6.stdout

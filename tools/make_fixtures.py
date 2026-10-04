@@ -15,6 +15,34 @@ def write_json(path, value):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def release_documentation_fixture(root, version="0.1.0", notes="Adds synthetic report validation."):
+    """Generate minimal version surfaces for release preflight without any live/run data."""
+    root = Path(root)
+    write_json(root / ".claude-plugin/plugin.json", {"name": "synthetic-release", "version": version})
+    for readme in ("README.md", "README_CN.md"):
+        (root / readme).write_text("Roadmap-v%s-purple\n" % version, encoding="utf-8")
+    (root / "ROADMAP.md").write_text("# Roadmap\n\nCurrent: **v%s**\n\n## v%s (current)\n- Existing capability.\n\n## Planned\n- TODO: future synthetic feature.\n" % (version, version), encoding="utf-8")
+    history = "## [%s] - 2020-01-01\n### Added\n- Initial synthetic capability.\n" % version
+    staged = "## [Unreleased]\n### Changed\n- %s\n\n" % notes if notes is not None else ""
+    (root / "CHANGELOG.md").write_text("# Changelog\n\n" + staged + history, encoding="utf-8")
+    return root
+
+
+def documentation_checker_fixture(root, report, exit_code=0, raw=None):
+    """A generated subprocess fixture exercises the kit interface, not documentation semantics."""
+    target = Path(root) / "style/tools/doc_contract.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(report) if raw is None else raw
+    target.write_text("import sys\nprint(%r)\nsys.exit(%d)\n" % (payload, exit_code), encoding="utf-8")
+    return target
+
+
+def documentation_contract_report(ok=True, stage="accepted"):
+    return {"schema_version": 1, "profile": "skill", "stage": stage, "ok": ok,
+            "checks": [{"name": "docs.required", "status": "PASS" if ok else "FAIL",
+                        "detail": "synthetic kit report"}], "failures": []}
+
+
 def acceptance_bundle(root, candidate_sha256):
     """A simulated measurement bundle for gate tests, not evidence of real skill quality."""
     root = Path(root)
