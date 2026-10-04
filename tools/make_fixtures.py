@@ -38,9 +38,13 @@ def documentation_checker_fixture(root, report, exit_code=0, raw=None):
 
 
 def documentation_contract_report(ok=True, stage="accepted"):
+    names = ("docs.required", "readme.philosophy", "readme.install", "docs.placeholders",
+             "version.source", "version.current", "changelog.releases", "roadmap.current", "links.local")
     return {"schema_version": 1, "profile": "skill", "stage": stage, "ok": ok,
-            "checks": [{"name": "docs.required", "status": "PASS" if ok else "FAIL",
-                        "detail": "synthetic kit report"}], "failures": []}
+            "checks": [{"name": name, "status": "FAIL" if not ok and name == names[0] else "PASS",
+                        "detail": "synthetic kit report"} for name in names],
+            "failures": [] if ok else [{"name": names[0], "detail": "synthetic kit report"}],
+            "unverified": ["semantic completeness and bilingual accuracy", "documented commands and external behavior"]}
 
 
 def acceptance_bundle(root, candidate_sha256):

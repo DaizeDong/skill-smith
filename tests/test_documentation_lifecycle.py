@@ -77,10 +77,13 @@ def test_delegate_pass_and_named_failure(tmp_path):
         documentation_checker_fixture(tmp_path, checker_report(ok), 0 if ok else 1)
         conformance.results.clear()
         conformance.check_documentation(str(tmp_path))
-        assert conformance.results == [("documentation: docs.required", ok, "synthetic kit report")]
+        assert len(conformance.results) == 10
+        assert conformance.results[0] == ("documentation: docs.required", ok, "synthetic kit report")
+        assert conformance.results[-1][0:2] == ("documentation: unverified boundaries", conformance.WARN)
 
 
-@pytest.mark.parametrize("fault", ["missing", "malformed", "empty", "wrong_stage", "wrong_exit", "wrong_ok"])
+@pytest.mark.parametrize("fault", ["missing", "malformed", "empty", "wrong_stage", "wrong_exit", "wrong_ok",
+                                  "omitted", "duplicate", "unknown", "missing_boundaries", "wrong_failures"])
 def test_unobserved_or_invalid_checker_is_a_visible_failure(tmp_path, fault):
     report = checker_report()
     if fault == "empty":
@@ -89,6 +92,16 @@ def test_unobserved_or_invalid_checker_is_a_visible_failure(tmp_path, fault):
         report["stage"] = "draft"
     if fault == "wrong_ok":
         report["ok"] = False
+    if fault == "omitted":
+        report["checks"].pop()
+    if fault == "duplicate":
+        report["checks"][-1] = report["checks"][0].copy()
+    if fault == "unknown":
+        report["checks"][-1]["name"] = "unknown.rule"
+    if fault == "missing_boundaries":
+        report.pop("unverified")
+    if fault == "wrong_failures":
+        report["failures"] = [{"name": "docs.required", "detail": "synthetic false failure"}]
     if fault != "missing":
         documentation_checker_fixture(tmp_path, report, 1 if fault == "wrong_exit" else 0,
                                       "not json" if fault == "malformed" else None)
@@ -110,3 +123,32 @@ def test_delegate_uses_current_kit_root_profile_and_trusted_stage(tmp_path, monk
     conformance.check_documentation(str(tmp_path), "draft")
     assert calls[0][0][1:] == [str(tmp_path / "style/tools/doc_contract.py"), "--root",
                               str(tmp_path), "--profile", "skill", "--stage", "draft", "--json"]
+
+
+def test_main_leaves_version_current_and_badges_to_shared_checker(tmp_path, monkeypatch, capsys):
+    from make_fixtures import review11_skill
+    review11_skill(tmp_path, "valid")
+    documentation_checker_fixture(tmp_path, checker_report())
+    for name in ("README.md", "README_CN.md"):
+        path = tmp_path / name
+        path.write_text(path.read_text(encoding="utf-8").replace("Roadmap-v0.0.1-purple", "Roadmap-current-purple"), encoding="utf-8")
+    (tmp_path / "ROADMAP.md").write_text("# Roadmap\nCurrent: see `.claude-plugin/plugin.json`.\n", encoding="utf-8")
+    def execute(args, **kwargs):
+        return subprocess.CompletedProcess(args, 0, json.dumps(checker_report()) if Path(args[1]).name == "doc_contract.py" else "synthetic scanner clean", "")
+    monkeypatch.setattr(conformance.subprocess, "run", execute)
+    conformance.results.clear()
+    assert conformance.main(str(tmp_path)) == 0
+    output = capsys.readouterr().out
+    assert "documentation: version.current" in output
+    assert "version four-source" not in output and "README badge: Roadmap" not in output
+    assert "semantic completeness and bilingual accuracy" in output
+
+
+def test_scaffold_freeze_instruction_precedes_document_drafting(tmp_path, monkeypatch, capsys):
+    import scaffold_skill as scaffold
+    monkeypatch.setattr(scaffold, "emit_guards", lambda *args: None)
+    monkeypatch.setattr(sys, "argv", ["scaffold_skill.py", "synthetic-tool", "--out-dir", str(tmp_path)])
+    assert scaffold.main() == 0
+    output = capsys.readouterr().out
+    assert output.index("Freeze evaluator policy + holdout BEFORE") < output.index("generation owner completes README")
+    assert "--stage draft" in output
