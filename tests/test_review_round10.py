@@ -192,9 +192,9 @@ def test_ignore_checks_follow_order_negation_and_path_scope(tmp_path, monkeypatc
 @pytest.mark.native
 @pytest.mark.parametrize("hook", ["pre-commit", "pre-push"])
 @pytest.mark.parametrize("kind", ["missing", "empty", "directory", "valid", "failure"])
-def test_consumer_hook_rejects_incomplete_delegate(tmp_path, hook, kind):
+def test_consumer_hook_rejects_incomplete_delegate(tmp_path, hook, kind, native_sh):
     fixture = review10_hook(tmp_path, hook, (ROOT / ".githooks" / hook).read_bytes(), kind)
-    result = subprocess.run(["sh", str(fixture["path"]), *fixture["args"]], cwd=tmp_path,
+    result = subprocess.run([native_sh, str(fixture["path"]), *fixture["args"]], cwd=tmp_path,
                             input=fixture["stdin"], capture_output=True, text=True, timeout=10)
     assert result.returncode == fixture["expected_exit"], result.stdout + result.stderr
     if kind in ("valid", "failure"):

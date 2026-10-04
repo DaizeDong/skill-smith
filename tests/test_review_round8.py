@@ -108,13 +108,14 @@ def test_initializer_rejects_child_escape_before_any_write(consumer, config_env,
     assert file_snapshot(target) == target_before
 
 
-def test_initializer_allows_contained_child_link_without_private_git_prerequisite(consumer, config_env, tmp_path):
+def test_initializer_rejects_contained_child_alias_before_any_write(consumer, config_env, tmp_path):
     selected, target = config_initializer_destination(tmp_path, consumer["consumer"], contained=True)
+    selected_before, target_before = file_snapshot(selected), file_snapshot(target)
     result = invoke(consumer, "init_config.py", config_env, "--out", str(selected), "--force")
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert (target / ".gitkeep").is_file()
-    assert json.loads((selected / "registry.json").read_text())["skill"] == consumer["name"]
-    assert not (selected / ".git").exists()
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert "link or reparse alias" in result.stdout + result.stderr
+    assert file_snapshot(selected) == selected_before
+    assert file_snapshot(target) == target_before
 
 
 def test_scaffold_emitted_validator_commands_run_from_documented_caller(consumer):
@@ -127,7 +128,9 @@ def test_scaffold_emitted_validator_commands_run_from_documented_caller(consumer
     assert len(commands) == 2, result.stdout
     for command in commands:
         argv = shlex.split(command)
-        assert len(argv) == 3 and Path(argv[2]) == consumer["consumer"], command
+        assert Path(argv[2]) == consumer["consumer"], command
+        expected_tail = [] if Path(argv[1]).name == "check_config_conformance.py" else ["--stage", "draft"]
+        assert argv[3:] == expected_tail, command
         executed = subprocess.run([sys.executable, *argv[1:]], cwd=SCRIPTS.parent,
                                   capture_output=True, text=True, encoding="utf-8", timeout=120)
         output = executed.stdout + executed.stderr
