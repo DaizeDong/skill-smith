@@ -1,6 +1,6 @@
 # Roadmap
 
-Current: **v0.1.4**
+Current: **v0.1.5**
 
 The plugin manifest defines the release version. Later work is recorded in CHANGELOG Unreleased;
 it does not imply another release or production readiness.
@@ -19,7 +19,10 @@ it does not imply another release or production readiness.
   release preparation refuses placeholders, invalid dates and non-advancing versions.
 - Installed provider readiness, semantic accuracy and actual usefulness need their own evidence.
 
-## v0.1.4 (current)
+## v0.1.5 (current)
+See [CHANGELOG.md](CHANGELOG.md) for this release; current capabilities follow below.
+
+## v0.1.4
 See [CHANGELOG.md](CHANGELOG.md) for this release; current capabilities follow below.
 
 ## v0.1.3, the dash gate is scaffolded into every new skill

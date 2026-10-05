@@ -9,8 +9,17 @@ permissions:
 
 jobs:
   package:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    env:
+      SKILL_SMITH_REQUIRE_SHORT_PATH: '1'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,8 +30,17 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - name: Build and install the wheel
         run: |
-          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/wheels" .
-          python -m pip install --no-deps "$RUNNER_TEMP"/wheels/skill_smith-*.whl
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          wheel_dir = Path(os.environ['RUNNER_TEMP']) / 'wheels'
+          subprocess.run([sys.executable, '-m', 'pip', 'wheel', '--no-deps',
+                          '--wheel-dir', str(wheel_dir), '.'], check=True)
+          wheel, = wheel_dir.glob('skill_smith-*.whl')
+          subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-deps', str(wheel)], check=True)
+          PY
       - name: Verify installed payload and aligned version
         run: |
           python -I - <<'PY'
@@ -36,5 +54,6 @@ jobs:
       - name: Run deterministic package contracts
         run: >-
           python -m pytest tests/test_catalog_contract.py tests/test_catalog_acquisition.py
+          tests/test_catalog_path_aliases.py
           tests/test_runtime_overlays.py tests/test_resource_resolution.py
           tests/test_t10_source_workflows.py tests/test_agent_entrypoints.py -q

@@ -42,6 +42,26 @@ def join_relative(root, *parts):
     return str(Path(root).joinpath(*(p.replace("\\", "/") for p in parts)))
 
 
+def _long_path_spelling(path):
+    """Expand Windows 8.3 names without resolving junction or symlink targets."""
+    value = os.fspath(path)
+    if os.name != "nt":
+        return value
+    import ctypes
+
+    query = ctypes.WinDLL("kernel32", use_last_error=True).GetLongPathNameW
+    query.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+    query.restype = ctypes.c_uint32
+    size = query(value, None, 0)
+    if size:
+        buffer = ctypes.create_unicode_buffer(size)
+        written = query(value, buffer, size)
+        if 0 < written < size:
+            return buffer.value
+    # An unavailable spelling keeps the original boundary; it grants no access.
+    return value
+
+
 def probe(path, approved_roots):
     """Retain direct and final targets; distinguish missing from unreadable."""
     result = {"path": str(path), "resolved_path": None, "direct_target": None,
@@ -59,7 +79,8 @@ def probe(path, approved_roots):
         except FileNotFoundError:
             pass
         result["resolved_path"] = os.path.realpath(path)
-        if not any(within(result["resolved_path"], root) for root in approved_roots):
+        if not any(within(result["resolved_path"], _long_path_spelling(root))
+                   for root in approved_roots):
             result.update(resolution="outside_approved_roots", resolved="no")
             return result
         info = os.stat(path)
