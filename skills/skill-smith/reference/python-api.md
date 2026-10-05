@@ -51,6 +51,12 @@ malformed, unreadable or ambiguous supplied inputs produce partial coverage.
 Record identity and declared/enabled/cached/installed/resolved/discovered/compatible
 observations remain separate. Filesystem presence cannot establish runtime use.
 
+On Windows, resolved containment expands 8.3 spellings of approved roots without
+following their junction or symlink targets. A short spelling of the same root
+works; a link that escapes it still requires its target to be approved separately.
+The initial path must also be lexically within an approved root. If Windows cannot
+expand a root spelling, its original spelling remains the containment boundary.
+
 `python -m skill_smith` and `skill-smith-catalog` read a request from stdin or
 `--request FILE` and print JSON. Exit 0 includes an unchecked catalog, exit 1
 indicates partial coverage, and exit 2 indicates an unreadable request. Consumers
@@ -99,9 +105,10 @@ by this adapter, and raw diagnostics are not copied into catalog records.
 The package regression tests use generated synthetic files and a stub llmcall
 client. Native cleanup tests use a synthetic Python child and require Windows;
 they never start Codex or a model provider. The package CI builds and independently
-imports the wheel, checks its version, and runs the deterministic catalog,
+imports the wheel on Linux and Windows, checks its version, and runs the deterministic catalog,
 selection, resource, conversion and injected agent-context contracts. Windows
-cleanup tests additionally require the reviewed llmcall process runtime.
+package CI requires the native 8.3 alias and junction boundary tests to execute.
+Windows cleanup tests additionally require the reviewed llmcall process runtime.
 
 These checks do not prove a live loader, provider permissions, deployment,
 authentication or persistent workflow recovery. The standalone budget, dedup,

@@ -1720,6 +1720,33 @@ def synthetic_call_context(cwd=None, env=None):
     return SimpleNamespace(cwd=str(Path(cwd or ".").resolve()), env=dict(env or {}))
 
 
+def catalog_path_alias_fixture(root):
+    """Generate a catalog root and a distinct outside tree for native path tests."""
+    root = Path(root)
+    approved = root / "synthetic-catalog-long-directory"
+    outside = root / "synthetic-outside-long-directory"
+    skill(approved / "skills/demo")
+    skill(outside / "skills/other", name="other")
+    return {"approved": approved, "outside": outside}
+
+
+def windows_short_path(path):
+    """Read the actual 8.3 spelling of an existing synthetic path."""
+    import ctypes
+
+    query = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+    query.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+    query.restype = ctypes.c_uint32
+    size = query(str(path), None, 0)
+    if not size:
+        raise ctypes.WinError(ctypes.get_last_error())
+    buffer = ctypes.create_unicode_buffer(size)
+    written = query(str(path), buffer, size)
+    if not written or written >= size:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return Path(buffer.value)
+
+
 def text_file(path, text):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

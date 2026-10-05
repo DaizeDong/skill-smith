@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here (Keep a Changelog style).
 
+## [0.1.5] - 2026-10-05
+### Fixed
+- Windows catalogs accept approved roots written with 8.3 short names while
+  continuing to reject junction and symlink targets outside approved roots.
+### Changed
+- Package CI builds and imports wheels on Linux and Windows. Windows checks require
+  native short-name coverage together with directory-link boundary controls.
+
 ## [0.1.4] - 2026-10-05
 ### Added
 - Buildable Python catalog and runtime adapter package, with original synthetic
