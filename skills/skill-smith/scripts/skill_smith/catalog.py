@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .metadata import parse_frontmatter
 from .models import DIMENSIONS, STAGES, STATES, new_record, observe
-from .paths import join_relative, normalize, probe
+from .paths import _long_path_spelling, join_relative, normalize, probe
 
 MAX_INPUT_BYTES = 4 * 1024 * 1024
 # This installer also provisions the runtime needed by the skill. A filesystem
@@ -507,9 +507,12 @@ class Discovery:
                 for value in extra:
                     value = value.replace("${CLAUDE_PLUGIN_ROOT}", str(root))
                     path = root / value
-                    from .paths import within
-                    if not within(path, root) or not within(path.resolve(), root):
+                    observation = probe(path, [root])
+                    if observation["resolution"] == "outside_approved_roots":
                         self.problem(stage, "agent_reference_outside_plugin", manifest, record)
+                        continue
+                    if observation["resolved"] != "yes":
+                        self.problem(stage, "declared_plugin_path_unavailable", path, record)
                         continue
                     references[kind].append(path)
         for folder, paths in references.items():
@@ -672,9 +675,12 @@ class Discovery:
                     index[normalize(ep["resolved_path"])].append(ep)
         observed = defaultdict(list)
         for scope in data:
+            # Accept spelling aliases of the launch cwd, never a reported link target.
             if (not isinstance(scope, dict) or not isinstance(scope.get("cwd"), str)
+                    or '\x00' in scope["cwd"]
                     or not Path(scope["cwd"]).is_absolute()
-                    or normalize(scope["cwd"]) != normalize(Path(self.request[stage]["cwd"]).resolve())):
+                    or normalize(_long_path_spelling(scope["cwd"]))
+                    != normalize(Path(self.request[stage]["cwd"]).resolve())):
                 self.problem(stage, "native result has unexpected cwd")
                 continue
             if not isinstance(scope.get("errors", []), list) or scope.get("errors", []):

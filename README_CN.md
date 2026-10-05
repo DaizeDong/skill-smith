@@ -12,7 +12,7 @@
 [![Research-first](https://img.shields.io/badge/Design-research--first-green?style=flat)](skills/skill-smith/reference/research-first.md)
 [![Acceptance gate](https://img.shields.io/badge/Evidence-independent%20review-green?style=flat)](skills/skill-smith/reference/acceptance-gate.md)
 [![Languages](https://img.shields.io/badge/Languages-EN%20%2F%20CN-blue?style=flat)](#语言)
-[![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.5-purple?style=flat)](ROADMAP.md)
+[![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.6-purple?style=flat)](ROADMAP.md)
 
 [English](README.md) | [中文版](README_CN.md)
 
@@ -65,7 +65,8 @@ Python 调用方可以从源码构建并安装 `skill_smith` 包，用于读取�
 依赖、wheel 构建、覆盖状态和验证边界见 [Python API](skills/skill-smith/reference/python-api.md)。
 缺少所需的执行类型接口时，适配器会在运行前明确拒绝；安装成功本身不证明所选 llmcall
 运行环境提供了这些能力。
-Windows 目录发现支持以 8.3 短文件名表示的批准根目录。Junction 或符号链接若指向根目录之外，
+Windows 目录发现支持以 8.3 短文件名表示的批准根目录，包括插件清单声明的自定义入口。
+自定义入口必须留在插件根目录内；其他 junction 或符号链接若指向批准根目录之外，
 目标仍须单独列入批准范围。
 
 ## 快速开始
