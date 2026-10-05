@@ -8,7 +8,8 @@
     "acceptance/",
     "worklist.json",
     "description-backups/",
-    "research/"
+    "research/",
+    "maintenance/"
   ],
   "data_sealed": [],
   "fixture": [

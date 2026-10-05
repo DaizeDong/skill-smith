@@ -1,5 +1,10 @@
 # skill-smith
 
+伴生仓保留哪些数据、何时清理，以主仓的[存储契约](storage.contract.json)为准。
+只保留当前运行所需的结构化数据、必要配置和用户要求的最终产物；有用的代码或结论提取一次后，
+结束旧开发目录的保留。共享[存储检查器](skills/skill-smith/reference/storage-contract.md)报告未声明项和大小，
+默认只检查。删除须针对具体项目，并再次核验 PRIVATE、路径边界、停止写入依据和批准的计划。
+
 通过调研、受守卫保护的脚手架和独立证据评审，创建职责清楚的 skill。
 
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-orange?style=flat)](https://docs.anthropic.com/en/docs/claude-code)

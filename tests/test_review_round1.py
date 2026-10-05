@@ -182,7 +182,7 @@ def test_static_g8_keeps_all_elements_without_accepting(tmp_path, capsys):
     repo = config_lifecycle(tmp_path/'acme-config-tool')
     assert config.main(str(repo), True) != 0
     output = capsys.readouterr().out
-    assert 'E4' in output and 'E5' in output and '5/7' in output
+    assert 'E4' in output and 'E5' in output and '6/8' in output
     assert 'ACCEPT' not in output and 'static_not_executed' in output
 
 
@@ -216,4 +216,4 @@ def test_blank_template_requires_configuration_then_both_swap_legs_work(tmp_path
             if script == 'exercise.py': assert configured.stdout.strip().decode() == leg
         configs.append(str(destination))
     assert config.main(str(repo), False, config_a=configs[0], config_b=configs[1]) == 0
-    assert '7/7 elements pass' in capsys.readouterr().out
+    assert '8/8 elements pass' in capsys.readouterr().out
