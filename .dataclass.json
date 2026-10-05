@@ -16,5 +16,6 @@
     "fleet-check-status.json.example",
     "worklist.json.example"
   ],
-  "_data_home": "Verified PRIVATE skill-smith-config companion via SKILL_SMITH_CONFIG or SKILL_SMITH_DATA_DIR; no in-repo fallback."
+  "_data_home": "Verified PRIVATE skill-smith-config companion via SKILL_SMITH_CONFIG or SKILL_SMITH_DATA_DIR; no in-repo fallback.",
+  "_package_audit": "The Python catalog reads caller-supplied sources and prints JSON without a default output/cache. Selection and overlays return in-memory values; optional llmcall adapters keep session state in memory. Generated review instructions require caller-resolved verified PRIVATE versioned storage before any real-output write. Callers own captured inventory, private policy and durable workflow history there. API test inputs are generated through tools/make_fixtures.py."
 }

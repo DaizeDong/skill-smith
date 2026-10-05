@@ -12,7 +12,7 @@
 [![Research-first](https://img.shields.io/badge/Design-research--first-green?style=flat)](skills/skill-smith/reference/research-first.md)
 [![Acceptance gate](https://img.shields.io/badge/Evidence-independent%20review-green?style=flat)](skills/skill-smith/reference/acceptance-gate.md)
 [![Languages](https://img.shields.io/badge/Languages-EN%20%2F%20CN-blue?style=flat)](#语言)
-[![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.3-purple?style=flat)](ROADMAP.md)
+[![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.4-purple?style=flat)](ROADMAP.md)
 
 [English](README.md) | [中文版](README_CN.md)
 
@@ -59,6 +59,12 @@ python -m pip install -r requirements.txt
 
 两个子模块都要初始化；已有 clone 可运行 `git submodule update --init --recursive`。
 参与提交前设置适合公开的身份。已安装别名和资源路径需要另行核验，见[部署说明](skills/skill-smith/reference/deploy.md)。
+
+Python 调用方可以从源码构建并安装 `skill_smith` 包，用于读取明确指定的技能来源、
+选择入口并生成经过校验的运行描述。可选执行功能使用已安装的 llmcall 接口。
+依赖、wheel 构建、覆盖状态和验证边界见 [Python API](skills/skill-smith/reference/python-api.md)。
+缺少所需的执行类型接口时，适配器会在运行前明确拒绝；安装成功本身不证明所选 llmcall
+运行环境提供了这些能力。
 
 ## 快速开始
 

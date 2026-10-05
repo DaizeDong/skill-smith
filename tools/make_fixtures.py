@@ -527,6 +527,7 @@ def directory_link(link, target):
     import os
 
     link, target = Path(link), Path(target)
+    link.parent.mkdir(parents=True, exist_ok=True)
     if os.name == "nt":
         import _winapi
         _winapi.CreateJunction(str(target), str(link))
@@ -1709,3 +1710,63 @@ def review19_checkout_layout(directory, kits, required_files):
             "global_config": global_config, "global_bytes": global_bytes,
             "name": "synthetic-checkout-tool", "changed_member": "tools/pii_guard.py",
             "changed_payload": b"# synthetic genuine edit\n"}
+
+
+# Generated inputs for the packaged catalog and overlay contracts.
+def synthetic_call_context(cwd=None, env=None):
+    """Supply an inert caller context for an explicitly injected test client."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(cwd=str(Path(cwd or ".").resolve()), env=dict(env or {}))
+
+
+def text_file(path, text):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return str(path)
+
+
+def catalog_json(path, value):
+    return text_file(path, json.dumps(value))
+
+
+def skill(path, name="demo", description="Parse synthetic invoices and extract totals."):
+    path = Path(path)
+    path.mkdir(parents=True, exist_ok=True)
+    text_file(path / "SKILL.md",
+        f"---\nname: {name}\ndescription: {description}\n---\nSynthetic skill.\n",
+    )
+    return path
+
+
+def external(root):
+    return {
+        "profile_home": str(root),
+        "external_skill_repos": catalog_json(root / "sources.json", {
+            "skillRepoRoot": "repos",
+            "repos": [{"dir": "demo-kit", "url": "https://example.com/acme/demo.git",
+                       "branch": "main", "skills": [
+                           {"name": "invoice-alias", "subPath": "skills/invoice"}]}],
+            "vendoredRoot": "vendor",
+            "vendored": [{"name": "local-copy", "upstream": "acme/toolkit",
+                          "commit": "a" * 40, "subPath": "upstream/skill",
+                          "vendored": "2026-01-01"}],
+        }),
+    }
+
+
+def plugins(root):
+    active = skill(root / "cache" / "market-a" / "1" / "skills" / "demo")
+    other = skill(root / "cache" / "market-b" / "2" / "skills" / "demo")
+    skill(root / "cache" / "market-a" / "99" / "skills" / "stale", "stale")
+    registry = catalog_json(root / "installed.json", {"version": 2, "plugins": {
+        "demo@market-a": [{"scope": "user", "version": "1", "installPath": str(active.parent.parent)}],
+        "demo@market-b": [{"scope": "user", "version": "2", "installPath": str(other.parent.parent)}],
+    }})
+    settings = catalog_json(root / "settings.json", {"enabledPlugins": {
+        "demo@market-a": False, "demo@market-b": True,
+    }})
+    return {"plugin_registries": [{"path": registry, "settings_path": settings,
+                                    "client": "claude", "scope": "user",
+                                    "approved_roots": [str(root / "cache")]}]}
