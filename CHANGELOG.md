@@ -2,8 +2,12 @@
 
 All notable changes to this project are documented here (Keep a Changelog style).
 
-## [Unreleased]
+## [0.1.4] - 2026-10-05
 ### Added
+- Buildable Python catalog and runtime adapter package, with original synthetic
+  API regression coverage, optional llmcall dependency and independent wheel import checks.
+- Review templates require verified private storage; transform v5 rejects old
+  descriptors. Typed llmcall adapters reject missing interfaces before execution.
 - Source-owned companion storage contracts, bounded inventory and explicitly approved retirement checks.
 - Configuration scaffolds and G8 validate storage declarations and retention rules.
 - Documentation completion contract in `reference/documentation.md`: assign all applicable docs,

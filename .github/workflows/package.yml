@@ -1,0 +1,40 @@
+name: Python package
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Build and install the wheel
+        run: |
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/wheels" .
+          python -m pip install --no-deps "$RUNNER_TEMP"/wheels/skill_smith-*.whl
+      - name: Verify installed payload and aligned version
+        run: |
+          python -I - <<'PY'
+          import importlib.metadata
+          import json
+          from pathlib import Path
+          from skill_smith import catalog, conflicts, overlays, role_entrypoints, source_workflows
+          assert catalog.discover({})['coverage']['skill_roots']['status'] == 'unchecked'
+          assert importlib.metadata.version('skill-smith') == json.loads(Path('.claude-plugin/plugin.json').read_text())['version']
+          PY
+      - name: Run deterministic package contracts
+        run: >-
+          python -m pytest tests/test_catalog_contract.py tests/test_catalog_acquisition.py
+          tests/test_runtime_overlays.py tests/test_resource_resolution.py
+          tests/test_t10_source_workflows.py tests/test_agent_entrypoints.py -q

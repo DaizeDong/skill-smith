@@ -15,6 +15,12 @@ skill-smith puts research before generation and evidence review after it, delega
 engines. Acceptance needs independent approval of the completed candidate and actual measurements;
 the CLI validates contracts and never grants acceptance.
 
+The Python API applies the same separation to integration: catalog observations
+describe exact sources, selection preserves ambiguity, and descriptors bind the
+source and resource bytes. Execution delegates to the installed llmcall interface.
+The caller owns deployment and durable private state; an importable package or a
+ready descriptor does not prove runtime readiness.
+
 ---
 
 ## P1, Research-first: design against the state of the art, surveyed not asserted

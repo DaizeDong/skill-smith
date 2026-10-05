@@ -7,7 +7,7 @@ Create focused skills through research, guarded scaffolding and independent revi
 [![Research-first](https://img.shields.io/badge/Design-research--first-green?style=flat)](skills/skill-smith/reference/research-first.md)
 [![Acceptance gate](https://img.shields.io/badge/Evidence-independent%20review-green?style=flat)](skills/skill-smith/reference/acceptance-gate.md)
 [![Languages](https://img.shields.io/badge/Languages-EN%20%2F%20CN-blue?style=flat)](#languages)
-[![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.3-purple?style=flat)](ROADMAP.md)
+[![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.4-purple?style=flat)](ROADMAP.md)
 
 [English](README.md) | [中文版](README_CN.md)
 
@@ -58,6 +58,13 @@ python -m pip install -r requirements.txt
 Keep both submodules initialized; an existing clone uses `git submodule update --init --recursive`.
 Use a public-safe commit identity before contributing. Installed aliases and resource paths require
 their own verification; see [deployment](skills/skill-smith/reference/deploy.md).
+
+Python consumers can build and install the `skill_smith` package from this checkout.
+It provides explicit source discovery, selection and validated runtime descriptors;
+optional execution uses the installed llmcall interface. See the [Python API](skills/skill-smith/reference/python-api.md)
+for dependencies, wheel building, coverage states and verification limits.
+Adapters reject missing typed execution contracts before running; installation
+alone does not establish that the selected llmcall runtime supports them.
 
 ## Quick start
 

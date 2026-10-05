@@ -1,12 +1,15 @@
 # Roadmap
 
-Current: **v0.1.3**
+Current: **v0.1.4**
 
 The plugin manifest defines the release version. Later work is recorded in CHANGELOG Unreleased;
 it does not imply another release or production readiness.
 
 ## Current capabilities beyond the release baseline
 
+- The Python package provides schema 1 source catalogs, exact selection, validated
+  overlays and llmcall adapters. Synthetic contract and wheel checks are separate
+  from live loader, provider-permission and deployment acceptance.
 - Evidence CLI validates G1 paired scores, G2 held-out trials and required policy/candidate-bound
   artifacts. It reports contract-only verdicts and never grants acceptance.
 - Completed implementation/docs/version metadata freeze before evidence and independent review;
@@ -16,7 +19,10 @@ it does not imply another release or production readiness.
   release preparation refuses placeholders, invalid dates and non-advancing versions.
 - Installed provider readiness, semantic accuracy and actual usefulness need their own evidence.
 
-## v0.1.3 (current), the dash gate is scaffolded into every new skill
+## v0.1.4 (current)
+See [CHANGELOG.md](CHANGELOG.md) for this release; current capabilities follow below.
+
+## v0.1.3, the dash gate is scaffolded into every new skill
 
 - `scaffold_skill.py` initializes the pinned `guards/` security and `style/` presentation submodules.
   Its dash workflow calls `./style/ci/dash-guard`; the scanner is `style/tools/dash_guard.py`.
