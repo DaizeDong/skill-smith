@@ -7,7 +7,7 @@ Create focused skills through research, guarded scaffolding and independent revi
 [![Research-first](https://img.shields.io/badge/Design-research--first-green?style=flat)](skills/skill-smith/reference/research-first.md)
 [![Acceptance gate](https://img.shields.io/badge/Evidence-independent%20review-green?style=flat)](skills/skill-smith/reference/acceptance-gate.md)
 [![Languages](https://img.shields.io/badge/Languages-EN%20%2F%20CN-blue?style=flat)](#languages)
-[![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.5-purple?style=flat)](ROADMAP.md)
+[![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.6-purple?style=flat)](ROADMAP.md)
 
 [English](README.md) | [中文版](README_CN.md)
 
@@ -65,8 +65,9 @@ optional execution uses the installed llmcall interface. See the [Python API](sk
 for dependencies, wheel building, coverage states and verification limits.
 Adapters reject missing typed execution contracts before running; installation
 alone does not establish that the selected llmcall runtime supports them.
-Windows catalogs accept approved roots written with 8.3 short names. Junction or
-symlink targets outside those roots still require separate approval.
+Windows catalogs accept approved roots written with 8.3 short names, including
+custom entries declared by plugin manifests. Custom entries must stay inside their
+plugin root; other junction or symlink targets outside approved roots require separate approval.
 
 ## Quick start
 

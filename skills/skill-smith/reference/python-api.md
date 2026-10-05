@@ -56,6 +56,9 @@ following their junction or symlink targets. A short spelling of the same root
 works; a link that escapes it still requires its target to be approved separately.
 The initial path must also be lexically within an approved root. If Windows cannot
 expand a root spelling, its original spelling remains the containment boundary.
+Custom `skills`, `commands` and `agents` references in a plugin manifest must stay
+inside that plugin root. Global `approved_roots` cannot authorize an escaping custom
+reference. Missing or unreadable declared paths are reported as unavailable.
 
 `python -m skill_smith` and `skill-smith-catalog` read a request from stdin or
 `--request FILE` and print JSON. Exit 0 includes an unchecked catalog, exit 1
@@ -99,6 +102,8 @@ responsibility. A bounded temporary process performs only initialize and
 `skills/list`, with fixed arguments, deadline and output limits. The llmcall Job
 owner cleans up the process tree. No model turn or persistent helper is created
 by this adapter, and raw diagnostics are not copied into catalog records.
+The native result must name the resolved launch cwd. Windows 8.3 spellings of that
+cwd are accepted; a reported junction alias or another directory remains an unexpected scope.
 
 ## Validation scope
 

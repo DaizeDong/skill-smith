@@ -1747,6 +1747,30 @@ def windows_short_path(path):
     return Path(buffer.value)
 
 
+def plugin_reference_fixture(root, kind="agents"):
+    """Generate custom plugin entries and a separate outside entry for boundary tests."""
+    root = Path(root)
+    plugin = root / "synthetic-plugin-long-directory"
+    outside = root / "synthetic-outside-long-directory"
+    relative = {"agents": "custom/reviewer.md", "commands": "custom/check.md",
+                "skills": "custom/demo/SKILL.md"}[kind]
+    for directory in (plugin, outside):
+        text_file(directory / relative,
+                  "---\nname: synthetic-entry\ndescription: Review synthetic input.\n---\nBody.\n")
+    reference = str(Path(relative).parent) if kind == "skills" else relative
+    manifest = plugin / ".claude-plugin/plugin.json"
+    catalog_json(manifest, {"name": "demo", kind: [reference]})
+    return {"plugin": plugin, "outside": outside, "outside_entry": outside / relative,
+            "relative_path": relative, "reference": reference, "manifest": manifest}
+
+
+def native_alias_capture(root, cwd):
+    """Generate an inert native inventory response for an existing synthetic skill."""
+    return {"observed_at": "2026-01-01T00:00:00Z", "result": {"data": [
+        {"cwd": str(cwd), "skills": [{"path": str(Path(root) / "skills/demo/SKILL.md"),
+                                     "enabled": True}], "errors": []}]}}
+
+
 def text_file(path, text):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

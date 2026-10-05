@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here (Keep a Changelog style).
 
+## [0.1.6] - 2026-10-05
+### Fixed
+- Custom plugin skills, commands and agents resolve under Windows 8.3 roots while
+  retaining their plugin-local boundary, including against globally approved outside targets.
+- Native inventory accepts an 8.3 spelling of the resolved launch cwd while
+  continuing to reject reported junction aliases and other scopes.
+
 ## [0.1.5] - 2026-10-05
 ### Fixed
 - Windows catalogs accept approved roots written with 8.3 short names while
