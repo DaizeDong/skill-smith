@@ -4,6 +4,8 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 ### Added
+- Source-owned companion storage contracts, bounded inventory and explicitly approved retirement checks.
+- Configuration scaffolds and G8 validate storage declarations and retention rules.
 - Documentation completion contract in `reference/documentation.md`: assign all applicable docs,
   record impact per affected behavior and independently review bilingual meaning. Completed
   implementation/docs/version metadata freeze before evidence; policy and holdout freeze before implementation.

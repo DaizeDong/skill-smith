@@ -81,6 +81,7 @@ def config_lifecycle(root):
     """Generate an offline skill whose blank template honestly fails readiness."""
     root = Path(root)
     write_json(root / '.claude-plugin/plugin.json', {'name': 'acme-config-tool'})
+    write_json(root / 'storage.contract.json', storage_contract_document())
     texts = {
         '.gitignore': 'secrets/\n*.env\n',
         'CONFIG.md': 'registry.json: schema_version int, required_root string required.\n',
@@ -121,6 +122,40 @@ print((Path(data['required_root']) / 'source.txt').read_text(encoding='utf-8'))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
     return root
+
+
+def storage_contract_document():
+    """Generate a bounded synthetic storage policy, without any runtime inputs."""
+    rows = []
+    for name, pattern, category in (("settings", "registry.json", "core"),
+                                    ("cache", "cache/**", "rebuildable"),
+                                    ("retired", "retired/**", "retired")):
+        rows.append({"artifact_id": name, "path_pattern": pattern,
+                     "purpose": "Synthetic " + name, "schema": "synthetic JSON or bytes",
+                     "producer": "fixture generator", "consumer_or_final_deliverable": "synthetic test",
+                     "retention_rule": {"class": category, "rule": "Retain current settings; reviewed inactive cache and retired data may be removed."},
+                     "rebuild_or_restore": "Regenerate with tools/make_fixtures.py"})
+    return {"schema_version": 1, "tool": "acme-config-tool", "max_bytes": 1024,
+            "artifacts": rows}
+
+
+def storage_contract_fixture(root, *, combined=False):
+    """Materialize only synthetic settings, disposable bytes and negative controls."""
+    root = Path(root)
+    repo, companion = root / "source", root / "companion"
+    contract = storage_contract_document()
+    if combined:
+        companion = repo
+        contract.update(layout="combined_private_repo", data_roots=["registry.json", "cache", "retired"])
+    write_json(repo / "storage.contract.json", contract)
+    if combined:
+        (repo / "source-code.py").write_text("# Synthetic source: never a DATA retirement target.\n", encoding="utf-8")
+    (companion / ".git").mkdir(parents=True)
+    write_json(companion / "registry.json", {"schema_version": 1, "source": "synthetic"})
+    write_json(companion / "cache/result.json", {"synthetic": "rebuildable"})
+    write_json(companion / "retired/result.json", {"synthetic": "retired"})
+    return {"repo": repo, "companion": companion,
+            "sentinel": b"Synthetic unmerged result; preserve this negative control.\n"}
 
 
 def config_probe(root, kind="directory"):

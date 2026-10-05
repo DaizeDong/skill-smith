@@ -1,5 +1,12 @@
 # skill-smith, Design Philosophy
 
+Storage follows the same source of truth: the main repository owns the
+[artifact contract](storage.contract.json), and the private companion links to it.
+Privacy is a location boundary, not a retention period. Keep current runtime data
+and necessary final evidence; extract unique useful work once, then retire its
+development copies. The shared [storage checker](skills/skill-smith/reference/storage-contract.md)
+reports undeclared paths and budgets before any explicitly authorized removal.
+
 > One test governs every change: **does it fix the framing, or just patch a symptom?**
 > A skill is done when it is *proven*, not when it is *generated*.
 

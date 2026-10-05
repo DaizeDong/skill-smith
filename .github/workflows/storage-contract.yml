@@ -1,0 +1,17 @@
+name: Storage contract
+on:
+  push:
+  pull_request:
+jobs:
+  storage-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python skills/skill-smith/scripts/storage_contract.py validate --repo .
+      - run: python -m pytest tests/test_storage_contract.py tests/test_config.py tests/test_review_round1.py -q

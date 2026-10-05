@@ -92,6 +92,11 @@ The reviewer checks bilingual meaning and actual behavior, beyond structural doc
 Reports, real briefs, evaluator logs, worklists and backups belong in a verified PRIVATE versioned
 companion. Public TOOL documentation contains reusable rationale and generated synthetic examples.
 
+The source-owned [storage contract](storage.contract.json) limits retained paths and budgets.
+Keep current structured state and requested final results; extract unique useful changes once,
+then retire superseded development material. Run the shared [storage checker](skills/skill-smith/reference/storage-contract.md)
+to inspect declarations and sizes. Its dry run never deletes data.
+
 From the tool checkout, substitute the account that owns your private companion:
 
 ```bash

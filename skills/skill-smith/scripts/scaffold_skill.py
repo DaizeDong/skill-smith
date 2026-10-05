@@ -9,7 +9,7 @@ Usage:
     --tagline "Verb-first, quantified, one line." \
     --description "When to trigger + what it does + scope, one paragraph." \
     --topics "domain-a,domain-b" [--out-dir ~/CodesClaude] [--version 0.1.0] [--force]
-    [--with-config]   # also emit the config-bearing standard (config-spec E1-E7)
+    [--with-config]   # also emit the config-bearing standard (config-spec E1-E8)
 """
 import argparse
 import json
@@ -269,12 +269,13 @@ def _read_asset(rel):
 
 
 def emit_config_bearing(root, name, force, write_fn):
-    """Emit the config-bearing standard (config-spec E1-E7) into the new skill repo.
+    """Emit the config-bearing standard (config-spec E1-E8) into the new skill repo.
 
     - scripts/{init_config,verify_config,config_runtime}.py (consumer-bound config tools)
     - CONFIG.md (schema + mount + first-time + switch)
     - README.md / README_CN.md '## Config' section appended
     - .gitignore with the secrets gate (E6)
+    - storage.contract.json declaring companion artifacts and retention (E8)
     """
     env = name.upper().replace("-", "_") + "_CONFIG"
     defaultdir = ".%s-config" % name
@@ -291,6 +292,95 @@ def emit_config_bearing(root, name, force, write_fn):
     # authoritative config doc + secrets gitignore
     write_fn(os.path.join(root, "CONFIG.md"), fill(_read_asset("CONFIG.md.tmpl")), force)
     write_fn(os.path.join(root, ".gitignore"), _read_asset("skill-gitignore.tmpl"), force)
+    contract = {
+        "schema_version": 1,
+        "tool": name,
+        "max_bytes": 64 * 1024 * 1024,
+        "artifacts": [
+            {
+                "artifact_id": "registry",
+                "path_pattern": "registry.json",
+                "purpose": "Current installed-tool settings and credential references.",
+                "schema": "CONFIG.md: registry.json schema_version 1",
+                "producer": "scripts/init_config.py and explicit configuration updates",
+                "consumer_or_final_deliverable": "scripts/verify_config.py and configured tools",
+                "rebuild_or_restore": "Restore the current registry from the PRIVATE companion backup.",
+                "retention_rule": {"class": "core", "rule": "Keep while any configured tool depends on these settings; retire only after migration is verified."},
+            },
+            {
+                "artifact_id": "selected_credentials",
+                "path_pattern": "secrets/**",
+                "purpose": "Selected credentials and current backup and recovery instructions.",
+                "schema": "CONFIG.md: UTF-8 credential env files; Markdown recovery instructions",
+                "producer": "scripts/init_config.py and explicit credential setup or rotation",
+                "consumer_or_final_deliverable": "Configured tools and the operator performing recovery",
+                "rebuild_or_restore": "Use the selected PRIVATE backup described in secrets/README.md; reissue revoked credentials.",
+                "retention_rule": {"class": "core", "rule": "Keep required credentials and recovery instructions while their configured tools remain active; review retirement after removal or rotation."},
+            },
+            {
+                "artifact_id": "recovery_readme",
+                "path_pattern": "README.md",
+                "purpose": "Current companion setup, backup and restoration instructions.",
+                "schema": "Markdown companion recovery instructions",
+                "producer": "Operator completing companion setup",
+                "consumer_or_final_deliverable": "Operator restoring the current configuration",
+                "rebuild_or_restore": "Restore from the PRIVATE companion backup and verify the documented recovery procedure.",
+                "retention_rule": {"class": "core", "rule": "Keep the current recovery procedure while the companion is in use; replace obsolete instructions after verifying the replacement."},
+            },
+            {
+                "artifact_id": "credential_ignore_rules",
+                "path_pattern": ".gitignore",
+                "purpose": "Default exclusions for credentials not selected for versioned backup.",
+                "schema": "Git ignore patterns described in CONFIG.md",
+                "producer": "scripts/init_config.py and reviewed backup-policy updates",
+                "consumer_or_final_deliverable": "Git staging and scripts/verify_config.py",
+                "rebuild_or_restore": "Restore the reviewed rules from the PRIVATE companion backup; initialization provides the default rules.",
+                "retention_rule": {"class": "core", "rule": "Keep effective exclusion rules while the companion stores configuration or credentials."},
+            },
+            {
+                "artifact_id": "companion_ownership",
+                "path_pattern": ".companion",
+                "purpose": "Optional ownership marker for companion discovery.",
+                "schema": "UTF-8 text containing the tool name from this contract",
+                "producer": "Operator selecting marker-based companion ownership",
+                "consumer_or_final_deliverable": "guards/tools/datadir.py companion discovery",
+                "rebuild_or_restore": "Restore the marker from the PRIVATE companion backup or regenerate it using this contract's tool identity.",
+                "retention_rule": {"class": "core", "rule": "Keep while discovery relies on the marker; retire only after an alternative ownership proof is verified."},
+            },
+            {
+                "artifact_id": "tools_directory_marker",
+                "path_pattern": "tools/.gitkeep",
+                "purpose": "Preserve the initially empty tool-configuration directory.",
+                "schema": "Empty file",
+                "producer": "scripts/init_config.py",
+                "consumer_or_final_deliverable": "Git checkout of the empty tools directory",
+                "rebuild_or_restore": "Recreate an empty tools/.gitkeep when the directory has no configured tools.",
+                "retention_rule": {"class": "rebuildable", "rule": "Keep while tools is empty; it may be retired after a tracked tool configuration preserves the directory."},
+            },
+            {
+                "artifact_id": "tool_launcher_templates",
+                "path_pattern": "tools/*/claude.json.template",
+                "purpose": "Required launcher settings for each configured tool.",
+                "schema": "CONFIG.md: per-tool JSON template with UPPER_SNAKE placeholders",
+                "producer": "Operator configuring a selected tool",
+                "consumer_or_final_deliverable": "The selected tool's launcher configuration",
+                "rebuild_or_restore": "Restore the current template from the PRIVATE companion backup and substitute selected credentials privately.",
+                "retention_rule": {"class": "core", "rule": "Keep while the corresponding registry tool is configured; review retirement after uninstalling it and verifying no consumer remains."},
+            },
+            {
+                "artifact_id": "tool_environment_templates",
+                "path_pattern": "tools/*/env.template",
+                "purpose": "Required environment variable names for each configured tool.",
+                "schema": "CONFIG.md: UTF-8 KEY=UPPER_SNAKE-placeholder template",
+                "producer": "Operator configuring a selected tool",
+                "consumer_or_final_deliverable": "The selected tool's credential setup and environment loader",
+                "rebuild_or_restore": "Restore the current template from the PRIVATE companion backup and obtain values from the selected credential backup.",
+                "retention_rule": {"class": "core", "rule": "Keep while the corresponding registry tool is configured; review retirement after uninstalling it and verifying no consumer remains."},
+            },
+        ],
+    }
+    write_fn(os.path.join(root, "storage.contract.json"),
+             json.dumps(contract, indent=2, ensure_ascii=False) + "\n", force)
     # append README '## Config' sections (idempotent: skip if already present)
     for readme, asset in (("README.md", "readme-config-section.md.tmpl"),
                           ("README_CN.md", "readme-config-section.cn.md.tmpl")):
@@ -691,8 +781,8 @@ def main():
     ap.add_argument("--out-dir", default=os.path.expanduser("~/CodesClaude"))
     ap.add_argument("--version", default="0.1.0")
     ap.add_argument("--with-config", action="store_true",
-                    help="emit the config-bearing standard (config-spec E1-E7): CONFIG.md, "
-                         "init/verify scripts, README Config section, secrets .gitignore")
+                    help="emit the config-bearing standard (config-spec E1-E8): CONFIG.md, "
+                         "init/verify scripts, README Config section, secrets .gitignore, storage contract")
     ap.add_argument("--force", action="store_true")
     a = ap.parse_args()
 
@@ -767,7 +857,7 @@ def main():
     emit_guards(root, a.force, name)
 
     if a.with_config:
-        print("Config-bearing standard (config-spec E1-E7):")
+        print("Config-bearing standard (config-spec E1-E8):")
         emit_config_bearing(root, name, a.force, write)
 
     scripts = os.path.dirname(os.path.abspath(__file__))
@@ -780,7 +870,7 @@ def main():
     print("     Freeze evaluator policy + holdout BEFORE implementation or drafting candidate docs.")
     print("     docs/design-rationale.md is public TOOL documentation; use only reusable design and synthetic examples.")
     if a.with_config:
-        print("  2a) Config-bearing: fill CONFIG.md schema, then verify with")
+        print("  2a) Config-bearing: fill CONFIG.md and declare each additional artifact in storage.contract.json, then verify with")
         print("     python %s %s" % (shlex.quote(os.path.join(scripts, "check_config_conformance.py")), shlex.quote(root)))
     print("  2) python %s %s --stage draft" % (shlex.quote(os.path.join(scripts, "check_conformance.py")), shlex.quote(root)))
     print("  3) The generation owner completes README.md + README_CN.md with matching philosophy,")

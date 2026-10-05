@@ -2,15 +2,16 @@
 """Config-bearing skill gate (Acceptance Gate G8). See ../reference/config-spec.md.
 
 Auto-detects whether a skill repo is *config-bearing* (ships a companion config / secrets template /
-registry.json / init+verify scripts / a README Config section). If it is, enforces the seven-element
-standard E1-E7 with PASS/FAIL/NOT_RUN per element. E4 runs deterministic generation;
+registry.json / init+verify scripts / a README Config section). If it is,
+enforces the eight-element standard E1-E8 with PASS/FAIL/NOT_RUN per element. E4 runs deterministic generation;
 E5 checks explicitly supplied, already configured A/B directories with the repo's doctor.
 Blank generated templates are not functional-readiness evidence.
+Tools that only declare runtime storage validate E8; settings elements E1-E7 are not applicable.
 
 Usage:
   python check_config_conformance.py <repo_dir> [--no-run] [--config-a DIR --config-b DIR]
 --no-run skips the dynamic E4/E5 subprocess tests (static checks only).
-Exit 0 = seven elements passed (or not applicable); 1 = failed; 2 = incomplete or usage error.
+Exit 0 = applicable elements passed (or none apply); 1 = failed; 2 = incomplete or usage error.
 Stdlib only. Never echoes secrets.
 """
 import argparse
@@ -23,6 +24,8 @@ import shutil
 import stat
 import importlib.util
 
+import storage_contract
+
 PASS, FAIL = "PASS", "FAIL"
 
 
@@ -34,10 +37,10 @@ def read(path):
         return None
 
 
-def path_mode(path):
+def path_mode(path, *, follow_symlinks=True):
     """Treat an absent optional path separately from a path we cannot inspect."""
     try:
-        return os.stat(path).st_mode
+        return os.stat(path, follow_symlinks=follow_symlinks).st_mode
     except FileNotFoundError:
         return 0
 
@@ -137,6 +140,15 @@ def doctor_selected_root(output, requested):
     return canonical(reported[0]) == canonical(requested)
 
 
+def storage_contract_result(root):
+    """Validate the source declaration without inspecting runtime companion contents."""
+    try:
+        storage_contract.validate_contract(root)
+    except (OSError, ValueError) as exc:
+        return False, str(exc)
+    return True, ""
+
+
 def check_config(root, no_run, config_a=None, config_b=None):
     name = plugin_name(root)
     env_var = (name or "skill").upper().replace("-", "_") + "_CONFIG"
@@ -148,6 +160,14 @@ def check_config(root, no_run, config_a=None, config_b=None):
     print("skill=%s  env var=%s" % (name, env_var))
     print("-" * 64)
     if not signals:
+        if path_mode(os.path.join(root, "storage.contract.json"), follow_symlinks=False):
+            print("  [NOT_APPLICABLE] E1-E7 settings configuration (no configuration signals)")
+            ok, detail = storage_contract_result(root)
+            line = "  [%s] E8 main-repo storage.contract.json is valid" % (PASS if ok else FAIL)
+            print(line + ("  -> " + detail if detail else ""))
+            print("Storage declaration %s; configuration conformance and readiness were not measured."
+                  % ("passed" if ok else "failed"))
+            return 0 if ok else 1
         print("  NOT config-bearing (no companion-config signals) -> G8 not applicable.")
         print("-" * 64)
         print("NOT_APPLICABLE: no configuration conformance or readiness was measured.")
@@ -215,6 +235,9 @@ def check_config(root, no_run, config_a=None, config_b=None):
     e7 = has_config_section(readme) and has_config_section(readme_cn, cn=True)
     check("E7 README Config section (EN+CN: mount+first-time+switch)", e7,
           "both README.md and README_CN.md need a Config/配置 section w/ env var + init + switch")
+
+    # E8 validates the source contract; inspecting the PRIVATE companion is a separate check.
+    check("E8 main-repo storage.contract.json is valid", *storage_contract_result(root))
 
     # ---- dynamic E4 (deterministic) + E5 (hot-swap), via the repo's own scripts ----
     if no_run:

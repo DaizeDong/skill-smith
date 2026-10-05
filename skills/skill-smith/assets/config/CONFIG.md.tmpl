@@ -2,7 +2,8 @@
 
 `__NAME__` is **config-bearing**: it reads per-user / per-machine state (API keys, installed-tool
 registry, endpoints) from a **separate companion config repo** that you create and keep private.
-Secrets never live in this repo. This file is the authoritative config contract (config-spec E1).
+Secrets never live in this repo. This file defines the configuration schema (config-spec E1).
+The main repository's `storage.contract.json` declares the permitted companion artifacts (E8).
 
 ## Discovery convention (how the skill finds your config), E2
 
@@ -72,6 +73,31 @@ checks these default ignore rules, not the repository's tracked contents or visi
 Document the chosen backup and restore procedure in the private companion. Credentials committed
 there remain in its history; rotation requires replacing the credential itself. Neither repository
 should echo secret values in logs or reports.
+
+## Companion storage contract (E8)
+
+Keep `storage.contract.json` in this main tool repository. Its `schema_version: 1`, `tool` and
+`artifacts` fields declare the companion paths that operations may write. Each artifact names its
+`artifact_id`, relative `path_pattern`, `purpose`, domain `schema`, `producer`,
+`consumer_or_final_deliverable`, `rebuild_or_restore` procedure and `retention_rule`. The retention
+rule has a `class` of `core`, `rebuildable` or `retired` and a concrete `rule` for keeping or retiring
+the artifact. Optional `max_bytes` limits must be positive integers and count working data,
+excluding Git metadata. Git administration size is reported separately.
+The starter working-data budget is 64 MiB (`67108864` bytes). Exceeding it is reported and does
+not authorize deletion; review a different limit when declared capability requirements justify one.
+
+The starter contract covers `registry.json`, `secrets/**`, the companion's current `README.md`
+and `.gitignore`, an optional `.companion` ownership marker, `tools/.gitkeep`, and the per-tool
+`claude.json.template` and `env.template` files. Declare additional artifacts before adding writers.
+Retain core structured runtime data and only the configuration, recovery instructions and final
+deliverables needed to use or restore it. Development notes, intermediate reports and obsolete
+snapshots need a specific consumer or deliverable before they qualify for retention.
+
+Undeclared paths are not permitted write destinations. Existing unknown paths require review;
+they are not deleted by default. A `rebuildable` or `retired` label alone does not authorize deletion.
+Verify that writers, consumers and recovery procedures no longer need a path before applying a
+reviewed removal plan. G8 validates the main-repo contract schema; companion visibility, actual
+contents and capability-specific domain schemas need their own checks.
 
 ## First-time setup (E3)
 
