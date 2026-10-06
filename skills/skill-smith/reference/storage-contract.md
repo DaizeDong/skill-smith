@@ -81,3 +81,35 @@ The skill-smith companion has a 64 MiB working-data budget. The retired campaign
 classification for removal after dependency clearance, not an allowed future
 output location. Old rounds, copied source trees and test workspaces are not core
 DATA. Git history alone does not extend their retention period.
+
+## Shared runtime configuration inputs
+
+These four exact paths are operator-maintained private configuration inputs.
+Keep them as `core` while configured consumers reference them; consumers read
+these documents without initializing policy or guessing private bindings.
+
+| Companion path | Existing schema and consumer |
+|---|---|
+| `data/runtime-selection.json` | Schema-version 1 entries with unique ids and exact selectors; optional task/format/requirement lists and tier; Profile Sync passes policy to Smith validation and selection. |
+| `data/runtime-capabilities.json` | Capability observations with nonempty status and optional evidence list; Profile Sync passes observations to Smith validation and requirement checks. |
+| `data/overlay-resource-roots.json` | Nonempty source-id to nonempty resource-root string map; the Profile Sync overlay bridge supplies reviewed bindings to Smith overlay construction. |
+| `data/role-equivalence.json` | Nonempty receipt keys with status, artifact hash and evidence list; the overlay bridge validates shape and compares exact artifact receipts. |
+
+Profile Sync supplies these through `--runtime-policy`, `--capability-snapshot`,
+`--overlay-resource-roots` and `--role-equivalence`. Preserve explicit empty maps
+while the configured file arguments reference them. Empty maps do not certify
+resource bindings or role equivalence.
+
+Selection task/format/requirement lists may be omitted or empty; tier defaults
+to `main`. Capability evidence may be omitted or empty. Evidence items, when
+present, are nonempty strings; Smith requires `supported` and nonempty evidence
+before treating a requirement as supported. Role receipt hashes and evidence
+may be empty, but retirement requires a ready descriptor, exact artifact hash,
+`verified` status and nonempty evidence.
+
+Keep current approved policy, bindings and useful observations. Review dated
+capability evidence before use; continued reading does not make it current.
+Reconcile consumers before removing superseded entries; replace old configuration
+without copied history. Restore a reviewed PRIVATE revision or fresh evidence.
+Consumers do not guess missing selectors, resource roots or equivalence; unresolved
+support and incomplete receipts remain unverified.

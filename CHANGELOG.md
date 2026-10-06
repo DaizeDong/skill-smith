@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented here (Keep a Changelog style).
 
+## [Unreleased]
+
+### Fixed
+- Declare the four exact shared runtime policy, capability, resource-root and
+  role-equivalence inputs as retained private configuration, documenting their
+  existing consumers, retention boundaries and restoration rules.
+
 ## [0.1.6] - 2026-10-05
 ### Fixed
 - Custom plugin skills, commands and agents resolve under Windows 8.3 roots while
