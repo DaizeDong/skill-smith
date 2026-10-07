@@ -1242,3 +1242,17 @@ def test_coverage_never_rounds_up_to_a_hundred():
     wide = {"pass": 127, "fail": 0, "warn": 0, "skip": 94, "unknown": 0}
     head = fc.digest_line(wide)[0].split("|")[0]
     assert "57%" in head and "NOT EVALUATED" in head, head
+
+
+def test_print_status_path_is_read_only_and_uses_the_writer_resolver(tmp_path, monkeypatch, capsys):
+    from make_fixtures import fleet_path_fixture
+    value = fleet_path_fixture(tmp_path)
+    monkeypatch.setenv("SKILL_SMITH_DATA_DIR", str(value["data"]))
+    def forbidden(*args, **kwargs):
+        pytest.fail("Path lookup must not inspect the fleet or run write-readiness/network checks")
+    monkeypatch.setattr(fc, "VisibilityOracle", forbidden)
+    monkeypatch.setattr(fc, "local_repos", forbidden)
+    monkeypatch.setattr(fc, "resolve_status_path", forbidden)
+    assert fc.main(["--print-status-path"]) == 0
+    assert capsys.readouterr().out.strip() == str(value["data"] / "fleet-check-status.json")
+    assert not (value["data"] / "fleet-check-status.json").exists()
