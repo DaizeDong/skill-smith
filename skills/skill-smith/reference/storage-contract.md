@@ -82,6 +82,40 @@ classification for removal after dependency clearance, not an allowed future
 output location. Old rounds, copied source trees and test workspaces are not core
 DATA. Git history alone does not extend their retention period.
 
+Superseded imported fleet observations are also temporary maintenance inputs.
+Keep them while a specific review or rollback obligation remains unresolved;
+retire them after the current report preserves the needed conclusion. A historical
+observation is never a current fleet verdict. Private preservation receipts carry
+the exact recovery location instead of embedding machine-specific archive labels
+in the source contract.
+
+## Legacy generated scratch
+
+The retired scratch entries identify seven narrow regression namespaces at the
+companion root and exact generated-input workspaces at the root and under `data/`.
+They describe historical producer locations; they do not authorize future writes.
+Unmatched names remain undeclared. Only `is40-*` children are covered inside
+`.test-tmp`; other children still require an explicit declaration and review.
+
+Recorded fixture hashes establish provenance for the inputs they name. They do
+not establish that every file beneath the same workspace is generated or unused.
+Before planning removal, prove the lineage of the selected files, retain useful
+unique code and needed real data outside the group, and resolve current acceptance,
+reference and rollback obligations. Pending obligations prohibit apply. Confirm
+that readers and writers are inactive and that no surviving Git administration or
+link depends on the selected paths. A namespace match, old activity observation or
+successful contract validation does not satisfy those checks.
+
+The bounded declaration review uses located producer scripts, recorded input
+receipts and shallow directory metadata. It does not claim a full current tree
+inventory, source-copy comparison or reference closure. Unreviewed scratch remains
+an explicit gap; broaden neither `core` retention nor retired patterns to hide it.
+
+`fleet_check.py --print-status-path` prints the default path selected by the same
+resolver used by the report writer. It does not inspect the fleet, create files,
+or prove that the destination is ready for writes. The writer still performs its
+separate PRIVATE admission checks.
+
 ## Shared runtime configuration inputs
 
 These four exact paths are operator-maintained private configuration inputs.

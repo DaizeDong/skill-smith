@@ -5,6 +5,10 @@ All notable changes to this project are documented here (Keep a Changelog style)
 ## [Unreleased]
 
 ### Fixed
+- Treat superseded imported fleet observations as temporary maintenance inputs
+  with explicit review and rollback closure, rather than permanent core data.
+- Expose read-only default status-path discovery without running a fleet audit
+  or treating path discovery as PRIVATE storage admission.
 - Declare the four exact shared runtime policy, capability, resource-root and
   role-equivalence inputs as retained private configuration, documenting their
   existing consumers, retention boundaries and restoration rules.

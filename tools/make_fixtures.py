@@ -1821,3 +1821,10 @@ def plugins(root):
     return {"plugin_registries": [{"path": registry, "settings_path": settings,
                                     "client": "claude", "scope": "user",
                                     "approved_roots": [str(root / "cache")]}]}
+
+
+def fleet_path_fixture(root):
+    """Generate an empty explicit private-data path for read-only discovery tests."""
+    data = Path(root) / "synthetic-private-data"
+    data.mkdir(parents=True)
+    return {"data": data}

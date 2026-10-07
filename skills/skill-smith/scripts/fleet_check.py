@@ -2031,11 +2031,20 @@ def main(argv=None):
     ap.add_argument("--status-json", default=DEFAULT_STATUS,
                     help="machine-readable result; the caller checks its utc for freshness")
     ap.add_argument("--no-status", action="store_true", help="do not write the status file")
+    ap.add_argument("--print-status-path", action="store_true",
+                    help="print the default resolved artifact path without inspecting or writing the fleet")
     ap.add_argument("--offline", action="store_true",
                     help="skip the CI check (no network, no gh)")
     ap.add_argument("--gh-timeout", type=int, default=30)
     ap.add_argument("--conformance-timeout", type=int, default=300)
     a = ap.parse_args(argv)
+    if a.print_status_path:
+        try:
+            print(default_data_path("fleet-check-status.json"))
+            return 0
+        except (OSError, ValueError, RuntimeError, ImportError) as error:
+            print("status path lookup rejected: %s" % error, file=sys.stderr)
+            return 1
     policies = None
     if a.workflow_policy:
         try:
