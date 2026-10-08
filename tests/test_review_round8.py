@@ -136,6 +136,7 @@ def test_scaffold_emitted_validator_commands_run_from_documented_caller(consumer
         output = executed.stdout + executed.stderr
         assert "can't open file" not in output and "Traceback" not in output, output
         if Path(argv[1]).name == "check_config_conformance.py":
-            assert executed.returncode == 2 and "configuration_required" in output, output
+            assert executed.returncode == 2 and "static_not_executed" in output, output
+            assert "[NOT_RUN] E3" in output and "[NOT_RUN] E4" in output and "[NOT_RUN] E5" in output
         else:
             assert executed.returncode in (0, 1) and "conformance:" in output.lower(), output

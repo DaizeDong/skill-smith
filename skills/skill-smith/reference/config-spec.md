@@ -1,6 +1,6 @@
 # Configuration standard, G8
 
-A configuration-bearing skill needs settings outside the public tool repository, such as resource
+A source that owns settings declares their lifecycle outside the public tool repository, such as resource
 roots, account preferences or credential references. Shipping an initializer proves that a template
 can be generated. Configured operation requires a separate, measured lifecycle.
 
@@ -22,7 +22,8 @@ Functional behavior and live integrations require their own evidence beyond thes
 
 ## Schema, discovery and initialization
 
-Document `registry.json` and its `schema_version`, the supported entries and each field's purpose.
+Document the existing native settings schema, its version field, supported entries and each field's purpose.
+A registry filename or a particular version-key spelling is not required.
 Name required resource roots and the credential references needed for the selected capability.
 Public examples must be synthetic and reproducible by `tools/make_fixtures.py`.
 
@@ -32,7 +33,8 @@ Do not maintain a second resolver that can silently choose another root. Missing
 configuration may be reported as uninitialized; required operations and writes must fail clearly.
 There is no public-tool fallback for private runtime data.
 
-Ship `scripts/init_config.py` and `scripts/verify_config.py` or the documented hyphenated equivalents.
+Declare the inspected native initializer and doctor paths in `config.contract.json`. Python and
+PowerShell entrypoints keep their own names and flags; no cosmetic registry or doctor replaces them.
 The initializer creates a template. The doctor validates the selected capability and reports missing
 fields or resources. Template/schema validity is not a claim of configured functional readiness.
 
@@ -56,27 +58,83 @@ Use inspected, generated synthetic fixtures for acceptance:
 Never change an honest doctor to pass a blank field merely to satisfy a generic gate. If a selected
 live capability needs credentials or a service that is unavailable, keep that capability unverified.
 
+## Explicit applicability
+
+Every source has a root `config.contract.json` with integer `schema_version: 1`, a
+`repository_kind` of `skill`, `software` or `combined`, a `configuration` of `settings`,
+`runtime-storage-only` or `none`, a nonempty `rationale`, and `documentation` listing existing
+relative source documents. Repository kind controls presentation duties; configuration controls
+G8 applicability. The declaration belongs to the source and must agree with its actual consumers.
+Missing, unreadable or malformed declarations fail with UNKNOWN applicability and all eight rows.
+A keyword in prose or the absence of a familiar initializer never establishes applicability.
+
+For `settings`, the `settings` object declares:
+
+| Field | Meaning |
+|---|---|
+| `schema_document` | Relative existing document describing native types and required values |
+| `discovery_document` | Relative existing document naming the primary selection variable and aliases |
+| `environment` | Primary uppercase environment variable selected in A/B probes |
+| `aliases` | Array of distinct supported uppercase aliases; may be empty |
+| `precedence` | Nonempty ordered array explaining the actual selection order |
+| `required_fields` | Nonempty array of required native field paths for the selected capability |
+| `initializer` | Object with relative `.py` or `.ps1` `path` and string-array `args`, containing exactly one `{output}` placeholder |
+| `doctor` | Object with relative `.py` or `.ps1` `path` and string-array `args`; selects the root through the declared environment |
+
+The scaffolder generates these declarations; its generic doctor still proves template structure
+only, so capability-specific E3 and E5 remain incomplete. Pure storage tools declare
+`runtime-storage-only`: E1-E7 are individually NOT_APPLICABLE and E8 is required. Smith uses this
+profile because external callers own initialization of its supplied runtime inputs. A `none`
+declaration means no settings or runtime-storage producer; any present storage contract is still
+validated. Independent review checks these ownership claims against code and docs.
+
 ## Checker behavior
 
 ```bash
 python scripts/check_config_conformance.py TOOL_REPO --no-run
-python scripts/check_config_conformance.py TOOL_REPO --config-a SYNTHETIC_CONFIG_A --config-b SYNTHETIC_CONFIG_B
+python scripts/check_config_conformance.py TOOL_REPO --run-synthetic --config-a SYNTHETIC_ROOT/A --config-b SYNTHETIC_ROOT/B --synthetic-root SYNTHETIC_ROOT
 ```
 
-`--no-run` retains all eight rows. E4 and E5 are `static_not_executed`; an otherwise clean result is
-INCOMPLETE, exit 2. Without configured A/B roots, E4 can pass but E5 remains
-`configuration_required`, also exit 2. A failure exits 1. All eight passing elements exit 0.
-Non-configuration-bearing skills are explicitly not applicable, without claiming readiness.
-When a tool has `storage.contract.json` but no settings-configuration signals, the checker validates
-E8 and marks E1-E7 `NOT_APPLICABLE`. This supports runtime-data tools without requiring an invented
-settings schema or initialization doctor. A valid storage-only declaration exits 0; an invalid one
-exits 1. For configuration-bearing tools, a missing or invalid contract fails E8.
+Native initializers that require PRIVATE versioned storage also receive `--template-a` and
+`--template-b`, naming two prepared ordinary Git repositories with committed empty histories and
+no working files, plus `--synthetic-home` containing generated visibility receipts. All five
+directories, including the configured A/B roots, must be distinct, nonoverlapping children of
+`--synthetic-root` and separate from the source. Generate these repositories and receipts with the
+reviewed test fixture recipe; the checker does not initialize Git, approve visibility, or relax
+native write admission. PUBLIC and UNKNOWN controls must remain refused. Fixture HOME is retained
+for native visibility discovery while inherited global Git configuration stays disabled.
 
-E4 runs the target initializer twice in temporary directories and compares the generated bytes.
-E5 runs the target doctor against supplied, distinct existing configuration directories. The checker
-does not fill required values or infer functional success from the doctor; retain the lifecycle and
-function evidence separately. Inspect the target initializer and doctor before authorizing their
-execution. Use synthetic setup appropriate to those scripts and the selected capability.
+The default and `--no-run` execute no initializer or doctor. Static E1/E2/E6/E7/E8 results check
+declarations, referenced files and representative ignore behavior, not semantic completeness or
+configured readiness. E3 reports whether native entrypoints exist but remains NOT_RUN until blank
+required configuration is tested; E4/E5 remain NOT_RUN. Any failure exits 1; applicable unmeasured
+requirements exit 2. All applicable measured checks passing exits 0 without asserting live readiness.
+
+`--run-synthetic` is explicit authorization to execute previously inspected fixture-safe entrypoints.
+Review the native scripts and fixture recipe first. This is not an OS sandbox: scripts must confine
+their work to generated fixtures, and must not invoke live models, services, credentials or producers.
+The runner clears inherited credentials, selection aliases and user config, uses a temporary or
+explicit generated home, and bounds template snapshots to 1024 files and 8 MiB. Each subprocess
+defaults to 30 seconds; inspected native setup may request `--subprocess-timeout` up to 300 seconds. Python
+runs directly; PowerShell runs without profiles or interactive input. Missing interpreters fail visibly.
+
+E4 compares two nonempty generated working trees byte for byte. Only an ordinary root `.git`
+directory is excluded from these comparisons; linked and nested Git administration is refused.
+The comparison does not establish Git metadata integrity. E3 runs the blank template doctor and
+requires nonzero status, exact selected root, explicit NOT READY and a required-field diagnosis.
+A generic TEMPLATE CONFORMS result remains unmeasured. E5 requires two distinct existing roots
+inside the explicitly reviewed synthetic directory. Each doctor must select its exact root, report
+READY with exit zero and leave configuration bytes unchanged. Missing A/B fixtures stay
+`configuration_required`; the checker never fills settings from a real installation.
+
+Native doctor output may be JSON with Boolean `ready` (or `status: ready/not_ready`) and one
+absolute `resolved_root`, `config_root` or `config_dir`; redundant identical aliases are allowed,
+while conflicting states or roots are
+rejected. Existing text output may use one `RESOLVED: PATH` or `resolved via SOURCE -> PATH` line,
+plus explicit `READY:` or `NOT READY:`. Exit zero or schema-valid output alone cannot prove readiness.
+The blank-template probe is not exhaustive field or capability coverage; retain the native domain
+validator tests and functional A/B journey evidence separately. Timeouts and inspection errors
+retain complete rows and cannot become an applicability exemption.
 
 ## Storage and documentation
 
@@ -101,7 +159,9 @@ Declare core structured runtime records plus the minimum necessary configuration
 instructions and final deliverables. A PRIVATE repository does not make development history,
 intermediate reports or obsolete snapshots necessary to retain.
 
-Undeclared artifacts must not be written. Existing undeclared paths require review and are not
+Before each write, use the pinned Guards `authorize_artifact_write` API with the expected
+artifact id. It separately proves PRIVATE versioned storage, exact ownership, permitted producer
+and current ignore behavior. Undeclared or retired artifacts must not be written. Existing undeclared paths require review and are not
 deleted by default. A retention class does not itself authorize deletion: verify that producers,
 consumers and active recovery needs permit retirement before applying a reviewed removal plan.
 The scaffold contract covers the generated configuration skeleton, per-tool templates and minimal
@@ -109,7 +169,8 @@ recovery files, with a 64 MiB working-data budget excluding Git metadata. Exceed
 reported; it does not authorize deletion. Review a different budget when the declared capability needs one.
 Declare capability-specific artifacts before adding their writers.
 
-E8 validates this declaration through `storage_contract.validate_contract(repo)`. It does not read
+E8 validates this declaration through the pinned Guards `storage_contract.validate_contract(repo)`
+API; the Smith module is a thin adapter. It does not read
 the companion, prove its visibility or execute the referenced domain schemas. Actual storage and
 PRIVATE-repository checks remain separate from this static schema result.
 

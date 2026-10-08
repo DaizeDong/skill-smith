@@ -34,6 +34,12 @@ the contract structure, path coverage and sizes; it does not claim to validate
 private file contents. Keep domain-specific checkers and stronger manifests in
 place. Reference them instead of reproducing their schemas here.
 
+Artifact persistence defaults to `versioned`: a writer must refuse a Git-ignored path, including
+an absent future file. A source may explicitly declare `persistence: transient` with a nonempty
+`transient_reason` for an output that can be ignored. That choice requires reviewed operational
+reasoning; a rebuildable retention class alone does not permit ignoring required history.
+Retired artifacts cannot receive new writes under either persistence mode.
+
 The default layout is `separate_companion`. A private repository that deliberately
 contains both source code and backups can declare `layout: combined_private_repo`
 and a nonempty `data_roots` list of exact relative files or directories. That
@@ -51,7 +57,9 @@ outside the declared data roots.
 
 ## Shared CLI
 
-Run the single implementation from the canonical skill-smith source checkout:
+Pure contract validation, path matching and write admission live in the pinned Guards module
+`guards/tools/storage_contract.py`. Smith's adapter reexports those primitives and owns the
+inventory and reviewed-retirement CLI. Run that CLI from the canonical source checkout:
 
 ```bash
 python skills/skill-smith/scripts/storage_contract.py validate --repo SOURCE
@@ -66,6 +74,20 @@ the shared checker's own pinned Guards proof and resolver, including for targets
 that do not ship Guards. The resolver is explicitly bound to the target source
 for companion discovery. There is no target/shared fallback. Unknown/public/unversioned
 destinations fail. Inventory reports links without descending into them.
+
+Runtime producers call `authorize_artifact_write(source_root, companion_root, relative_path,
+artifact_id=EXPECTED_ID)` from the pinned Guards module immediately before each write. It requires
+one declared owner, a matching producer artifact, a committed Git HEAD, current PRIVATE proof,
+ordinary physical paths and admissible ignore rules. The immutable result binds the path, artifact,
+contract hash and publication proof. Recheck before writes; no receipt locks the filesystem.
+Directory admission covers only that directory, so authorize concrete leaves before creating
+structural parents. Inventory transport checks are separate and never grant write permission.
+
+Smith binds report JSON to `fleet-status`, exact atomic staging to `fleet-status-staging`, trim
+worklists to `worklist`, and rollback leaves to `description-rollback`. Explicit output flags still
+must match these source declarations. The contract and transport signature must stay unchanged
+between admission and writing. An ignored staging path is refused, even if the final report path
+would otherwise pass.
 
 Save a plan only in a verified private location. Review its concrete paths,
 reason, inactivity evidence and byte snapshots, then authorize its exact file

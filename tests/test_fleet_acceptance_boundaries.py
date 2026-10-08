@@ -31,6 +31,8 @@ def test_status_output_rejects_public_or_unknown(private_output, visibility):
 def test_default_output_uses_shared_resolver_and_names_private_repo(private_output, monkeypatch):
     fc = private_output["fleet"]
     assert hasattr(fc, "resolve_status_path")
+    storage = fc._artifact_storage()
+    monkeypatch.setattr(fc, "_artifact_storage", lambda: storage)
     monkeypatch.setattr(fc, "load_datadir", lambda *a: SimpleNamespace(
         resolve_data_dir=lambda _: private_output["data"]))
     path, proof = fc.resolve_status_path(None, str(private_output["visibility"]), True)

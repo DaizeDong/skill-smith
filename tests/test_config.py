@@ -23,7 +23,7 @@ _REPO = os.path.dirname(_HERE)
 _SCRIPTS = os.path.join(_REPO, "skills", "skill-smith", "scripts")
 sys.path.insert(0, os.path.join(_REPO, "tools"))
 
-from make_fixtures import config_lifecycle, storage_contract_fixture, write_json
+from make_fixtures import config_applicability, config_lifecycle, storage_contract_fixture, write_json
 
 SCAFFOLD = os.path.join(_SCRIPTS, "scaffold_skill.py")
 CFGCONF = os.path.join(_SCRIPTS, "check_config_conformance.py")
@@ -71,10 +71,10 @@ def test_with_config_scaffold_keeps_configured_g8_pending_and_passes_static_g6(t
     assert r.returncode == 0, r.stdout + r.stderr
     repo = os.path.join(out, "cfg-skill")
     # E4 can run immediately; E5 needs independently configured A/B directories.
-    g8 = run([CFGCONF, repo])
+    g8 = run([CFGCONF, repo, "--run-synthetic"])
     _x = unexpected_failures(g8.stdout)
     assert not _x, "config-bearing template must satisfy executed checks:\n%s" % '\n'.join(_x)
-    assert g8.returncode == 2 and "7/8 elements pass" in g8.stdout
+    assert g8.returncode == 2 and "6/8 elements pass" in g8.stdout
     assert "[PASS] E8" in g8.stdout
     assert "configuration_required" in g8.stdout
     # G6: Spec v1 conformance unaffected by the config additions
@@ -91,7 +91,7 @@ def test_plain_scaffold_is_not_config_bearing(tmp_path):
     repo = os.path.join(out, "plain-skill")
     g8 = run([CFGCONF, repo])
     assert g8.returncode == 0, "non-config skill must pass vacuously:\n%s" % g8.stdout
-    assert "NOT config-bearing" in g8.stdout
+    assert "configuration=none" in g8.stdout
 
 
 def test_g8_rejects_missing_secrets_gate(tmp_path):
@@ -148,6 +148,8 @@ def test_g8_rejects_invalid_storage_contract(tmp_path, defect):
 @pytest.mark.parametrize("malformed", [False, True])
 def test_storage_only_tool_validates_e8_without_requiring_settings(tmp_path, malformed):
     repo = storage_contract_fixture(tmp_path)["repo"]
+    (repo / "README.md").write_text("Synthetic storage-only source.\n", encoding="utf-8")
+    write_json(repo / "config.contract.json", config_applicability("runtime-storage-only"))
     if malformed:
         contract_path = repo / "storage.contract.json"
         contract = json.loads(contract_path.read_text(encoding="utf-8"))
@@ -157,7 +159,7 @@ def test_storage_only_tool_validates_e8_without_requiring_settings(tmp_path, mal
     g8 = run([CFGCONF, str(repo), "--no-run"])
 
     assert g8.returncode == (1 if malformed else 0), g8.stdout + g8.stderr
-    assert "[NOT_APPLICABLE] E1-E7" in g8.stdout
+    assert "[NOT_APPLICABLE] E1 " in g8.stdout
     assert "[FAIL] E1" not in g8.stdout
     assert ("[FAIL] E8" if malformed else "[PASS] E8") in g8.stdout
 

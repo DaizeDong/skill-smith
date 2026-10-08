@@ -1,7 +1,7 @@
 # Documentation completion contract
 
 This is the normative home for documentation duties in creation, acceptance, iteration and release.
-Repository kind (`skill`, `software`, `companion`) determines applicable documents; active,
+Repository kind (`skill`, `software`, `companion`, `combined`) determines applicable documents; active,
 maintenance or retired status describes lifecycle and never weakens safety or DATA checks.
 
 ## Authority and ownership
@@ -48,7 +48,14 @@ Run the shared presentation check from the reviewed pinned Style submodule:
 python style/tools/doc_contract.py --root . --profile skill --stage accepted
 ```
 
-Use `software` or `companion` for the corresponding repository kind. A trusted command or CI
+Use `software` or `companion` for the corresponding repository kind. An explicitly combined PRIVATE
+source/backup repository uses `combined`: bounded maintenance README, ROADMAP and
+`docs/MAINTENANCE_CHANGELOG.md`, as defined by the pinned Style kit's
+[combined profile](../../../style/docs/COMBINED_DOCUMENTATION.md). Captured root CHANGELOG and
+other backup payloads are not opened as release documentation. This profile still needs meaningful
+rationale, setup, current state, recovery and a local storage-contract link; it grants no PRIVATE
+storage or publication proof. Configuration ownership remains a separate `config.contract.json` axis.
+A trusted command or CI
 entry chooses the stage; a repository declaration cannot demote itself to draft. `check_conformance.py`
 delegates to this checker and retains security, packaging and SKILL checks. Missing/unreadable kit
 or malformed output fails visibly. Never vendor a second documentation checker or run arbitrary

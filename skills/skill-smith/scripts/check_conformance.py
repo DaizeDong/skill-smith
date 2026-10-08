@@ -4,12 +4,14 @@
 Usage:  python check_conformance.py <repo_dir>
 Exits 0 if no check FAILS, 1 otherwise. Requires PyYAML. (Skill Repo Spec v1.)
 
-THREE STATUSES, AND THE LINE BETWEEN THEM
+STATUSES, AND THE LINE BETWEEN THEM
     PASS   the property holds.
     WARN   the property does not hold, and no edit available today makes it hold cleanly, OR the
            finding is real but the detector's measured precision does not justify blocking on it.
            Printed, counted, never blocks.
     FAIL   the property does not hold and an edit fixes it.
+    NOT_APPLICABLE   a named maintenance-only rule does not apply to the skill profile;
+                     retained explicitly and excluded from the passing-check count.
 
     A gate that reassures is worse than no gate, so nothing here is allowed to be silent. But a gate
     that goes red for something no edit can fix trains the operator to skip the report, which is how
@@ -28,12 +30,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from budget_check import frontmatter_end, parse_frontmatter  # noqa: E402
 
-PASS, FAIL, WARN = "PASS", "FAIL", "WARN"
+PASS, FAIL, WARN, NOT_APPLICABLE = "PASS", "FAIL", "WARN", "NOT_APPLICABLE"
 results = []
 
 
 def check(name, ok, detail=""):
-    """ok is True (PASS), False (FAIL), or the string WARN."""
+    """ok is True, False, WARN, or an explicit NOT_APPLICABLE documentation row."""
     results.append((name, ok, detail))
 
 
@@ -438,19 +440,22 @@ def check_documentation(root, stage="accepted"):
         expected = {"docs.required", "readme.philosophy", "readme.install", "docs.placeholders",
                     "version.source", "version.current", "changelog.releases", "roadmap.current",
                     "links.local"}
+        maintenance = {"readme.maintenance", "changelog.maintenance"}
         if (type(report.get("schema_version")) is not int or report["schema_version"] != 1
                 or report.get("profile") != "skill"
                 or report.get("stage") != stage or type(report.get("ok")) is not bool
-                or not isinstance(rows, list) or len(rows) != len(expected)):
+                or not isinstance(rows, list) or len(rows) not in (len(expected), len(expected | maintenance))):
             raise ValueError("unsupported or incomplete checker report")
         for row in rows:
             if (not isinstance(row, dict) or not isinstance(row.get("name"), str)
-                    or not row["name"] or row.get("status") not in (PASS, FAIL)
+                    or not row["name"] or row.get("status") not in (PASS, FAIL, NOT_APPLICABLE)
+                    or (row.get("status") == NOT_APPLICABLE and row["name"] not in maintenance)
+                    or (row["name"] in maintenance and row.get("status") != NOT_APPLICABLE)
                     or not isinstance(row.get("detail", ""), str)):
                 raise ValueError("invalid documentation check row")
         names = [row["name"] for row in rows]
-        if len(set(names)) != len(names) or set(names) != expected:
-            raise ValueError("schema v1 requires each of the nine named documentation checks exactly once")
+        if len(set(names)) != len(names) or set(names) not in (expected, expected | maintenance):
+            raise ValueError("schema v1 requires a complete supported set of named documentation checks")
         unverified = report.get("unverified")
         if (not isinstance(unverified, list) or not unverified
                 or any(not isinstance(item, str) or not item.strip() for item in unverified)):
@@ -472,7 +477,8 @@ def check_documentation(root, stage="accepted"):
         return
     for row in rows:
         detail = row.get("detail", "")
-        check("documentation: " + row["name"], row["status"] != FAIL, detail)
+        check("documentation: " + row["name"],
+              NOT_APPLICABLE if row["status"] == NOT_APPLICABLE else row["status"] != FAIL, detail)
     check("documentation: unverified boundaries", WARN, "; ".join(unverified))
 
 
@@ -614,6 +620,8 @@ def main(root, stage="accepted"):
     for nm, ok, detail in results:
         if ok is True:
             tag = PASS
+        elif ok == NOT_APPLICABLE:
+            tag = NOT_APPLICABLE
         elif ok == WARN:
             tag = WARN
             n_warn += 1
@@ -634,6 +642,7 @@ def main(root, stage="accepted"):
             print("    %s" % r)
     print("-" * 60)
     total = len(results)
+    not_applicable = sum(ok == NOT_APPLICABLE for _, ok, _ in results)
     # This summary line is what fleet_check.py lifts into the nightly digest, so the WARN count has
     # to be ON it. A warning that only exists in the full log is a warning nobody reads.
     #
@@ -647,12 +656,14 @@ def main(root, stage="accepted"):
         tail.append("%d FAIL" % n_fail)
     if n_warn:
         tail.append("%d WARN" % n_warn)
+    if not_applicable:
+        tail.append("%d NOT_APPLICABLE" % not_applicable)
     if GRANDFATHER_DEBT["entries"]:
         tail.append("%d grandfathered, %d chars over target%s"
                     % (GRANDFATHER_DEBT["entries"], GRANDFATHER_DEBT["over_target"],
                        ", %d OVERDUE" % GRANDFATHER_DEBT["overdue"]
                        if GRANDFATHER_DEBT["overdue"] else ""))
-    print("%d/%d passed%s" % (total - n_fail - n_warn, total,
+    print("%d/%d passed%s" % (total - n_fail - n_warn - not_applicable, total - not_applicable,
                               "" if not tail else "  (%s)" % ", ".join(tail)))
     return 0 if n_fail == 0 else 1
 

@@ -219,7 +219,7 @@ def _storage_path(path, directory=False):
     module = _storage_module()
     result, proof = module.resolve_status_path(
         path, module.DEFAULT_VISIBILITY, default_name="description-backups" if directory else "worklist.json",
-        directory=directory)
+        directory=directory, artifact_id="description-rollback" if directory else "worklist")
     print("storage: " + module.private_output_description(proof))
     return result, proof
 

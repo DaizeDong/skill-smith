@@ -4,6 +4,41 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 
+- Let reviewed synthetic G8 runs use prepared PRIVATE Git companions and generated visibility
+  HOME, preserving native write admission while checking deterministic templates and readiness.
+
+### Fixed
+- Require source-owned configuration applicability instead of inferring settings from prose.
+  Missing declarations remain unknown; storage-only tools retain E8 without invented registries.
+- Bind report, staging, worklist and rollback writes to their declared producer artifacts through
+  the pinned Guards API. Reject ignored, undeclared, retired or uncommitted output destinations.
+- Distinguish static lifecycle declarations, blank-required rejection, deterministic templates
+  and explicit configured doctor readiness. Native entrypoints remain supported; synthetic
+  execution requires an inspected fixture opt-in and keeps all E1-E8 result rows.
+
+### Changed
+- Move pure storage-contract validation and matching to Guards; Smith retains the thin adapter,
+  inventory and reviewed retirement workflow.
+- Accept complete legacy and current Style reports, retaining maintenance-only NOT_APPLICABLE
+  rows separately without exempting required skill documentation checks.
+
+## [0.2.0] - 2026-10-07
+### Changed
+- Port role and workflow execution to the llmcall 0.3.0 call contract and require
+  `llmcall>=0.3.0`. `ModelSelection` and `ExecutionRequirements` are no longer
+  used: an explicit model becomes `model=` with `gateway_best=False` (narrowed to
+  its group when recognisable), requirements are plain mappings, and independent
+  review compares the `Result.group` llmcall reports. Legacy selections and
+  requirement instances are still read.
+- Requirements llmcall can enforce run only on its sandboxed Codex rungs; tool
+  allowlists, required tools or MCP servers, a workspace other than the process
+  cwd, a differing environment and a set cancellation token fail closed before
+  any call. Failure Results carry the reason in `error`.
+- `read_only` requirements also ask llmcall for `mcp_isolation=True`: the Codex
+  read-only sandbox binds the filesystem only, and an MCP tool runs outside it.
+  llmcall's isolation is a verified best effort, so read_only is documented as
+  not a permission guarantee and `llmcall.permissions` stays unverified.
+
 ### Fixed
 - Treat superseded imported fleet observations as temporary maintenance inputs
   with explicit review and rollback closure, rather than permanent core data.

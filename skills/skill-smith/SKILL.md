@@ -49,7 +49,9 @@ contracts and cannot award acceptance. Follow
    removal decision is BLOCKED, not a clean budget result. G3/G4 use the same user and active-plugin
    inventory; retain UNKNOWN and unresolved counts. Preserve disabled alternatives.
 6. One job, at most three modules. G5 security, G6 local conformance and G7 focus are required.
-   Configuration-bearing skills require G8 under `reference/config-spec.md`. G6b is required after
+   Declare configuration applicability in source `config.contract.json`; G8 follows
+   `reference/config-spec.md`. Storage-only tools require E8 with E1-E7 not applicable;
+   missing declarations stay unknown. G6b is required after
    publishing; local checks do not prove remote metadata or CI.
 7. Public examples are generated synthetic fixtures. Real inputs, transcripts, prompts, results and
     reports, including the complete research brief, belong in a verified PRIVATE versioned companion.
@@ -77,7 +79,9 @@ contract and `reference/documentation.md` for its documentation duties.
 remote guard actions and every remote default-branch workflow. It does not repair repositories.
 Scaffold metadata validation and remote action inspection require PyYAML; unavailable remote parsing is reported as unobserved.
 
-Reports use the shared companion resolver and verify PRIVATE versioned storage before writing.
+Reports use the shared companion resolver and pinned Guards artifact admission before writing.
+The path must have one declared owner, match the writer's artifact, remain unignored and have
+committed PRIVATE storage. Source-contract and transport changes invalidate prior admission.
 `--no-status` is console-only. `--offline` reports remote rows unobserved, never passed. Quote the
 full verdict with its coverage fraction.
 

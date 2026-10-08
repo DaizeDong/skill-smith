@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skill-smith"
-version = "0.1.6"
+version = "0.2.0"
 description = "Read-only skill and plugin source catalog"
 requires-python = ">=3.10"
 dependencies = ["fleet-guards>=0.1.0"]
 
 [project.optional-dependencies]
-runtime = ["llmcall>=0.2.0"]
+runtime = ["llmcall>=0.3.0"]
 
 [project.scripts]
 skill-smith-catalog = "skill_smith.__main__:main"
