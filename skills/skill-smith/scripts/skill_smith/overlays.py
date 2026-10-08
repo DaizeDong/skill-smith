@@ -186,7 +186,7 @@ def _step(op, fields, index, contexts):
             raise Unsupported("sandbox_not_enforceable")
         step["requirements"] = {"access": access, "replay": "never_after_start"}
     if "approval-policy" in fields:
-        # No approval-mode field exists in the current ExecutionRequirements.
+        # llmcall has no approval-mode requirement to carry this.
         raise Unsupported("approval_policy_contract_missing")
     if any(key in fields for key in ("base-instructions", "developer-instructions")):
         raise Unsupported("instruction_hierarchy_contract_missing")

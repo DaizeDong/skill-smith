@@ -279,6 +279,18 @@ def emit_config_bearing(root, name, force, write_fn):
     """
     env = name.upper().replace("-", "_") + "_CONFIG"
     defaultdir = ".%s-config" % name
+    applicability = {
+        "schema_version": 1, "repository_kind": "skill", "configuration": "settings",
+        "rationale": "This scaffold owns companion settings; capability-specific readiness remains unfinished.",
+        "documentation": ["README.md", "README_CN.md", "CONFIG.md"],
+        "settings": {
+            "schema_document": "CONFIG.md", "discovery_document": "CONFIG.md",
+            "environment": env, "aliases": [env + "_DIR", name.upper().replace("-", "_") + "_DATA_DIR"],
+            "precedence": ["explicit config directory", env, env + "_DIR", "shared companion resolver"],
+            "required_fields": ["capability.required_resource"],
+            "initializer": {"path": "scripts/init_config.py", "args": ["--out", "{output}"]},
+            "doctor": {"path": "scripts/verify_config.py", "args": []}}}
+    write_fn(os.path.join(root, "config.contract.json"), json.dumps(applicability, indent=2) + "\n", force)
 
     def fill(t):
         return (t.replace("__NAME__", name)
@@ -859,6 +871,11 @@ def main():
     if a.with_config:
         print("Config-bearing standard (config-spec E1-E8):")
         emit_config_bearing(root, name, a.force, write)
+    else:
+        applicability = {"schema_version": 1, "repository_kind": "skill", "configuration": "none",
+                         "rationale": "Draft scaffold has no settings or runtime DATA producer; review when adding either.",
+                         "documentation": ["README.md", "README_CN.md"]}
+        write(os.path.join(root, "config.contract.json"), json.dumps(applicability, indent=2) + "\n", a.force)
 
     scripts = os.path.dirname(os.path.abspath(__file__))
     print("\nDraft scaffold created; documentation and acceptance are unfinished. Next:")

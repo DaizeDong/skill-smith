@@ -19,7 +19,9 @@ spec.loader.exec_module(fc)
 def layout(request, tmp_path, monkeypatch, private_output):
     value = fleet_writer_layout(tmp_path / "writer", request.param)
     boundary = private_output["fleet"]._private_output_boundary()
+    storage = private_output["fleet"]._artifact_storage()
     monkeypatch.setattr(fc, "HERE", str(value["scripts"]))
+    monkeypatch.setattr(fc, "_artifact_storage", lambda: storage)
     monkeypatch.setattr(fc, "_private_output_boundary", lambda: boundary)
     monkeypatch.setenv("HOME", str(value["home"]))
     monkeypatch.setenv("USERPROFILE", str(value["home"]))
@@ -35,10 +37,10 @@ def test_default_report_finds_private_sibling_without_writing(layout):
     assert not Path(path).exists()
 
 
-def test_explicit_private_report_remains_supported(layout):
+def test_explicit_undeclared_private_report_is_refused(layout):
     expected = layout["companion"] / "data/custom.json"
-    path, proof = fc.resolve_status_path(str(expected), str(layout["visibility"]), True)
-    assert Path(path) == expected and proof.repositories == ("acmecorp/skill-smith-config",)
+    with pytest.raises(ValueError, match="undeclared"):
+        fc.resolve_status_path(str(expected), str(layout["visibility"]), True)
     assert not expected.exists()
 
 

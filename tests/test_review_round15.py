@@ -75,29 +75,15 @@ def test_doctor_root_comparison_is_exact(tmp_path, case):
 
 
 @pytest.mark.parametrize("case,expected", [("current-exact", 0), ("current-prefix", 1)])
-def test_config_gate_checks_exact_roots_after_prerequisites(tmp_path, monkeypatch, case, expected):
+def test_config_gate_checks_exact_roots_after_prerequisites(tmp_path, case, expected):
     config = module("check_config_conformance")
-    layout = fixtures.review15_doctor_layout(tmp_path)
-    scratch = tmp_path / "generation"
-    scratch.mkdir()
-    monkeypatch.setattr(config.tempfile, "mkdtemp", lambda **kwargs: str(scratch))
-
-    def run(args, env=None, cwd=None):
-        if "--out" in args:
-            destination = Path(args[args.index("--out") + 1])
-            destination.mkdir()
-            (destination / "registry.json").write_bytes(layout["template"])
-            return subprocess.CompletedProcess(args, 0, "", "")
-        requested = next(iter(env.values()))
-        output = next(row[1] for row in fixtures.review15_doctor_reports(requested)
-                      if row[0] == case)
-        return subprocess.CompletedProcess(args, 0, output, "")
-
-    monkeypatch.setattr(config, "run", run)
+    layout = fixtures.review15_doctor_layout(tmp_path,
+                                            configured_suffix="-different" if case == "current-prefix" else "")
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         result = config.check_config(str(layout["tool"]), False,
-                                     *map(str, layout["configs"]))
+                                     *map(str, layout["configs"]), run_synthetic=True,
+                                     synthetic_root=str(tmp_path))
     assert result == expected, out.getvalue()
     for element in ("E1", "E2", "E3", "E4", "E6", "E7"):
         assert "[PASS] " + element in out.getvalue(), out.getvalue()

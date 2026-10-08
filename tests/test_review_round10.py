@@ -153,7 +153,7 @@ def test_fleet_requires_complete_live_measurement(monkeypatch, kind, expected):
 def test_private_data_requires_effective_private_push_routes(private_output, scenario, allowed):
     fixture = materialize_output_routes(private_output, scenario)
     fleet = private_output["fleet"]
-    path = private_output["data"] / "status.json"
+    path = private_output["data"] / "fleet-check-status.json"
     if allowed:
         result, proof = fleet.resolve_status_path(str(path), str(private_output["visibility"]))
         assert result == str(path)

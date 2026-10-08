@@ -128,7 +128,6 @@ def test_status_refuses_hardlinked_write_target(layout, monkeypatch):
 
 def private_storage(layout, monkeypatch):
     fc = layout["fleet"]
-    monkeypatch.setattr(fc, "HERE", str(layout["tool"] / "skills/skill-smith/scripts"))
     return fc, layout["trim"]
 
 
@@ -140,7 +139,7 @@ def test_private_trim_scan_apply_roundtrip_preserves_backup(layout, monkeypatch)
     rows = json.loads(worklist.read_text(encoding="utf-8"))
     rows[0]["new"] = "Generate research reports."
     worklist.write_text(json.dumps(rows), encoding="utf-8")
-    backup = layout["data"] / "backups"
+    backup = layout["data"] / "description-backups"
     assert trim.do_apply(str(worklist), False, str(backup)) == 0
     assert "Generate research reports." in layout["descriptor"].read_text(encoding="utf-8")
     assert [p.read_text(encoding="utf-8") for p in backup.rglob("*") if p.is_file()] == [before]
@@ -155,9 +154,9 @@ def test_trim_rejects_public_backup_before_modifying_any_description(layout, mon
     worklist.write_text(json.dumps(rows), encoding="utf-8")
     before = layout["descriptor"].read_bytes()
     with pytest.raises(ValueError, match="tool repository"):
-        trim.do_apply(str(worklist), False, str(layout["tool"] / "backups"))
+        trim.do_apply(str(worklist), False, str(ROOT / "synthetic-backups"))
     assert layout["descriptor"].read_bytes() == before
-    assert not (layout["tool"] / "backups").exists()
+    assert not (ROOT / "synthetic-backups").exists()
 
 
 def test_fixed_status_temporary_alias_is_rejected(layout):
@@ -186,7 +185,7 @@ def test_github_queries_ignore_inherited_other_host(layout, monkeypatch):
 
 def test_existing_backup_directory_uses_its_own_repository_identity(layout, monkeypatch):
     fc, trim = private_storage(layout, monkeypatch)
-    nested = layout["data"] / "backups"
+    nested = layout["data"] / "description-backups"
     nested.mkdir()
     layout["git"](nested, "init", "-q")
     public_origin = layout["git"](layout["public"], "remote", "get-url", "origin").stdout.strip()

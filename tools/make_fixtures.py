@@ -37,14 +37,18 @@ def documentation_checker_fixture(root, report, exit_code=0, raw=None):
     return target
 
 
-def documentation_contract_report(ok=True, stage="accepted"):
+def documentation_contract_report(ok=True, stage="accepted", maintenance=False):
     names = ("docs.required", "readme.philosophy", "readme.install", "docs.placeholders",
              "version.source", "version.current", "changelog.releases", "roadmap.current", "links.local")
-    return {"schema_version": 1, "profile": "skill", "stage": stage, "ok": ok,
+    report = {"schema_version": 1, "profile": "skill", "stage": stage, "ok": ok,
             "checks": [{"name": name, "status": "FAIL" if not ok and name == names[0] else "PASS",
                         "detail": "synthetic kit report"} for name in names],
             "failures": [] if ok else [{"name": names[0], "detail": "synthetic kit report"}],
             "unverified": ["semantic completeness and bilingual accuracy", "documented commands and external behavior"]}
+    if maintenance:
+        report["checks"].extend({"name": name, "status": "NOT_APPLICABLE", "detail": "not required for skill"}
+                                for name in ("readme.maintenance", "changelog.maintenance"))
+    return report
 
 
 def acceptance_bundle(root, candidate_sha256):
@@ -77,11 +81,46 @@ def acceptance_bundle(root, candidate_sha256):
     return policy, manifest, policy_sha
 
 
-def config_lifecycle(root):
+def config_applicability(configuration="settings", repository_kind="skill"):
+    """Generate a source declaration for synthetic configuration gate tests."""
+    value = {"schema_version": 1, "repository_kind": repository_kind,
+             "configuration": configuration,
+             "rationale": "Synthetic source declares the lifecycle its consumers actually own.",
+             "documentation": ["README.md"]}
+    if configuration == "settings":
+        value["settings"] = {
+            "schema_document": "CONFIG.md", "discovery_document": "README.md",
+            "environment": "ACME_CONFIG_TOOL_CONFIG", "aliases": ["ACME_CONFIG_TOOL_CONFIG_DIR"],
+            "precedence": ["ACME_CONFIG_TOOL_CONFIG", "ACME_CONFIG_TOOL_CONFIG_DIR", "documented fallback"],
+            "required_fields": ["required_root"],
+            "initializer": {"path": "scripts/init_config.py", "args": ["--out", "{output}"]},
+            "doctor": {"path": "scripts/verify_config.py", "args": []}}
+    return value
+
+
+def config_classifier_fixture(root, configuration, *, repository_kind="skill"):
+    """Reproduce storage discovery false positives and hidden settings false negatives."""
+    root = Path(root)
+    root.mkdir(parents=True)
+    text = "# Synthetic tool\nSYNTHETIC_CONFIG environment variable controls DATA discovery.\n"
+    (root / "README.md").write_text(text, encoding="utf-8")
+    write_json(root / "storage.contract.json", storage_contract_document())
+    if configuration is not None:
+        write_json(root / "config.contract.json", config_applicability(configuration, repository_kind))
+    if configuration == "settings":
+        (root / "README.md").write_text("# Synthetic tool\nSee reference/settings.md.\n", encoding="utf-8")
+        reference = root / "reference/settings.md"
+        reference.parent.mkdir()
+        reference.write_text("Native settings schema and initialization are pending.\n", encoding="utf-8")
+    return root
+
+
+def config_lifecycle(root, *, doctor_mode="ready", configured_suffix=""):
     """Generate an offline skill whose blank template honestly fails readiness."""
     root = Path(root)
     write_json(root / '.claude-plugin/plugin.json', {'name': 'acme-config-tool'})
     write_json(root / 'storage.contract.json', storage_contract_document())
+    write_json(root / 'config.contract.json', config_applicability())
     texts = {
         '.gitignore': 'secrets/\n*.env\n',
         'CONFIG.md': 'registry.json: schema_version int, required_root string required.\n',
@@ -113,8 +152,30 @@ data = json.loads((root / 'registry.json').read_text(encoding='utf-8'))
 print((Path(data['required_root']) / 'source.txt').read_text(encoding='utf-8'))
 ''',
     }
-    discovery = ('ACME_CONFIG_TOOL_CONFIG env var; discovery order ~/.acme-config-tool-config fallback. '
+    discovery = ('ACME_CONFIG_TOOL_CONFIG env var; ACME_CONFIG_TOOL_CONFIG_DIR alias; discovery order ~/.acme-config-tool-config fallback. '
                  'init_config.py then fill required_root, verify; switch configs.\n')
+    doctor = texts['scripts/verify_config.py']
+    if doctor_mode == "ready_when_blank":
+        doctor = doctor.replace("if not source or not (Path(source) / 'source.txt').is_file():", "if False:")
+    elif doctor_mode == "schema_only":
+        doctor = doctor.replace("print('READY: synthetic source verified')", "print('SCHEMA VALID: synthetic source verified')")
+    elif doctor_mode == "json":
+        doctor = '''import json, os, sys
+from pathlib import Path
+root = Path(os.environ['ACME_CONFIG_TOOL_CONFIG']).resolve()
+data = json.loads((root / 'registry.json').read_text(encoding='utf-8'))
+source = data.get('required_root', '')
+ready = bool(source) and (Path(source) / 'source.txt').is_file()
+print(json.dumps({'ready': ready, 'status': 'ready' if ready else 'not_ready',
+                  'resolved_root': str(root), 'config_root': str(root),
+                  'missing_fields': [] if ready else ['required_root']}))
+sys.exit(0 if ready else 1)
+'''
+    if configured_suffix:
+        doctor = doctor.replace("print('RESOLVED:', root)\n", "")
+        doctor = doctor.replace("    print('NOT READY:", "    print('RESOLVED:', root)\n    print('NOT READY:")
+        doctor = doctor.replace("print('READY:", "print('RESOLVED:', str(root) + %r)\nprint('READY:" % configured_suffix)
+    texts['scripts/verify_config.py'] = doctor
     for name in ('README.md', 'README_CN.md'):
         texts[name] += discovery
     for relative, content in texts.items():
@@ -122,6 +183,58 @@ print((Path(data['required_root']) / 'source.txt').read_text(encoding='utf-8'))
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding='utf-8')
     return root
+
+
+def powershell_config_lifecycle(root):
+    """Generate a native PowerShell initializer confined to its supplied output directory."""
+    root = config_lifecycle(root)
+    script = root / "scripts/native_setup.ps1"
+    script.write_text('''param([Parameter(Mandatory=$true)][string]$Out)
+$ErrorActionPreference = 'Stop'
+[void][System.IO.Directory]::CreateDirectory($Out)
+$encoding = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText((Join-Path $Out 'registry.json'), '{"schema_version":1,"required_root":""}', $encoding)
+''', encoding="utf-8")
+    declaration = config_applicability()
+    declaration["settings"]["initializer"] = {"path": "scripts/native_setup.ps1", "args": ["-Out", "{output}"]}
+    write_json(root / "config.contract.json", declaration)
+    return root
+
+
+def private_config_lifecycle(root, *, visibility="PRIVATE"):
+    """Generate native Guards-admitted config fixtures without live credentials or Git config."""
+    from datetime import datetime, timezone
+    root = Path(root)
+    source = config_lifecycle(root / "source", doctor_mode="json")
+    guard = Path(__file__).resolve().parents[1] / "guards/tools/storage_contract.py"
+    initializer = source / "scripts/init_config.py"
+    script = initializer.read_text(encoding="utf-8")
+    admission = ("import importlib.util\n"
+                 "spec = importlib.util.spec_from_file_location('native_storage', %r)\n"
+                 "storage = importlib.util.module_from_spec(spec)\n"
+                 "spec.loader.exec_module(storage)\n"
+                 "storage.authorize_artifact_write(%r, root, 'registry.json', artifact_id='settings')\n"
+                 % (str(guard), str(source)))
+    initializer.write_text(script.replace("root.mkdir", admission + "root.mkdir"), encoding="utf-8")
+    home = root / "home"
+    roots, states = {}, {"_refreshed": datetime.now(timezone.utc).isoformat()}
+    for label in ("template-a", "template-b", "configured-a", "configured-b"):
+        target = root / label
+        target.mkdir(parents=True)
+        subprocess.run(["git", "-C", str(target), "init", "-q"], check=True, capture_output=True)
+        slug = "acmecorp/synthetic-" + label
+        subprocess.run(["git", "-C", str(target), "remote", "add", "origin",
+                        "https://github.com/" + slug + ".git"], check=True, capture_output=True)
+        synthetic_git_commit(target)
+        states[slug] = visibility
+        roots[label] = target
+        if label.startswith("configured"):
+            resource = root / (label + "-resource")
+            resource.mkdir()
+            (resource / "source.txt").write_text("Synthetic " + label + "\n", encoding="utf-8")
+            write_json(target / "registry.json", {"schema_version": 1, "required_root": str(resource)})
+    write_json(home / ".pii-guard/visibility.json", states)
+    return {"source": source, "home": home, **roots}
 
 
 def storage_contract_document():
@@ -166,6 +279,7 @@ def config_probe(root, kind="directory"):
     elif kind == "directory":
         root.mkdir(parents=True)
         (root / "README.md").write_text("Synthetic standalone tool.\n", encoding="utf-8")
+        write_json(root / "config.contract.json", config_applicability("none"))
     return root
 
 
@@ -324,6 +438,10 @@ def fleet_writer_layout(root, topology):
         raise ValueError("Unsupported synthetic topology")
     scripts = consumer / "skills/skill-smith/scripts"
     scripts.mkdir(parents=True)
+    contract = storage_contract_document()
+    contract["artifacts"] = [dict(contract["artifacts"][0], artifact_id="fleet-status",
+                                  path_pattern="data/fleet-check-status.json")]
+    write_json(consumer / "storage.contract.json", contract)
     kit = consumer / "guards"
     (kit / "tools").mkdir(parents=True)
     (kit / ".git").write_text("gitdir: ../synthetic-kit-metadata\n", encoding="utf-8")
@@ -334,6 +452,7 @@ def fleet_writer_layout(root, topology):
     git(companion, "init", "-q")
     git(companion, "remote", "add", "origin", "https://github.com/AcmeCorp/skill-smith-config.git")
     (companion / ".companion").write_text("skill-smith\n", encoding="utf-8")
+    synthetic_git_commit(companion)
     visibility = root / "visibility.json"
     write_json(visibility, {"_refreshed": datetime.now(timezone.utc).isoformat(),
                             "AcmeCorp/skill-smith-config": "PRIVATE"})
@@ -543,7 +662,7 @@ def fleet_alias_fixture(root, source_root):
     root, source_root = Path(root), Path(source_root)
     consumer = root / "consumer"
     for relative in ("skills/skill-smith/scripts/fleet_check.py",
-                     "guards/tools/datadir.py", "guards/tools/data_boundary.py"):
+                     "guards/tools/datadir.py", "guards/tools/data_boundary.py", "guards/tools/storage_contract.py"):
         destination = consumer / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source_root / relative, destination)
@@ -607,6 +726,7 @@ def trim_companion_fixture(root):
     subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
     subprocess.run(["git", "-C", str(root), "remote", "add", "origin",
                     "https://github.com/AcmeCorp/trim-config.git"], check=True, capture_output=True)
+    synthetic_git_commit(root)
     home = root / "home"
     write_json(home / ".pii-guard/visibility.json", {
         "_refreshed": datetime.now(timezone.utc).isoformat(), "acmecorp/trim-config": "PRIVATE"})
@@ -663,6 +783,7 @@ def output_proof_fixture(root):
         subprocess.run(["git", "-C", str(path), "init", "-q"], check=True, capture_output=True)
         subprocess.run(["git", "-C", str(path), "remote", "add", "origin", origin],
                        check=True, capture_output=True)
+        synthetic_git_commit(path)
     visibility = layout["home"] / ".pii-guard/visibility.json"
     write_json(visibility, {"_refreshed": datetime.now(timezone.utc).isoformat(),
                             layout["slug"]: "PRIVATE", public_slug: "PUBLIC"})
@@ -680,6 +801,16 @@ def output_proof_fixture(root):
             "replacement": "Summarize synthetic records.",
             "counts": {key: 0 for key in ("pass", "fail", "warn", "skip", "unknown")},
             "incompatible_api": "def prove_private_companion(destination):\n    return None\n"}
+
+
+def synthetic_git_commit(root):
+    """Create native committed history in an isolated generated test repository."""
+    import os
+    environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+    environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=AcmeCorp",
+                    "-c", "user.email=user1@example.com", "commit", "--allow-empty", "-m",
+                    "Initialize synthetic fixture"], env=environment, check=True, capture_output=True)
 
 
 def review10_library(root, scenario="kept"):
@@ -788,6 +919,8 @@ def review10_ignore(root, scenario):
     write_json(root / "registry.json", {"schema_version": 1, "skill": "acme-tool", "tools": []})
     (root / ".gitignore").write_text(patterns[scenario], encoding="utf-8")
     (root / "CONFIG.md").write_text("registry.json schema_version\n", encoding="utf-8")
+    (root / "README.md").write_text("Synthetic configuration test source.\n", encoding="utf-8")
+    write_json(root / "config.contract.json", config_applicability())
     return root
 
 
@@ -854,7 +987,7 @@ def materialize_output_routes(layout, scenario):
     def git(*args):
         subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
 
-    git("symbolic-ref", "HEAD", "refs/heads/main")
+    git("branch", "-M", "main")
     git("remote", "set-url", "origin", fixture["origin"])
     for remote, urls in fixture["routes"].items():
         if remote != "origin":
@@ -1158,13 +1291,16 @@ def review15_git_selectors(foreign):
     ]
 
 
-def review15_doctor_layout(root):
+def review15_doctor_layout(root, *, configured_suffix=""):
     root = Path(root)
-    tool = config_lifecycle(root / "tool")
+    tool = config_lifecycle(root / "tool", configured_suffix=configured_suffix)
     configs = [root / "config-a", root / "config-b"]
     for config in configs:
         config.mkdir()
-        write_json(config / "registry.json", {"schema_version": 1, "required_root": "synthetic"})
+        source = root / (config.name + "-resource")
+        source.mkdir()
+        (source / "source.txt").write_text(config.name, encoding="utf-8")
+        write_json(config / "registry.json", {"schema_version": 1, "required_root": str(source)})
     return {"tool": tool, "configs": configs, "template": b'{"schema_version":1}\n'}
 
 
@@ -1352,13 +1488,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
-    write_json(Path(args.out) / "fleet-check-status.json.example", {
+    report = {
         "tool": "fleet_check", "schema": 2, "utc": "2000-01-01T00:00:00Z", "duration_s": 0,
         "exit": 0, "verdict": "GREEN", "digest": "Synthetic schema example; no fleet was inspected",
         "coverage": {"evaluated": 0, "not_evaluated": 1},
         "totals": {"pass": 0, "fail": 0, "warn": 0, "skip": 0, "unknown": 1},
         "checks": {}, "failures": [], "unobserved": ["synthetic: not observed"],
-        "warnings": [], "ci_execution": {}})
+        "warnings": [], "ci_execution": {}}
+    for name in ("fleet-check-status.json.example", "fleet-check-status.json.tmp.example"):
+        write_json(Path(args.out) / name, report)
     description = "Use to summarize synthetic report records and return a concise evidence table."
     write_json(Path(args.out) / "worklist.json.example", [{
         "path": "<absolute-path-to-synthetic-skill>/SKILL.md", "name": "acme-report",

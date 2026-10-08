@@ -12,7 +12,7 @@
 [![Research-first](https://img.shields.io/badge/Design-research--first-green?style=flat)](skills/skill-smith/reference/research-first.md)
 [![Acceptance gate](https://img.shields.io/badge/Evidence-independent%20review-green?style=flat)](skills/skill-smith/reference/acceptance-gate.md)
 [![Languages](https://img.shields.io/badge/Languages-EN%20%2F%20CN-blue?style=flat)](#语言)
-[![Roadmap](https://img.shields.io/badge/Roadmap-v0.1.6-purple?style=flat)](ROADMAP.md)
+[![Roadmap](https://img.shields.io/badge/Roadmap-v0.2.0-purple?style=flat)](ROADMAP.md)
 
 [English](README.md) | [中文版](README_CN.md)
 
@@ -63,8 +63,8 @@ python -m pip install -r requirements.txt
 Python 调用方可以从源码构建并安装 `skill_smith` 包，用于读取明确指定的技能来源、
 选择入口并生成经过校验的运行描述。可选执行功能使用已安装的 llmcall 接口。
 依赖、wheel 构建、覆盖状态和验证边界见 [Python API](skills/skill-smith/reference/python-api.md)。
-缺少所需的执行类型接口时，适配器会在运行前明确拒绝；安装成功本身不证明所选 llmcall
-运行环境提供了这些能力。
+llmcall 早于 0.3.0 接口时，适配器会在运行前明确拒绝；llmcall 无法强制执行的权限要求、
+工作目录或环境变量也会被拒绝。安装成功本身不证明所选 llmcall 运行环境提供了这些能力。
 Windows 目录发现支持以 8.3 短文件名表示的批准根目录，包括插件清单声明的自定义入口。
 自定义入口必须留在插件根目录内；其他 junction 或符号链接若指向批准根目录之外，
 目标仍须单独列入批准范围。
@@ -123,16 +123,26 @@ export SKILL_SMITH_CONFIG="$(cd ../skill-smith-config && pwd)"
 `.companion` 只能证明归属。无法解析或不支持的路由会失败。
 见 [Guards 传输契约](guards/COMPANION.md#verifying-a-companion)。
 
-`guards/tools/datadir.py` 解析 `SKILL_SMITH_CONFIG` 或 `SKILL_SMITH_DATA_DIR`。
-已有的 `data/` 目录仍需通过 PRIVATE 版本化存储核验。
-链接路径、无版本管理的目录、PUBLIC / UNKNOWN 仓和被忽略的输出会被拒绝；
-显式 `--out`、`--backup-dir` 同样受检。写入前再次核验，绝不退回工具仓内。
+`guards/tools/datadir.py` 按顺序选择已有的 DATA 候选：`SKILL_SMITH_DATA_DIR`、
+`SKILL_SMITH_CONFIG`、`SKILL_SMITH_CONFIG_DIR`、已证明归属的同级伴生仓、
+`~/.skill-smith-config`，最后是 `~/.skill-smith-data`。伴生仓候选先尝试 `data/`。
+写入路径必须符合契约：`data/fleet-check-status.json`、`data/worklist.json` 和
+`data/description-backups/`。切换 CONFIG 时需要清除继承的 DATA_DIR；不受支持的根目录回退
+或另选输出路径会在产物准入时失败。
+
+固定版本的 Guards API 核验 PRIVATE 传输、已有 Git 提交、唯一产物归属、预期生产者和当前
+忽略规则。报告替换前的临时文件也有独立声明。链接路径、无版本管理目录、PUBLIC / UNKNOWN、
+被忽略、已退役或未声明的目标都会被拒绝；显式 `--status-json`、`--out`、`--backup-dir`
+同样受检。每次写入前重新核验源契约和传输证明，绝不退回工具仓内。
 运行数据在私有伴生仓提交并推送。恢复时 clone 伴生仓、设置变量、刷新可见性回执，
 核对路径后再续跑。
 
 `trim_descriptions.py --scan` 只生成私有待审清单，不改描述。
 实际裁剪需要已有授权，并用 PyYAML 校验完整 frontmatter。
-`fleet_check.py --no-status` 只输出控制台结果，不需要报告目录。通用 G8 不证明这套存储已就绪。
+`fleet_check.py --no-status` 只输出控制台结果，不需要报告目录。
+[config.contract.json](config.contract.json) 明确将 Smith 归为仅管理运行数据的工具：G8 检查 E8，
+E1-E7 不适用。四份外部传入的运行输入由 Profile Sync 和操作者初始化，详见存储参考文档；
+Smith 不另造设置注册表。G8 不证明运行存储已就绪。
 
 ## 技能库与 Fleet 检查
 
@@ -187,7 +197,9 @@ python -m pytest -c pytest.ini tests/ tools/ -q -ra
 
 ## 局限
 
-证据 CLI 不运行评测模型，也不批准候选。G8 空模板检查与已配置 A/B doctor 检查不同。
+证据 CLI 不运行评测模型，也不批准候选。G8 读取源仓声明的适用性和原生生命周期入口。
+静态检查保留“就绪状态未测”；只有 `--run-synthetic` 才执行已审查的合成夹具命令，
+分别记录空模板必填项拒绝、模板确定性和已配置 A/B 检查结果。
 scenario-eval 和外部 provider 必须实际存在才能选择。
 同账号私有路径只提供流程隔离，不能证明无法读取。
 安装、发布、外部就绪和实际结果都需要分别观测。

@@ -86,7 +86,7 @@ After scaffolding, immediately verify:
 
 ```bash
 python scripts/check_conformance.py ~/CodesClaude/<name> --stage draft  # unfinished scaffold only
-python scripts/check_config_conformance.py ~/CodesClaude/<name>   # G8 (auto-skips if not config-bearing)
+python scripts/check_config_conformance.py ~/CodesClaude/<name> --no-run   # G8 source declaration and static checks
 ```
 
 Conformance is part of the acceptance gate (Step 5), a non-conformant repo is not shippable, and a

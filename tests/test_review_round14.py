@@ -136,7 +136,7 @@ def test_private_approval_is_bound_to_physical_output_repository(private_output,
     scenarios = review14_routing_scenarios(private_output["private"], private_output["public"])
     for label, destination, environment, allowed in scenarios:
         with subtests.test(scenario=label), patch.dict(os.environ, environment):
-            output = destination / "synthetic-status.json"
+            output = destination / "data/fleet-check-status.json"
             if allowed:
                 path, proof = module.resolve_status_path(str(output), str(private_output["visibility"]))
                 assert path == str(output)

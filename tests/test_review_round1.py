@@ -182,20 +182,20 @@ def test_static_g8_keeps_all_elements_without_accepting(tmp_path, capsys):
     repo = config_lifecycle(tmp_path/'acme-config-tool')
     assert config.main(str(repo), True) != 0
     output = capsys.readouterr().out
-    assert 'E4' in output and 'E5' in output and '6/8' in output
+    assert 'E4' in output and 'E5' in output and '5/8' in output
     assert 'ACCEPT' not in output and 'static_not_executed' in output
 
 
 def test_empty_successful_initializer_is_not_a_template(tmp_path, monkeypatch, capsys):
     repo = config_lifecycle(tmp_path/'acme-config-tool')
     monkeypatch.setattr(config, 'run', lambda *args, **kwargs: subprocess.CompletedProcess([], 0, '', ''))
-    assert config.main(str(repo), False) == 1
+    assert config.main(str(repo), False, run_synthetic=True) == 1
     assert '[FAIL] E4' in capsys.readouterr().out
 
 
 def test_blank_template_requires_configuration_then_both_swap_legs_work(tmp_path, capsys):
     repo = config_lifecycle(tmp_path/'acme-config-tool')
-    assert config.main(str(repo), False) != 0
+    assert config.main(str(repo), False, run_synthetic=True) != 0
     output = capsys.readouterr().out
     assert 'configuration_required' in output and 'not configurable' not in output
     configs = []
@@ -215,5 +215,6 @@ def test_blank_template_requires_configuration_then_both_swap_legs_work(tmp_path
             assert configured.returncode == 0
             if script == 'exercise.py': assert configured.stdout.strip().decode() == leg
         configs.append(str(destination))
-    assert config.main(str(repo), False, config_a=configs[0], config_b=configs[1]) == 0
-    assert '8/8 elements pass' in capsys.readouterr().out
+    assert config.main(str(repo), False, config_a=configs[0], config_b=configs[1],
+                       run_synthetic=True, synthetic_root=str(tmp_path)) == 0
+    assert '8/8 applicable elements pass' in capsys.readouterr().out

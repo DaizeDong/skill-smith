@@ -23,6 +23,7 @@ ready descriptor does not prove runtime readiness.
 
 ---
 
+
 ## P1, Research-first: design against the state of the art, surveyed not asserted
 
 - **Symptom patch:** "ask the model to write a good skill." The model averages its priors; you get a
@@ -92,6 +93,20 @@ ready descriptor does not prove runtime readiness.
   visible. The [documentation contract](skills/skill-smith/reference/documentation.md) applies to
   this repo: useful rationale, current usage and preserved history are completion duties. Docs
   changes invalidate candidate review. Style checks structure; independent reviewers check meaning.
+
+## P7, Applicability and admission are explicit source decisions
+
+An environment variable that selects DATA does not by itself create a settings lifecycle.
+The source declares its repository kind and configuration ownership in `config.contract.json`;
+missing declarations stay unknown. Native settings schemas and initializers keep their existing
+identities. Blank-required rejection, deterministic templates and configured synthetic switching
+are separate observations. Static declarations cannot substitute for those observations.
+
+A PRIVATE destination establishes where data may live. Before writing, the producer also needs
+an exact source-owned artifact, a committed repository, and an admissible path under current
+ignore rules. These shared checks belong to Guards; Smith composes them with its report and
+retirement workflow. Changing the contract or publication state invalidates a prior write receipt.
+
 
 ---
 

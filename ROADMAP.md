@@ -1,12 +1,18 @@
 # Roadmap
 
-Current: **v0.1.6**
+Current: **v0.2.0**
 
 The plugin manifest defines the release version. Later work is recorded in CHANGELOG Unreleased;
 it does not imply another release or production readiness.
 
 ## Current capabilities beyond the release baseline
 
+- G8 reads an explicit configuration applicability contract, preserves native lifecycle paths,
+  and keeps static checks separate from bounded synthetic doctor evidence. Smith declares
+  runtime-storage-only applicability; externally owned settings are not initialized here.
+- Report and trim writers use the pinned Guards artifact admission API. PRIVATE transport,
+  committed storage, ownership, producer identity, ignore rules and source-contract freshness
+  are checked before writes. Synthetic tests do not establish live fleet readiness.
 - The Python package provides schema 1 source catalogs, exact selection, validated
   overlays and llmcall adapters. Synthetic contract and wheel checks are separate
   from live loader, provider-permission and deployment acceptance.
@@ -19,7 +25,10 @@ it does not imply another release or production readiness.
   release preparation refuses placeholders, invalid dates and non-advancing versions.
 - Installed provider readiness, semantic accuracy and actual usefulness need their own evidence.
 
-## v0.1.6 (current)
+## v0.2.0 (current)
+See [CHANGELOG.md](CHANGELOG.md) for this release; current capabilities follow below.
+
+## v0.1.6
 See [CHANGELOG.md](CHANGELOG.md) for this release; current capabilities follow below.
 
 ## v0.1.5

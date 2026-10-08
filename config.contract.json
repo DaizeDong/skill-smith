@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "repository_kind": "skill",
+  "configuration": "runtime-storage-only",
+  "rationale": "Smith resolves runtime DATA and validates caller-supplied inputs. Profile Sync and operators own initialization of runtime policy, capabilities, resource bindings and role receipts. Smith has no independent settings registry or settings initializer.",
+  "documentation": [
+    "README.md",
+    "README_CN.md",
+    "skills/skill-smith/reference/config-spec.md",
+    "skills/skill-smith/reference/storage-contract.md"
+  ]
+}

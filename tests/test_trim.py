@@ -51,7 +51,7 @@ def test_scan_finds_only_over_cap(tmp_path):
     os.makedirs(lib)
     mkskill(lib, "big", "X" * 200)
     mkskill(lib, "small", "short")
-    wl = str(tmp_path / "wl.json")
+    wl = str(tmp_path / "data/worklist.json")
     r = run(["--scan", "--skills-dir", lib, "--cap", "50", "--out", wl])
     assert r.returncode == 0, r.stderr
     rows = json.load(open(wl, encoding="utf-8"))
@@ -64,12 +64,12 @@ def test_apply_roundtrip_with_backup(tmp_path):
     lib = str(tmp_path / "skills")
     os.makedirs(lib)
     mkskill(lib, "big", "X" * 200)
-    wl = str(tmp_path / "wl.json")
+    wl = str(tmp_path / "data/worklist.json")
     run(["--scan", "--skills-dir", lib, "--cap", "50", "--out", wl])
     rows = json.load(open(wl, encoding="utf-8"))
     rows[0]["new"] = "trimmed desc"
     json.dump(rows, open(wl, "w", encoding="utf-8"))
-    bak = str(tmp_path / "bak")
+    bak = str(tmp_path / "data/description-backups")
     r = run(["--apply", wl, "--backup-dir", bak])
     assert r.returncode == 0, r.stderr
     txt = read(lib, "big")
@@ -82,7 +82,7 @@ def test_dry_run_does_not_modify(tmp_path):
     lib = str(tmp_path / "skills")
     os.makedirs(lib)
     mkskill(lib, "big", "X" * 200)
-    wl = str(tmp_path / "wl.json")
+    wl = str(tmp_path / "data/worklist.json")
     run(["--scan", "--skills-dir", lib, "--cap", "50", "--out", wl])
     rows = json.load(open(wl, encoding="utf-8"))
     rows[0]["new"] = "new short"
@@ -97,13 +97,13 @@ def test_changed_since_scan_is_skipped(tmp_path):
     lib = str(tmp_path / "skills")
     os.makedirs(lib)
     mkskill(lib, "big", "X" * 200)
-    wl = str(tmp_path / "wl.json")
+    wl = str(tmp_path / "data/worklist.json")
     run(["--scan", "--skills-dir", lib, "--cap", "50", "--out", wl])
     rows = json.load(open(wl, encoding="utf-8"))
     rows[0]["new"] = "trimmed"
     json.dump(rows, open(wl, "w", encoding="utf-8"))
     mkskill(lib, "big", "Y" * 200)  # mutate after scan
-    bak = str(tmp_path / "bak")
+    bak = str(tmp_path / "data/description-backups")
     r = run(["--apply", wl, "--backup-dir", bak])
     assert r.returncode == 0, r.stderr
     assert "Y" * 200 in read(lib, "big")  # untouched because it changed since scan

@@ -23,12 +23,13 @@ they are not available from the configured package index.
 
 Filesystem discovery, selection and descriptor validation use the standard
 library. Optional execution and native discovery use the installed `llmcall`
-interface. The `runtime` extra declares `llmcall>=0.2.0`; install `.[runtime]` from
+interface. The `runtime` extra declares `llmcall>=0.3.0`; install `.[runtime]` from
 reviewed sources when these APIs are needed. The selected llmcall distribution
-must provide `ExecutionRequirements`, `ModelSelection` and its process context
-API. A version number alone does not establish those interfaces; clients missing
-them raise `ValueError` with `llmcall_contract_unavailable` before execution or
-workflow construction. Explicit test clients may supply their own inert `process`
+must provide `Result`, `call`, `active_chain`, `rung_group`, `model_group` and its
+process context API. A version number alone does not establish those interfaces;
+clients missing them (llmcall 0.2.0 lacks `rung_group` and `model_group`) raise
+`ValueError` with `llmcall_contract_unavailable` before execution or workflow
+construction. Explicit test clients may supply their own inert `process`
 context. Native acquisition additionally requires llmcall's Windows Job owner. Missing
 capabilities remain explicit failures. No provider routing or model is selected
 by this package's installation metadata.
@@ -86,9 +87,45 @@ rejects their old output policy even when source files have not changed.
 
 `role_entrypoints.invoke` runs an agent template through `llmcall.call`.
 `WorkflowSession` preserves explicit review context and completed-step results
-in memory. Independent review requires provider-reported model families; unknown
-identity cannot qualify. Source restrictions reach llmcall as execution
-requirements, and callers can narrow them. The caller owns durable private state,
+in memory. Independent review requires the policy group llmcall reports on the
+producer and reviewer Results (`Result.group`); an unknown or identical group
+cannot qualify, and the producer's group is passed as `avoid`.
+
+The llmcall 0.3.0 `call` takes only `mode`, `chain`, `model`, `effort`,
+`gateway_best`, `timeout`, `web_search` and `avoid` from this package. An explicit
+user model becomes `model=` with `gateway_best=False`; when `model_group` recognises
+it, the chain is narrowed to that group, so an unavailable model fails as
+`exact_model_unavailable` instead of being substituted. Inherited options are
+`chain`, `model`, `effort`, `gateway_best` and `timeout`; a legacy 0.2.0
+`selection` value is read and converted.
+
+Execution requirements are plain mappings (`workspace`, `access`, `tool_network`,
+`required_tools`, `required_mcp`, `tool_allowlist`, `replay`); a legacy
+`ExecutionRequirements` instance is read field by field. Source restrictions are
+intersected with caller requests and never weakened. llmcall enforces them only
+through its Codex sandbox, so any requirement narrows the chain to Codex rungs:
+`read_only` runs judge mode (read-only sandbox) with `mcp_isolation=True`,
+`workspace_write` keeps the requested mode, and `tool_network` sets `web_search`.
+Tool allowlists and required tools or MCP servers have no llmcall equivalent and
+fail closed with `execution_requirements_unenforceable:<field>`, as does a chain
+with no Codex rung.
+
+`read_only` binds the filesystem, not every tool. Codex keeps its configured MCP
+servers in judge mode and an MCP tool runs outside the sandbox, so read-only calls
+ask llmcall to disable them. llmcall verifies the effective configuration first and
+treats the request as a best effort: when verification is unavailable the rung runs
+with its original tools, and the Result does not report it. read_only is therefore
+not a permission guarantee. Keep the `llmcall.permissions` capability unverified;
+that is what blocks every overlay whose source restricts tools before it can run.
+
+llmcall 0.3.0 has no per-call cwd, environment or cancellation. Its clients run in
+this process's working directory and environment, so a workspace other than the
+process cwd fails as `workspace_requires_process_cwd`, an environment entry that
+differs from the process environment fails as `environment_override_unsupported`,
+and a cancellation token is checked once before dispatch (`cancelled`); a started
+call is bounded by its timeout. Failures are falsy Results whose `error` names the
+reason. `WorkflowSession.last_effects` is `possible` when the latest step ran in
+agent mode and may have started a client. The caller owns durable private state,
 deployment, replay protection and any separately authorized project writes.
 
 `source_workflows.cli_request` translates a supported argv list to llmcall intent.

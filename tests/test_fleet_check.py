@@ -1010,7 +1010,7 @@ def test_status_json_shape_and_timestamp(private_output):
     c.add(fc.WARN, "c", "not clean, not blocking")
     c.add(fc.SKIP, "d", "not looked at")
     tot = {"pass": 1, "fail": 1, "warn": 1, "skip": 1, "unknown": 0}
-    out = private_output["data"] / "nested" / "status.json"
+    out = private_output["data"] / "fleet-check-status.json"
     fc.write_status(str(out), [c], tot, "2026-01-01T00:00:00Z", 1.5, 1)
 
     got = json.loads(out.read_text(encoding="utf-8"))
@@ -1054,7 +1054,7 @@ def test_exit_code_is_driven_by_fail_not_by_unknown(private_output, capsys, monk
     budget = fc.Check("budget", "description budget")
     budget.add(fc.UNKNOWN, "current measurement", "synthetic unavailable observation")
     monkeypatch.setattr(fc, "check_budget", lambda *args: budget)
-    status = private_output["data"] / "s.json"
+    status = private_output["data"] / "fleet-check-status.json"
     absent = private_output["home"] / "none"
     rc = fc.main(["--skills-dir", str(absent), "--code-root", str(absent),
                   "--visibility", str(private_output["visibility"]), "--status-json", str(status)])

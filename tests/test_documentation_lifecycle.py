@@ -86,6 +86,25 @@ def test_delegate_pass_and_named_failure(tmp_path):
         assert conformance.results[-1][0:2] == ("documentation: unverified boundaries", conformance.WARN)
 
 
+def test_current_kit_retains_narrow_maintenance_not_applicable_rows(tmp_path):
+    report = checker_report(maintenance=True)
+    documentation_checker_fixture(tmp_path, report)
+    conformance.results.clear()
+    conformance.check_documentation(str(tmp_path))
+    assert len(conformance.results) == 12
+    assert sum(row[1] == conformance.NOT_APPLICABLE for row in conformance.results) == 2
+    assert not any(row[1] is False for row in conformance.results)
+
+
+def test_current_kit_cannot_exempt_skill_rules(tmp_path):
+    report = checker_report(maintenance=True)
+    report["checks"][0]["status"] = "NOT_APPLICABLE"
+    documentation_checker_fixture(tmp_path, report)
+    conformance.results.clear()
+    conformance.check_documentation(str(tmp_path))
+    assert len(conformance.results) == 1 and conformance.results[0][1] is False
+
+
 @pytest.mark.parametrize("fault", ["missing", "malformed", "empty", "wrong_stage", "wrong_exit", "wrong_ok",
                                   "omitted", "duplicate", "unknown", "missing_boundaries", "wrong_failures",
                                   "not_applicable", "all_not_applicable"])

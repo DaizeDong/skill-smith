@@ -187,6 +187,7 @@ import textwrap
 import threading
 import time
 from datetime import datetime, timezone
+from typing import NamedTuple
 from urllib.parse import quote, urlsplit
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -1413,7 +1414,7 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30, oracl
                          "%s is unversioned; DATA requires a verified PRIVATE companion repository" % resolved))
             continue
         try:
-            _resolved, proof = resolve_status_path(
+            _resolved, proof = inspect_private_path(
                 resolved, visibility_path, directory=True, source_root=path)
         except ValueError as error:
             plan.append(("row", FAIL, name, "%s: %s; failing closed" % (resolved, error)))
@@ -1908,11 +1909,18 @@ def default_data_path(name):
     return os.path.join(directory, name)
 
 
+def _artifact_storage():
+    repo = os.path.realpath(os.path.join(HERE, "..", "..", ".."))
+    module = load_datadir(os.path.join(repo, "guards", "tools", "storage_contract.py"),
+                         "skill_smith_artifact_storage")
+    if not callable(getattr(module, "authorize_artifact_write", None)):
+        raise ImportError("Pinned guards lacks source-owned artifact write admission")
+    return module
+
+
 def _private_output_boundary():
     """Load the supported proof API from this consumer's pinned Guards kit."""
-    repo = os.path.realpath(os.path.join(HERE, "..", "..", ".."))
-    module = load_datadir(os.path.join(repo, "guards", "tools", "data_boundary.py"),
-                          "skill_smith_output_boundary")
+    module = _artifact_storage().load_boundary()
     error = getattr(module, "GitError", None)
     if (not callable(getattr(module, "prove_private_companion", None))
             or not isinstance(error, type) or not issubclass(error, Exception)):
@@ -1920,14 +1928,23 @@ def _private_output_boundary():
     return module
 
 
+class OutputProof(NamedTuple):
+    root: str
+    repositories: tuple
+    signature: str
+    artifact_id: str
+    contract_sha256: str
+    source_root: str
+
+
 def private_output_description(proof):
     """Describe public proof fields without exposing captured process configuration."""
     return "PRIVATE " + ", ".join(proof.repositories)
 
 
-def resolve_status_path(path, visibility_path, offline=False, oracle=None, *,
-                        default_name="fleet-check-status.json", directory=False, source_root=None):
-    """Resolve status, worklist or backup DATA into a verified PRIVATE repository."""
+def inspect_private_path(path, visibility_path, offline=False, oracle=None, *,
+                         default_name="fleet-check-status.json", directory=False, source_root=None):
+    """Read-only transport inspection; this does not admit any artifact write."""
     repo = os.path.realpath(source_root or os.path.join(HERE, "..", "..", ".."))
     path = reject_output_aliases(default_data_path(default_name) if path is None else path)
     if os.path.exists(path) and os.path.isdir(path) != directory:
@@ -1962,12 +1979,37 @@ def resolve_status_path(path, visibility_path, offline=False, oracle=None, *,
     return path, proof
 
 
-def recheck_status_path(path, proof, visibility_path=None, *, directory=False):
+def resolve_status_path(path, visibility_path, offline=False, oracle=None, *,
+                        default_name="fleet-check-status.json", directory=False, source_root=None,
+                        artifact_id="fleet-status"):
+    """Admit a concrete report/worklist/backup artifact under its source contract."""
+    repo = os.path.realpath(source_root or os.path.join(HERE, "..", "..", ".."))
+    path, inspected = inspect_private_path(path, visibility_path, offline, oracle,
+                                          default_name=default_name, directory=directory, source_root=repo)
+    root = Path(inspected.root).resolve()
+    boundary = _private_output_boundary()
+    try:
+        admitted = _artifact_storage().authorize_artifact_write(
+            repo, root, Path(path).relative_to(root).as_posix(), artifact_id=artifact_id,
+            directory=directory, visibility_map=visibility_path)
+    except boundary.GitError as exc:
+        raise ValueError("Cannot admit versioned PRIVATE DATA artifact: " + str(exc)) from exc
+    proof = admitted.proof
+    return str(admitted.path), OutputProof(proof.root, proof.repositories, proof.signature,
+                                          admitted.artifact_id, admitted.contract_sha256, repo)
+
+
+def recheck_status_path(path, proof, visibility_path=None, *, directory=False, artifact_id=None):
     """Require the same physical publication proof immediately before a DATA write."""
-    resolved, current = resolve_status_path(path, visibility_path, directory=directory)
-    if ((proof.root, proof.repositories, proof.signature)
-            != (current.root, current.repositories, current.signature)):
-        raise ValueError("PRIVATE DATA destination changed before writing")
+    try:
+        resolved, current = resolve_status_path(path, visibility_path, directory=directory,
+                                               artifact_id=artifact_id or proof.artifact_id,
+                                               source_root=proof.source_root)
+    except ValueError as exc:
+        raise ValueError("DATA admission changed or failed before writing: " + str(exc)) from exc
+    if ((proof.root, proof.repositories, proof.signature, proof.contract_sha256)
+            != (current.root, current.repositories, current.signature, current.contract_sha256)):
+        raise ValueError("PRIVATE DATA destination or source storage contract changed before writing")
     return resolved
 
 
@@ -2009,7 +2051,7 @@ def write_status(path, checks, tot, started_utc, elapsed, exit_code, *,
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    recheck_status_path(tmp, proof, visibility_path)
+    recheck_status_path(tmp, proof, visibility_path, artifact_id="fleet-status-staging")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, sort_keys=True)
         f.write("\n")

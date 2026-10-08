@@ -70,6 +70,19 @@
       "max_bytes": 1048576
     },
     {
+      "artifact_id": "fleet-status-staging",
+      "path_pattern": "data/fleet-check-status.json.tmp",
+      "purpose": "Stage the current fleet status before atomic replacement",
+      "schema": "Same schema 2 JSON payload as fleet-status",
+      "producer": "skills/skill-smith/scripts/fleet_check.py atomic report writer",
+      "consumer_or_final_deliverable": "Atomic replacement of the current fleet-status artifact",
+      "retention_rule": {
+        "class": "rebuildable",
+        "rule": "Keep only while the report write is active; a failed-write residue may be removed after writer inactivity and current report validation."
+      },
+      "rebuild_or_restore": "Rerun the authorized fleet report after resolving the failure."
+    },
+    {
       "artifact_id": "worklist",
       "path_pattern": "data/worklist.json",
       "purpose": "Unfinished description changes",

@@ -17,7 +17,7 @@ def publication(private_output):
 
 def test_private_proof_covers_every_native_fetch_and_push_destination(publication):
     layout, case = publication
-    target = layout["data"] / "status.json"
+    target = layout["data"] / "fleet-check-status.json"
     path, proof = layout["fleet"].resolve_status_path(str(target), str(layout["visibility"]))
     assert path == str(target)
     assert Path(proof.root) == layout["private"]

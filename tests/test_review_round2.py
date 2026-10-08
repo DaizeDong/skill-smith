@@ -1,5 +1,4 @@
 """Independent-review regressions using generated fixtures and local kit transports."""
-import builtins
 import json
 from pathlib import Path
 import re
@@ -28,14 +27,14 @@ def test_g8_existing_config_free_directory_remains_not_applicable(tmp_path, caps
 
 def test_g8_read_failure_cannot_erase_configuration_signals(tmp_path, monkeypatch, capsys):
     target = config_probe(tmp_path / "synthetic-tool")
-    original = builtins.open
+    original = Path.open
 
     def read_denied(path, *args, **kwargs):
         if Path(path) == target / "README.md":
             raise PermissionError("synthetic unreadable document")
         return original(path, *args, **kwargs)
 
-    monkeypatch.setattr(builtins, "open", read_denied)
+    monkeypatch.setattr(Path, "open", read_denied)
     assert config.main(str(target), True) != 0
     assert "NOT_APPLICABLE" not in capsys.readouterr().out
 
