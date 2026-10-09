@@ -1,0 +1,40 @@
+// Rebuild both README images with: python docs/diagrams/render.py
+digraph workflow {
+  graph [rankdir=LR, bgcolor="white", pad="0.15", nodesep="0.55", ranksep="0.35", splines=spline, outputorder=edgesfirst];
+  node [shape=box, style="rounded,filled", fontname="Microsoft YaHei", fontsize=15, fontcolor="#0f172a", penwidth=1.6, margin="0.16,0.12"];
+  edge [fontname="Microsoft YaHei", fontsize=11, color="#64748b", fontcolor="#475569", penwidth=1.4, arrowsize=0.75];
+
+  brief [label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="2"><tr><td><b>调研与定范围</b></td></tr><tr><td><font point-size="11">收集需求</font></td></tr><tr><td><font point-size="11">明确职责与证明案例</font></td></tr></table>>, fillcolor="#eef2ff", color="#6366f1", group="top"];
+  policy [label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="2"><tr><td><b>冻结评测策略</b></td></tr><tr><td><font point-size="11">及保留测试集</font></td></tr><tr><td><font point-size="11">必须先于实施</font></td></tr></table>>, fillcolor="#fef9c3", color="#ca8a04", group="top"];
+  build [label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="2"><tr><td><b>生成与实现</b></td></tr><tr><td><font point-size="11">完成代码、文档</font></td></tr><tr><td><font point-size="11">和版本信息</font></td></tr></table>>, fillcolor="#f1f5f9", color="#475569", group="top"];
+  evidence [label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="2"><tr><td><b>冻结最终候选</b></td></tr><tr><td><font point-size="11">绑定测量证据</font></td></tr></table>>, fillcolor="#f1f5f9", color="#475569", group="top"];
+  validate [label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="2"><tr><td><b>校验证据</b></td></tr><tr><td><font point-size="11">CLI 只做校验</font></td></tr><tr><td><font point-size="11">accepted: false</font></td></tr></table>>, fillcolor="#fef9c3", color="#ca8a04", group="top"];
+
+  deploy [label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="2"><tr><td><b>安装或发布</b></td></tr><tr><td><font point-size="11">在授权范围内</font></td></tr><tr><td><font point-size="11">另行核验交付</font></td></tr></table>>, fillcolor="#e0f2fe", color="#0284c7", group="bottom"];
+  iterate [label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="2"><tr><td><b>继续迭代</b></td></tr><tr><td><font point-size="11">self-evolve</font></td></tr><tr><td><font point-size="11">需受支持的 provider</font></td></tr></table>>, fillcolor="#e0f2fe", color="#0284c7", group="bottom"];
+  accepted [label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="2"><tr><td><b>接受候选</b></td></tr><tr><td><font point-size="11">获得独立批准</font></td></tr></table>>, fillcolor="#dcfce7", color="#16a34a", group="bottom"];
+  review [label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="2"><tr><td><b>独立评审</b></td></tr><tr><td><font point-size="11">同一候选和证据</font></td></tr><tr><td><font point-size="11">两轮均通过</font></td></tr></table>>, fillcolor="#fef9c3", color="#ca8a04", group="bottom"];
+  unresolved [label=<<table border="0" cellborder="0" cellspacing="0" cellpadding="2"><tr><td><b>尚未接受</b></td></tr><tr><td><font point-size="11">缺失、失败</font></td></tr><tr><td><font point-size="11">或含合成证据</font></td></tr></table>>, fillcolor="#fff1f2", color="#e11d48", group="bottom"];
+
+  { rank=same; brief; deploy; }
+  { rank=same; policy; iterate; }
+  { rank=same; build; accepted; }
+  { rank=same; evidence; review; }
+  { rank=same; validate; unresolved; }
+
+  brief -> policy -> build -> evidence -> validate;
+  validate -> review [label="有效且\n非合成", color="#ca8a04", constraint=false];
+  validate -> unresolved [color="#e11d48"];
+  review -> unresolved [color="#e11d48", constraint=false];
+  review -> accepted [color="#16a34a", constraint=false];
+  accepted -> iterate [color="#0284c7", constraint=false];
+  iterate -> policy [style=dashed, color="#0284c7", constraint=false];
+  accepted -> deploy [color="#0284c7", constraint=false];
+
+  // Keep both reading rows aligned; return routes are explained in the README.
+  deploy -> iterate -> accepted -> review -> unresolved [style=invis, weight=20];
+  brief -> deploy [style=invis, weight=20];
+  policy -> iterate [style=invis, weight=20];
+  build -> accepted [style=invis, weight=20];
+  evidence -> review [style=invis, weight=20];
+}

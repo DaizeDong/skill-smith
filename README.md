@@ -45,35 +45,17 @@ needs evidence for each candidate and one shared library budget.
 The workflow coordinates existing tools and independent evaluators. Each candidate in a batch
 follows the same evidence and review path.
 
-```mermaid
-flowchart TD
-    brief["Collect the brief<br/>Research alternatives and proof cases"]
-    scope["Check overlap<br/>Define the job and deliverables"]
-    policy["Evaluator freezes policy and holdout<br/>Before implementation"]
-    build["Generate and scaffold<br/>Complete code, docs and version metadata"]
-    evidence["Freeze the completed candidate<br/>Bind required measurements to it"]
-    validate{"Evidence contracts valid?"}
-    review{"Two clean independent reviews<br/>of this candidate and evidence?"}
-    unresolved["Unaccepted: record gaps<br/>Revise or collect missing evidence"]
-    accepted["Accepted by independent review"]
-    iterate["Continue with self-evolve<br/>Preflight a supported provider"]
-    deploy["Authorized installation or publication<br/>Verify the installed or published layer"]
+<p align="center">
+  <a href="docs/diagrams/workflow-en.png"><img src="docs/diagrams/workflow-en.png" alt="Skill creation: research, frozen evaluation policy, implementation, evidence validation and independent acceptance, with iteration and authorized delivery." width="760"></a>
+</p>
 
-    brief --> scope --> policy --> build --> evidence --> validate
-    validate -->|"All required artifacts valid and non-fixture"| review
-    validate -->|"Missing, failed or includes fixtures"| unresolved
-    review -->|"No"| unresolved
-    unresolved -->|"Same candidate and policy"| evidence
-    unresolved -->|"Revision needed"| policy
-    review -->|"Yes"| accepted
-    accepted -->|"Iterate"| iterate
-    iterate --> policy
-    accepted -->|"Install or publish"| deploy
-```
+[Diagram source (DOT)](docs/diagrams/workflow-en.dot) · [Render PNGs](docs/diagrams/render.py)
 
 The evidence CLI only validates supplied artifacts and always returns `accepted: false`.
 Missing or failed gates, and bundles containing fixture evidence, leave the candidate unaccepted.
 A changed candidate or policy requires fresh bound evidence and restarts both clean review rounds.
+For an unchanged candidate and policy, collect missing evidence and validate again;
+revisions return to the policy freeze.
 
 Actual measurements come from evaluators outside the evidence CLI. The
 [iteration handoff](skills/skill-smith/reference/iterate-handoff.md) uses an installed provider for
