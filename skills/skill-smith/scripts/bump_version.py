@@ -1,25 +1,10 @@
 #!/usr/bin/env python3
-"""Bump the version of a Skill-Repo-Spec-v1 repo at all five sites at once.
+"""Prepare a Skill-Repo-Spec-v1 release across the five shared version sites.
 
-WHY THIS EXISTS. scaffold_skill.py stamps the five version sites once, at creation, and
-check_conformance.py only READS them. Between those two there was nothing: every release was five
-hand edits across five files in the right order, and the cost of forgetting one was invisible until
-someone ran the linter. Predictably, most repos ended up drifted, usually as a half-applied
-release (plugin.json and CHANGELOG moved, the README badges and ROADMAP did not). A five-file
-manual ritual is not a process, it is a pending bug.
-
-The five sites are defined in version_sites.py, shared with the scaffolder and the linter, so
-this tool cannot stamp a shape its own linter would reject.
-
-TWO RULES THAT ARE THE POINT OF THE TOOL:
-
-  1. It REFUSES on an already-drifted repo (exit 1) and prints the diff. Bumping over drift would
-     "fix" the linter while destroying the evidence of which site was left behind and at what
-     version, and the half-applied release would never be understood. Resolve the drift by hand
-     first, deliberately, then bump.
-
-  2. It requires completed release prose, valid dates and advancing canonical versions before
-     writing. It NEVER commits, tags or pushes; review the planned release within authorization.
+version_sites.py defines the version surfaces used by the scaffolder and conformance checker.
+Preparation refuses existing drift, unfinished release notes, invalid dates and non-advancing
+versions before writing. ROADMAP keeps its current capability sections; CHANGELOG receives the
+release notes. The command never commits, tags or pushes.
 
 Usage:
   python bump_version.py <repo> --level patch|minor|major
@@ -151,33 +136,17 @@ def _commit_all(planned):
 
 # --- ROADMAP ----------------------------------------------------------------------------------------
 def plan_roadmap(text, new_ver, notes):
-    """Update 'Current: **vX.Y.Z**' and, if the file uses the '## vX.Y.Z (current)' convention,
-    demote that heading and open a new one above it.
-
-    Repos that lay their roadmap out differently (buy-me-a-car heads its body with
-    '## What shipped (through 0.2.2)') get the Current line updated and their body left alone: a
-    writer that reshapes prose it does not understand is worse than one that says what it skipped.
-    Returns (new_text, note_for_the_operator).
-    """
-    nl = vs.newline_of(text)
+    """Update current version markers, preserving roadmap prose and line endings."""
     out, n = vs.set_roadmap_current(text, new_ver)
     if n == 0:
         raise ValueError("ROADMAP.md: no 'Current: **vX.Y.Z**' line to update")
 
-    m = None
-    for cand in vs.RE_ROADMAP_CURRENT_HEADING.finditer(out):
-        if "(current)" in cand.group(2):
-            m = cand
-            break
-    if not m:
-        return out, "ROADMAP.md: no '## vX.Y.Z (current)' heading found, body left untouched"
-
-    demoted = m.group(0).replace(" (current)", "", 1)
-    # ROADMAP is a current capability view, not a second copy of release history.
-    body = "See [CHANGELOG.md](CHANGELOG.md) for this release; current capabilities follow below."
-    new_section = "## v%s (current)%s%s%s%s" % (new_ver, nl, body, nl, nl)
-    out = out[:m.start()] + new_section + demoted + out[m.end():]
-    return out, "ROADMAP.md: demoted the previous heading, opened '## v%s (current)'" % new_ver
+    for heading in vs.RE_ROADMAP_CURRENT_HEADING.finditer(out):
+        if "(current)" in heading.group(2):
+            start, end = heading.span(1)
+            out = out[:start] + new_ver + out[end:]
+            return out, "ROADMAP.md: updated '## v%s (current)' in place; body left untouched" % new_ver
+    return out, "ROADMAP.md: no '## vX.Y.Z (current)' heading found, body left untouched"
 
 
 # --- CHANGELOG ----------------------------------------------------------------------------------
@@ -286,7 +255,7 @@ def main(argv=None):
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--level", choices=["major", "minor", "patch"], help="semver bump level")
     g.add_argument("--set", dest="set_to", metavar="X.Y.Z", help="set an exact version")
-    ap.add_argument("--notes", default="", help="one-line release note for ROADMAP + CHANGELOG")
+    ap.add_argument("--notes", default="", help="one-line release note for CHANGELOG")
     pre = ap.add_mutually_exclusive_group()
     pre.add_argument("--prerelease", metavar="TAG",
                      help="badge pre-release marker, e.g. alpha -> Roadmap-vX.Y.Z%%20alpha-purple")

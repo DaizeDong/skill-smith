@@ -1,10 +1,5 @@
 # skill-smith
 
-伴生仓保留哪些数据、何时清理，以主仓的[存储契约](storage.contract.json)为准。
-只保留当前运行所需的结构化数据、必要配置和用户要求的最终产物；有用的代码或结论提取一次后，
-结束旧开发目录的保留。共享[存储检查器](skills/skill-smith/reference/storage-contract.md)报告未声明项和大小，
-默认只检查。删除须针对具体项目，并再次核验 PRIVATE、路径边界、停止写入依据和批准的计划。
-
 通过调研、受守卫保护的脚手架和独立证据评审，创建职责清楚的 skill。
 
 [![Claude Code Skill](https://img.shields.io/badge/Claude%20Code-Skill-orange?style=flat)](https://docs.anthropic.com/en/docs/claude-code)
@@ -26,8 +21,7 @@ skill-smith 在生成之前安排调研，在生成之后要求测量证据。�
 这种设计的代价是：评测能力缺失时，流程会明确停在缺口上。确定性检查不能替代真实测量，
 文件 hash 也不能证明一份自述结果确实发生过。
 
-接受候选需要独立评审批准同一份最终候选和证据。脚手架只是草稿，证据 CLI 始终返回
-`accepted: false`。设计选择见 [PHILOSOPHY.md](PHILOSOPHY.md)；
+接受候选需要独立评审批准同一份最终候选和证据。设计选择见 [PHILOSOPHY.md](PHILOSOPHY.md)；
 文档完成、评审与发版责任见[文档契约](skills/skill-smith/reference/documentation.md)。
 
 ## 能做什么
@@ -78,14 +72,10 @@ python -m pip install -r requirements.txt
 两个子模块都要初始化；已有 clone 可运行 `git submodule update --init --recursive`。
 参与提交前设置适合公开的身份。已安装别名和资源路径需要另行核验，见[部署说明](skills/skill-smith/reference/deploy.md)。
 
-Python 调用方可以从源码构建并安装 `skill_smith` 包，用于读取明确指定的技能来源、
-选择入口并生成经过校验的运行描述。可选执行功能使用已安装的 llmcall 接口。
-依赖、wheel 构建、覆盖状态和验证边界见 [Python API](skills/skill-smith/reference/python-api.md)。
-llmcall 早于 0.3.0 接口时，适配器会在运行前明确拒绝；llmcall 无法强制执行的权限要求、
-工作目录或环境变量也会被拒绝。安装成功本身不证明所选 llmcall 运行环境提供了这些能力。
-Windows 目录发现支持以 8.3 短文件名表示的批准根目录，包括插件清单声明的自定义入口。
-自定义入口必须留在插件根目录内；其他 junction 或符号链接若指向批准根目录之外，
-目标仍须单独列入批准范围。
+Python 调用方可以构建并安装 `skill_smith` 技能目录与运行适配包。
+可选执行功能使用已安装的 llmcall，要求其 0.3.0 接口，并拒绝所选运行环境无法强制执行的要求。
+依赖、wheel 构建、来源路径边界、覆盖状态和验证范围见
+[Python API](skills/skill-smith/reference/python-api.md)。
 
 ## 快速开始
 
@@ -116,8 +106,12 @@ python skills/skill-smith/scripts/acceptance_gate.py --repo ../my-skill --manife
 
 ## 私有运行数据仓
 
-报告、真实 brief、评测日志、裁剪清单和备份住在已核实为 PRIVATE 的版本化伴生仓。
+报告、真实 brief、评测日志、裁剪清单和备份保存在已核实为 PRIVATE 的版本化伴生仓。
 公开 TOOL 文档只保留可复用理念和生成器制作的合成例子。
+主仓的[存储契约](storage.contract.json)规定保留路径和预算；保留当前结构化状态、必要配置、
+恢复依赖和用户要求的最终产物。提取有用的独立变更后，再按契约清理已被替代的开发材料。
+[存储检查器](skills/skill-smith/reference/storage-contract.md)只报告声明和大小，不删除数据。
+删除需要已审查的计划，并再次核验 PRIVATE、路径边界和写入已停止的依据。
 
 在工具仓根目录执行，把 OWNER 换成私有伴生仓所属账号：
 
@@ -135,32 +129,12 @@ export SKILL_SMITH_CONFIG="$(cd ../skill-smith-config && pwd)"
 ```
 
 已有伴生仓时 clone 并设置同一变量。可见性查询必须返回 `PRIVATE`。
-写入前用可信的采集工具刷新 `~/.pii-guard/visibility.json`：
-`_refreshed` 时间和全部实际 fetch / push 目标都要保持有效且为 PRIVATE，
-包括 URL 重写、SSH 别名和额外 push URL。`gh repo view` 不会刷新该回执，
-`.companion` 只能证明归属。无法解析或不支持的路由会失败。
-见 [Guards 传输契约](guards/COMPANION.md#verifying-a-companion)。
-
-`guards/tools/datadir.py` 按顺序选择已有的 DATA 候选：`SKILL_SMITH_DATA_DIR`、
-`SKILL_SMITH_CONFIG`、`SKILL_SMITH_CONFIG_DIR`、已证明归属的同级伴生仓、
-`~/.skill-smith-config`，最后是 `~/.skill-smith-data`。伴生仓候选先尝试 `data/`。
-写入路径必须符合契约：`data/fleet-check-status.json`、`data/worklist.json` 和
-`data/description-backups/`。切换 CONFIG 时需要清除继承的 DATA_DIR；不受支持的根目录回退
-或另选输出路径会在产物准入时失败。
-
-固定版本的 Guards API 核验 PRIVATE 传输、已有 Git 提交、唯一产物归属、预期生产者和当前
-忽略规则。报告替换前的临时文件也有独立声明。链接路径、无版本管理目录、PUBLIC / UNKNOWN、
-被忽略、已退役或未声明的目标都会被拒绝；显式 `--status-json`、`--out`、`--backup-dir`
-同样受检。每次写入前重新核验源契约和传输证明，绝不退回工具仓内。
-运行数据在私有伴生仓提交并推送。恢复时 clone 伴生仓、设置变量、刷新可见性回执，
-核对路径后再续跑。
-
-`trim_descriptions.py --scan` 只生成私有待审清单，不改描述。
-实际裁剪需要已有授权，并用 PyYAML 校验完整 frontmatter。
-`fleet_check.py --no-status` 只输出控制台结果，不需要报告目录。
-[config.contract.json](config.contract.json) 明确将 Smith 归为仅管理运行数据的工具：G8 检查 E8，
-E1-E7 不适用。四份外部传入的运行输入由 Profile Sync 和操作者初始化，详见存储参考文档；
-Smith 不另造设置注册表。G8 不证明运行存储已就绪。
+写入前刷新可信可见性回执；上述查询不会刷新回执。
+选择优先级、准确输出路径、写入准入、仅控制台运行和恢复步骤见
+[运行数据发现与输出](skills/skill-smith/reference/storage-contract.md#runtime-discovery-and-outputs)，
+传输证明见 [Guards 伴生仓核验](guards/COMPANION.md#verifying-a-companion)。
+Smith 仅管理运行数据；存储参考文档中的外部配置输入由 Profile Sync 和操作者初始化。
+G8 合规本身不证明存储已就绪。
 
 ## 技能库与 Fleet 检查
 
@@ -191,15 +165,15 @@ plugin manifest 是版本来源；双语 README 徽章、ROADMAP Current 和最�
 python skills/skill-smith/scripts/bump_version.py . --level patch --dry-run
 ```
 
-发版准备会拒绝版本漂移、不递增或不规范的版本号、无效或早于最近记录的日期，
-以及空白 / 占位的目标发布正文。已有实质 Unreleased 不需要重复提供 `--notes`；
-否则须补真实变更说明。ROADMAP 引用 CHANGELOG，不编写另一份发布历史。
-工具同步五处版本，不提交、不打 tag、不推送；版本准备不代表已经发布。
+发布前检查和历史保留遵循文档契约；版本选项见
+[脚手架参考](skills/skill-smith/reference/scaffold.md#bump-version-preparation)。
+工具同步五处版本，不提交、不打 tag、不推送。Python 包发版还需按 Python API 文档同步
+`pyproject.toml` 版本；准备完成不代表已经发布。
 
 ## 证据与运行前提
 
 需要 Python 3.10+、Git 和 `requirements.txt` 中的 PyYAML。
-模型和 agent 工作使用 installed `llmcall` 当前路由、超时与回退策略。
+模型和 agent 工作使用 已安装的 `llmcall` 当前路由、超时与回退策略。
 先核对所选调研、生成器和评测能力；缺失时明确保留缺口。
 
 离线测试需要 `requirements-dev.txt` 和 PATH 中的 POSIX `sh`。
@@ -215,7 +189,7 @@ python -m pytest -c pytest.ini tests/ tools/ -q -ra
 
 ## 局限
 
-证据 CLI 不运行评测模型，也不批准候选。G8 读取源仓声明的适用性和原生生命周期入口。
+G8 读取源仓声明的适用性和原生生命周期入口。
 静态检查保留“就绪状态未测”；只有 `--run-synthetic` 才执行已审查的合成夹具命令，
 分别记录空模板必填项拒绝、模板确定性和已配置 A/B 检查结果。
 scenario-eval 和外部 provider 必须实际存在才能选择。

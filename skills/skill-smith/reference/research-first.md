@@ -1,51 +1,49 @@
-# Step 0, Research-first (MANDATORY, the P1 承重墙)
+# Step 0, Research-first
 
-**Why this is step zero:** "industry-leading" and "tested-real" are claims about the field. You
-cannot make them by guessing from priors, you must look at the field first. Skipping this produces a
-median skill dressed up as a leading one. This step is a hard invariant, not an optimization.
+Research is required before design. Comparisons with existing work need current references,
+documented limitations and a measurable improvement target. This step supplies the design brief
+and evaluation basis required by P1 and P2 in [PHILOSOPHY.md](../../../PHILOSOPHY.md).
 
-## What to do
+## Research scope
 
-Delegate a broad recon to **market-intel** (it is the research engine; do not re-implement it):
+Delegate research to `market-intel` at **deep** scale, or **exhaustive** for a flagship skill.
+Cover reference implementations, relevant methods, competing tools, known failure modes and
+how the field evaluates usefulness. The relevant domains are:
 
-> Invoke market-intel at **deep** (or **exhaustive** for a flagship skill) scale with a query like:
-> "调研 `<the skill's domain/task>` 的最佳实现/参考 skill、前沿设计与方法、competing tools、已知
-> anti-patterns 与失败模式,以及业界如何证明这类工具真的可用(eval 方式)。"
+- `ready-skills`: existing skills and plugins as comparison targets.
+- `mcp-ecosystem` in Discovery, plus GitHub: related tools and repositories.
+- `frontier-research`: papers and methods that can inform the design.
+- `x-twitter` and `reddit-community` (HN/Reddit): practitioner observations and reported failures.
 
-market-intel will route across the domains that matter here:
-- **`ready-skills`**, existing skills/plugins that already do this (match-or-beat targets).
-- **`mcp-ecosystem`** (its Discovery meta-domain) + GitHub, tools/repos in the space.
-- **`frontier-research`**, papers / SOTA methods to borrow for genuine innovation.
-- **`x-twitter` / `reddit-community` (HN/Reddit)**, practitioner discourse: what works, what burns.
+If `market-intel` is unavailable or disconnected, use the available `deep-research` harness and
+report the capability change explicitly. Research remains required; an unavailable fallback
+must remain a gap.
 
-If market-intel is **not installed/connected**, fall back to the built-in `deep-research` harness and
-**state the degradation explicitly** (P-no-silent-degradation). Never skip recon.
+## Design brief
 
-## What to extract (the deliverable of Step 0 = a one-page Design Brief)
+Produce a one-page brief for the rest of the workflow:
 
-Produce a short brief that the rest of the pipeline consumes:
-
-1. **Best references (match-or-beat):** the 1 to 3 strongest existing implementations + what makes them
-   good + their concrete weakness you can exceed.
-2. **Frontier ideas to incorporate:** specific design/method ideas worth borrowing (this is where
-   *innovation* enters, you are standing on the surveyed state of the art, then adding).
-3. **Anti-patterns to avoid:** documented failure modes (e.g. from this ecosystem: ~50% non-trigger,
-   token-budget truncation, faith-based "it triggered != it worked", skill sprawl, prompt-injection
-   surface). Each becomes a thing the design must defend against.
-4. **The proof bar:** how the best ones demonstrate they work -> this defines the eval signal the
-   acceptance gate (Step 5) and self-evolve (Step 6) will use. "tested-real" starts here.
-5. **Scope & focus decision:** confirm one-job framing; if the brief reveals 2+ jobs, plan a *set* of
-   focused skills (-> batch, Step 7), not one fat skill.
+1. **Reference implementations:** the strongest 1 to 3 alternatives, their useful properties and
+   concrete weaknesses the proposed skill could address.
+2. **Relevant methods:** specific surveyed designs or methods to reuse or extend, with their sources.
+3. **Failure modes:** documented risks and the design requirements they imply. Existing guidance
+   includes a reported ~50% non-trigger rate, token-budget truncation, activation without task
+   improvement, overlapping scope and prompt-injection exposure. Record the source and context of
+   each observation; do not use an uncited rate as a measured result for the new candidate.
+4. **Evaluation:** the baseline, signal and proof cases for acceptance (Step 5) and iteration (Step 6).
+5. **Scope:** one job per skill. If the brief identifies 2+ jobs, plan a focused set under
+   [batch.md](batch.md).
 
 ## Output contract
 
-The brief must explicitly answer: *what is the current best, what will we do better/new, what will we
-NOT do, and how will we prove it works?* If you cannot answer the last one, you are not ready to
-scaffold, loop the recon. Store the complete real brief under `research/` in the verified PRIVATE
-versioned DATA directory resolved by the consuming skill's guard resolver. Include its private
-artifact reference in the implementation handoff. Missing private storage requires initialization;
-it never falls back into the public tool tree.
+The brief identifies the current alternatives, intended improvement, excluded scope and how the
+improvement will be measured. Resolve a missing evaluation method before scaffolding.
+Store the complete real brief under `research/` in the verified PRIVATE versioned DATA directory
+resolved by the consuming skill's guard resolver. Include its private artifact reference in the
+implementation handoff. Missing private storage requires initialization; no public-tree fallback
+is allowed.
 
-The scaffold's `docs/design-rationale.md` is separate public TOOL documentation. It may explain
-reusable behavior, public interfaces, limitations and generated synthetic examples. Do not copy
-the real recon brief, user scope decisions, prompts, observations or private artifact paths into it.
+The scaffold's `docs/design-rationale.md` holds reusable public TOOL documentation: behavior,
+public interfaces, limitations and generated synthetic examples. Keep real briefs, user scope
+decisions, prompts, observations and private artifact paths in PRIVATE DATA. Update the existing
+rationale section when the design changes, following [documentation.md](documentation.md).

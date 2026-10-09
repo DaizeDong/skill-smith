@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Scaffold a Skill-Repo-Spec-v1-conformant Claude Code skill repo skeleton.
 
-Emits the 7 required files + PHILOSOPHY.md + skills/<name>/SKILL.md, all version-synced to one
-value. Stdlib only. See ../reference/scaffold.md. After scaffolding, run check_conformance.py.
+Creates version-aligned entry documents, a skill skeleton and pinned Guards/Style integrations.
+Complete the draft content under ../reference/scaffold.md before accepted-stage conformance.
+Stdlib only.
 
 Usage:
   python scaffold_skill.py my-skill \
@@ -65,18 +66,18 @@ __BADGES__
 
 ---
 
-## ⭐ Read this first, the design philosophy
+## ⭐ Design philosophy
 
-<!-- One screen: WHY it is designed this way. Root-cause, not features. Link PHILOSOPHY.md. -->
-TODO: state the single governing principle of __NAME__, then link PHILOSOPHY.md.
+TODO: explain the problem __NAME__ addresses, relevant evidence, the chosen approach,
+tradeoffs and limits. Keep the summary here and detailed rationale in PHILOSOPHY.md.
 
-\U0001f4dc **[Read the full design philosophy -> PHILOSOPHY.md](PHILOSOPHY.md)**
+[Design rationale](PHILOSOPHY.md)
 
 ---
 
-## What it is (and isn't)
+## Purpose and scope
 
-TODO: define scope and boundary.
+TODO: identify intended users, inputs, outputs and operating boundaries.
 
 ## Install
 
@@ -124,18 +125,18 @@ __BADGES_CN__
 
 ---
 
-## ⭐ 先读这里, 设计理念
+## ⭐ 设计理念
 
-<!-- 一屏说清"为什么这样设计"。改根因,不堆功能。链 PHILOSOPHY.md。 -->
-TODO: 写清 __NAME__ 的唯一统领原则,然后链 PHILOSOPHY.md。
+TODO: 说明 __NAME__ 要解决的问题、相关证据、采用的方法、取舍和限制。
+本节保留概述，详细设计依据写在 PHILOSOPHY.md。
 
-\U0001f4dc **[完整设计理念 -> PHILOSOPHY.md](PHILOSOPHY.md)**
+[设计依据](PHILOSOPHY.md)
 
 ---
 
-## 它是什么(不是什么)
+## 用途与范围
 
-TODO: 定位与边界。
+TODO: 说明目标用户、输入、输出和运行边界。
 
 ## 安装
 
@@ -176,26 +177,26 @@ TODO。
 
 PHILOSOPHY_TMPL = """# __NAME__, Design Philosophy
 
-> One test governs every change: **does it fix the framing, or just patch a symptom?**
-
-TODO: state the root-cause design principle(s) of __NAME__. Each principle should give the
-patch-vs-root contrast and the concrete decision in this repo that it produced.
+TODO: explain the problem, relevant evidence and design choices for __NAME__.
+Update each principle when its decision changes; retain supporting references and known limits.
 
 ## P1, <principle>
-- **Symptom patch:** ...
-- **Root cause:** ...
-- **Decision it produced:** ...
+- **Problem and evidence:** TODO.
+- **Decision:** TODO.
+- **Tradeoffs and limits:** TODO.
 """
 
 ROADMAP_TMPL = """# Roadmap
 
 Current: **v__VER__**
 
+Release history is recorded in [CHANGELOG.md](CHANGELOG.md).
+
 ## v__VER__ (current)
-- Initial release.
+- TODO: describe implemented capabilities and their verification limits.
 
 ## Planned
-- TODO.
+- TODO: describe planned work separately from current capabilities.
 """
 
 CHANGELOG_TMPL = """# Changelog
