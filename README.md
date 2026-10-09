@@ -40,6 +40,47 @@ For an existing skill repair, use [self-evolve](https://github.com/DaizeDong/sel
 a ready-made skill, use [market-intel](https://github.com/DaizeDong/market-intel). Batch work still
 needs evidence for each candidate and one shared library budget.
 
+## Creation workflow
+
+The workflow coordinates existing tools and independent evaluators. Each candidate in a batch
+follows the same evidence and review path.
+
+```mermaid
+flowchart TD
+    brief["Collect the brief<br/>Research alternatives and proof cases"]
+    scope["Check overlap<br/>Define the job and deliverables"]
+    policy["Evaluator freezes policy and holdout<br/>Before implementation"]
+    build["Generate and scaffold<br/>Complete code, docs and version metadata"]
+    evidence["Freeze the completed candidate<br/>Bind required measurements to it"]
+    validate{"Evidence contracts valid?"}
+    review{"Two clean independent reviews<br/>of this candidate and evidence?"}
+    unresolved["Unaccepted: record gaps<br/>Revise or collect missing evidence"]
+    accepted["Accepted by independent review"]
+    iterate["Continue with self-evolve<br/>Preflight a supported provider"]
+    deploy["Authorized installation or publication<br/>Verify the installed or published layer"]
+
+    brief --> scope --> policy --> build --> evidence --> validate
+    validate -->|"All required artifacts valid and non-fixture"| review
+    validate -->|"Missing, failed or includes fixtures"| unresolved
+    review -->|"No"| unresolved
+    unresolved -->|"Same candidate and policy"| evidence
+    unresolved -->|"Revision needed"| policy
+    review -->|"Yes"| accepted
+    accepted -->|"Iterate"| iterate
+    iterate --> policy
+    accepted -->|"Install or publish"| deploy
+```
+
+The evidence CLI only validates supplied artifacts and always returns `accepted: false`.
+Missing or failed gates, and bundles containing fixture evidence, leave the candidate unaccepted.
+A changed candidate or policy requires fresh bound evidence and restarts both clean review rounds.
+
+Actual measurements come from evaluators outside the evidence CLI. The
+[iteration handoff](skills/skill-smith/reference/iterate-handoff.md) uses an installed provider for
+programmatic results (A), dated external anchors (B), or scenario/rubric/human or heterogeneous-judge
+evidence (C), only when implemented and available. A scenario-eval design alone does not supply a
+runnable evaluator; unavailable providers remain explicit gaps.
+
 ## Install
 
 ```text
