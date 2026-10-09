@@ -17,6 +17,8 @@ All notable changes to this project are documented here (Keep a Changelog style)
   execution requires an inspected fixture opt-in and keeps all E1-E8 result rows.
 
 ### Changed
+- Add matching English and Chinese README flowcharts for creation, evidence validation,
+  independent review, iteration and authorized deployment, with evaluator availability limits.
 - Move pure storage-contract validation and matching to Guards; Smith retains the thin adapter,
   inventory and reviewed retirement workflow.
 - Accept complete legacy and current Style reports, retaining maintenance-only NOT_APPLICABLE
