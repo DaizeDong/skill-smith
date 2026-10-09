@@ -1,0 +1,40 @@
+// Rebuild both README images with: python docs/diagrams/render.py
+digraph workflow {
+  graph [rankdir=LR, bgcolor="white", pad="0.15", nodesep="0.55", ranksep="0.35", splines=spline, outputorder=edgesfirst];
+  node [shape=box, style="rounded,filled", fontname="Arial", fontsize=15, fontcolor="#0f172a", penwidth=1.6, margin="0.16,0.12"];
+  edge [fontname="Arial", fontsize=11, color="#64748b", fontcolor="#475569", penwidth=1.4, arrowsize=0.75];
+
+  brief [label=<<b>Research</b><br/><font point-size="11">Brief, scope<br/>and proof cases</font>>, fillcolor="#eef2ff", color="#6366f1", group="top"];
+  policy [label=<<b>Freeze policy</b><br/><font point-size="11">+ holdout<br/>before implementation</font>>, fillcolor="#fef9c3", color="#ca8a04", group="top"];
+  build [label=<<b>Build</b><br/><font point-size="11">Code, docs<br/>and version</font>>, fillcolor="#f1f5f9", color="#475569", group="top"];
+  evidence [label=<<b>Freeze candidate</b><br/><font point-size="11">Bind measurements</font>>, fillcolor="#f1f5f9", color="#475569", group="top"];
+  validate [label=<<b>Validate</b><br/><font point-size="11">Evidence CLI only<br/>accepted: false</font>>, fillcolor="#fef9c3", color="#ca8a04", group="top"];
+
+  deploy [label=<<b>Install / publish</b><br/><font point-size="11">When authorized<br/>Verify delivery</font>>, fillcolor="#e0f2fe", color="#0284c7", group="bottom"];
+  iterate [label=<<b>Iterate</b><br/><font point-size="11">self-evolve<br/>Supported provider</font>>, fillcolor="#e0f2fe", color="#0284c7", group="bottom"];
+  accepted [label=<<b>Accepted</b><br/><font point-size="11">Independent approval</font>>, fillcolor="#dcfce7", color="#16a34a", group="bottom"];
+  review [label=<<b>Review</b><br/><font point-size="11">Two clean rounds<br/>Independent reviewers</font>>, fillcolor="#fef9c3", color="#ca8a04", group="bottom"];
+  unresolved [label=<<b>Unaccepted</b><br/><font point-size="11">Missing / failed<br/>or fixture evidence</font>>, fillcolor="#fff1f2", color="#e11d48", group="bottom"];
+
+  { rank=same; brief; deploy; }
+  { rank=same; policy; iterate; }
+  { rank=same; build; accepted; }
+  { rank=same; evidence; review; }
+  { rank=same; validate; unresolved; }
+
+  brief -> policy -> build -> evidence -> validate;
+  validate -> review [label="Valid,\nnon-fixture", color="#ca8a04", constraint=false];
+  validate -> unresolved [color="#e11d48"];
+  review -> unresolved [color="#e11d48", constraint=false];
+  review -> accepted [color="#16a34a", constraint=false];
+  accepted -> iterate [color="#0284c7", constraint=false];
+  iterate -> policy [style=dashed, color="#0284c7", constraint=false];
+  accepted -> deploy [color="#0284c7", constraint=false];
+
+  // Keep both reading rows aligned; return routes are explained in the README.
+  deploy -> iterate -> accepted -> review -> unresolved [style=invis, weight=20];
+  brief -> deploy [style=invis, weight=20];
+  policy -> iterate [style=invis, weight=20];
+  build -> accepted [style=invis, weight=20];
+  evidence -> review [style=invis, weight=20];
+}

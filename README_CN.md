@@ -46,34 +46,15 @@ skill-smith 在生成之前安排调研，在生成之后要求测量证据。�
 
 流程串起已有工具和独立评测者的工作。批量创建时，每个候选都要走完同一套证据和评审流程。
 
-```mermaid
-flowchart TD
-    brief["收集 brief<br/>调研替代方案和证明案例"]
-    scope["检查重叠<br/>明确职责和交付物"]
-    policy["评测者冻结 policy 与保留测试集<br/>必须在实施之前"]
-    build["生成并搭建脚手架<br/>完成实现、文档和版本信息"]
-    evidence["冻结最终候选<br/>绑定所需的测量证据"]
-    validate{"证据契约有效？"}
-    review{"同一候选和证据<br/>获得两轮独立评审通过？"}
-    unresolved["尚未接受：记录缺口<br/>修订或补齐证据"]
-    accepted["独立评审接受候选"]
-    iterate["交给 self-evolve 继续迭代<br/>先确认受支持的 provider 可用"]
-    deploy["在授权范围内安装或发布<br/>核验已安装或已发布的内容"]
+<p align="center">
+  <a href="docs/diagrams/workflow-cn.png"><img src="docs/diagrams/workflow-cn.png" alt="技能创建流程：调研、冻结评测策略、实现、证据校验和独立评审，以及迭代和授权交付。" width="760"></a>
+</p>
 
-    brief --> scope --> policy --> build --> evidence --> validate
-    validate -->|"所需证据全部有效且不含合成样例"| review
-    validate -->|"缺失、失败或含合成样例"| unresolved
-    review -->|"否"| unresolved
-    unresolved -->|"候选和 policy 均未变"| evidence
-    unresolved -->|"需要修订"| policy
-    review -->|"是"| accepted
-    accepted -->|"继续迭代"| iterate
-    iterate --> policy
-    accepted -->|"安装或发布"| deploy
-```
+[绘图源文件（DOT）](docs/diagrams/workflow-cn.dot) · [重新生成 PNG](docs/diagrams/render.py)
 
 证据 CLI 只校验已有产物，始终返回 `accepted: false`。所需证据缺失、未通过或含合成样例时，
 候选都不能被接受。候选或 policy 一旦改变，就要重新绑定证据，并从头完成两轮独立评审。
+候选和 policy 均未变时，补齐证据后重新校验；需要修订时，回到冻结评测策略的步骤。
 
 实际测量由证据 CLI 之外的评测者完成。[迭代交接](skills/skill-smith/reference/iterate-handoff.md)
 使用已安装的 provider：程序化结果（A）、带日期的外部锚点（B），或场景、rubric、人工或异构评审证据（C）。
