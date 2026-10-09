@@ -16,6 +16,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(_HERE)
 _SCRIPTS = os.path.join(_REPO, "skills", "skill-smith", "scripts")
@@ -26,6 +28,8 @@ BUMP = os.path.join(_SCRIPTS, "bump_version.py")
 
 sys.path.insert(0, _SCRIPTS)
 import version_sites as vs  # noqa: E402
+sys.path.insert(0, os.path.join(_REPO, "tools"))
+from make_fixtures import release_documentation_fixture, roadmap_documentation_fixture  # noqa: E402
 
 DATE = datetime.date.today().isoformat()
 
@@ -56,8 +60,6 @@ def mkrepo(tmp_path, name="rel-skill", version="0.1.0"):
     assert r.returncode == 0, r.stdout + r.stderr
     repo = os.path.join(out, name)
     # Release tests need completed release prose; the scaffold itself remains an unfinished draft.
-    sys.path.insert(0, os.path.join(_REPO, "tools"))
-    from make_fixtures import release_documentation_fixture
     fixture = release_documentation_fixture(tmp_path / "release-notes", version)
     write(repo, "CHANGELOG.md", (fixture / "CHANGELOG.md").read_text(encoding="utf-8"))
     return repo
@@ -124,15 +126,31 @@ def test_bump_moves_all_five_sites(tmp_path):
     assert vs.is_synced(vs.collect(repo))
 
 
-def test_bump_demotes_previous_roadmap_heading(tmp_path):
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_consecutive_bumps_preserve_roadmap_sections(tmp_path, newline):
     repo = mkrepo(tmp_path, version="0.1.0")
-    assert "## v0.1.0 (current)" in read(repo, "ROADMAP.md")
-    r = run([BUMP, repo, "--level", "patch", "--date", DATE])
-    assert r.returncode == 0, r.stdout
-    roadmap = read(repo, "ROADMAP.md")
-    assert "## v0.1.1 (current)" in roadmap
-    assert "## v0.1.0\n" in roadmap, "old heading must lose its (current) marker"
-    assert roadmap.count("(current)") == 1
+    roadmap_documentation_fixture(repo, newline=newline)
+    original = read(repo, "ROADMAP.md")
+
+    for version in ("0.1.1", "0.1.2"):
+        result = run([BUMP, repo, "--level", "patch", "--date", DATE,
+                      "--notes", "Adds synthetic record validation."])
+        assert result.returncode == 0, result.stdout + result.stderr
+        expected = original.replace("Current: **v0.1.0**", "Current: **v%s**" % version)
+        expected = expected.replace("## v0.1.0 (current)", "## v%s (current)" % version)
+        assert read(repo, "ROADMAP.md") == expected
+        assert vs.is_synced(vs.collect(repo))
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_roadmap_custom_heading_keeps_body_unchanged(tmp_path, newline):
+    import bump_version as bumpmod
+
+    roadmap_documentation_fixture(tmp_path, newline=newline, standard_heading=False)
+    original = read(tmp_path, "ROADMAP.md")
+    updated, note = bumpmod.plan_roadmap(original, "0.2.0", "Release notes stay in CHANGELOG.")
+    assert updated == original.replace("Current: **v0.1.0**", "Current: **v0.2.0**")
+    assert "body left untouched" in note
 
 
 def test_bump_set_exact_version(tmp_path):

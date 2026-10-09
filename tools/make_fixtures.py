@@ -28,6 +28,25 @@ def release_documentation_fixture(root, version="0.1.0", notes="Adds synthetic r
     return root
 
 
+def roadmap_documentation_fixture(root, *, newline="\n", standard_heading=True):
+    """Generate current, planned and historical prose for lossless version-update tests."""
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+    heading = ("## v0.1.0 (current), supported capabilities" if standard_heading
+               else "## Supported capabilities (since 0.1.0)")
+    text = "\n".join([
+        "# Roadmap", "", "Current: **v0.1.0**", "",
+        "Release history: [CHANGELOG.md](CHANGELOG.md).", "", heading,
+        "- Read synthetic records with `--input FILE`.",
+        "- Preserve schema compatibility with 0.1.0.", "",
+        "## Planned", "- Add a synthetic format conversion.", "",
+        "## v0.0.9", "- Historical synthetic preview support.", "",
+    ])
+    path = root / "ROADMAP.md"
+    path.write_bytes(text.replace("\n", newline).encode("utf-8"))
+    return path
+
+
 def documentation_checker_fixture(root, report, exit_code=0, raw=None):
     """A generated subprocess fixture exercises the kit interface, not documentation semantics."""
     target = Path(root) / "style/tools/doc_contract.py"

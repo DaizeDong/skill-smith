@@ -18,13 +18,13 @@ skill-smith therefore places research before generation and measured evidence af
 defines the problem, alternatives and proof cases; an independent evaluator freezes policy and
 holdout before implementation. The final candidate includes completed docs and version metadata.
 
-Existing research, generation, evaluation and iteration engines do the heavy work. This thin
-orchestrator owns their handoff, guarded repository structure and evidence contracts. The tradeoff
+Existing tools perform research, generation, evaluation and iteration. This orchestrator owns
+their handoffs, guarded repository structure and evidence contracts. The tradeoff
 is that missing evaluator capabilities remain visible blockers. A deterministic checker cannot
 replace live measurements, and an artifact hash cannot authenticate a claimed result.
 
-Acceptance needs independent approval of the same completed candidate and evidence. A scaffold is
-a draft; the evidence CLI always returns `accepted: false`. See [PHILOSOPHY.md](PHILOSOPHY.md) for
+Acceptance needs independent approval of the same completed candidate and evidence.
+See [PHILOSOPHY.md](PHILOSOPHY.md) for
 the design choices and [the documentation contract](skills/skill-smith/reference/documentation.md)
 for completion, review and release duties.
 
@@ -82,16 +82,10 @@ Keep both submodules initialized; an existing clone uses `git submodule update -
 Use a public-safe commit identity before contributing. Installed aliases and resource paths require
 their own verification; see [deployment](skills/skill-smith/reference/deploy.md).
 
-Python consumers can build and install the `skill_smith` package from this checkout.
-It provides explicit source discovery, selection and validated runtime descriptors;
-optional execution uses the installed llmcall interface. See the [Python API](skills/skill-smith/reference/python-api.md)
-for dependencies, wheel building, coverage states and verification limits.
-Adapters reject an llmcall older than the 0.3.0 contract before running, and refuse
-execution requirements, workspaces or environments llmcall cannot enforce; installation
-alone does not establish that the selected llmcall runtime supports them.
-Windows catalogs accept approved roots written with 8.3 short names, including
-custom entries declared by plugin manifests. Custom entries must stay inside their
-plugin root; other junction or symlink targets outside approved roots require separate approval.
+Python consumers can build and install the `skill_smith` catalog and runtime adapter package.
+Optional execution uses installed llmcall, requires its 0.3.0 contract, and rejects requirements the
+selected runtime cannot enforce. See the [Python API](skills/skill-smith/reference/python-api.md)
+for dependencies, wheel building, source-path boundaries, coverage states and verification limits.
 
 ## Quick start
 
@@ -125,11 +119,12 @@ The reviewer checks bilingual meaning and actual behavior, beyond structural doc
 
 Reports, real briefs, evaluator logs, worklists and backups belong in a verified PRIVATE versioned
 companion. Public TOOL documentation contains reusable rationale and generated synthetic examples.
-
-The source-owned [storage contract](storage.contract.json) limits retained paths and budgets.
-Keep current structured state and requested final results; extract unique useful changes once,
-then retire superseded development material. Run the shared [storage checker](skills/skill-smith/reference/storage-contract.md)
-to inspect declarations and sizes. Its dry run never deletes data.
+The source-owned [storage contract](storage.contract.json) defines retained paths and budgets;
+keep current structured state, necessary configuration and recovery dependencies, and requested
+final results. Extract unique useful changes before retiring superseded development material.
+The [storage checker](skills/skill-smith/reference/storage-contract.md) reports declarations and
+sizes without deleting data. Removal requires a reviewed plan and renewed checks of PRIVATE
+identity, path boundaries and inactive writers.
 
 From the tool checkout, substitute the account that owns your private companion:
 
@@ -147,33 +142,12 @@ export SKILL_SMITH_CONFIG="$(cd ../skill-smith-config && pwd)"
 ```
 
 For an existing companion, clone it and set the same variable. The visibility query must return
-`PRIVATE`. Before a writer runs, refresh `~/.pii-guard/visibility.json` with the trusted collector.
-Its `_refreshed` timestamp and every physical/effective fetch and push destination must be current
-and PRIVATE, including URL rewrites, SSH aliases and additional push URLs. `gh repo view` does not
-update that receipt; `.companion` alone proves ownership. Unsupported or unresolved routing fails.
-See [the Guards transport contract](guards/COMPANION.md#verifying-a-companion).
-
-`guards/tools/datadir.py` selects the first existing supported DATA candidate in this order:
-`SKILL_SMITH_DATA_DIR`, `SKILL_SMITH_CONFIG`, `SKILL_SMITH_CONFIG_DIR`, a proven sibling companion,
-`~/.skill-smith-config`, then `~/.skill-smith-data`. Companion-root candidates try `data/` first.
-Writers require the declared companion layout: `data/fleet-check-status.json`, `data/worklist.json`
-and `data/description-backups/`. Switching CONFIG requires clearing an inherited DATA_DIR override.
-An unsupported root fallback or alternate output path fails artifact admission.
-
-The pinned Guards API checks PRIVATE transport, a committed Git HEAD, exactly one artifact owner,
-the expected producer artifact, and current ignore rules. Report staging also has its own exact
-declaration. Linked, unmanaged, PUBLIC/UNKNOWN, ignored, retired or undeclared destinations are
-refused, including explicit `--status-json`, `--out` and `--backup-dir`. Writers recheck the source
-contract and publication proof immediately before writing and never fall back inside the tool repo.
-Commit and push run data in the private companion. Restore by cloning that companion, setting
-the variable, refreshing visibility proof and verifying paths before resuming.
-
-`trim_descriptions.py --scan` creates a private review worklist without changing descriptions.
-Apply requires reviewed authorization and PyYAML frontmatter validation. `fleet_check.py --no-status`
-is console-only and needs no report destination. [config.contract.json](config.contract.json)
-declares Smith as runtime-storage-only: G8 validates E8, with E1-E7 not applicable. Profile Sync
-and operators own initialization of the four externally supplied runtime input documents described
-in the storage reference. No Smith settings registry is invented. G8 does not prove runtime storage readiness.
+`PRIVATE`. Refresh the trusted visibility receipt before writing; the query does not update it.
+See [runtime discovery and outputs](skills/skill-smith/reference/storage-contract.md#runtime-discovery-and-outputs)
+for selection precedence, exact output paths, write admission, console-only operation and recovery,
+and [Guards companion verification](guards/COMPANION.md#verifying-a-companion) for transport proof.
+Smith owns runtime storage only; Profile Sync and operators initialize the external configuration
+inputs listed in the storage reference. G8 conformance alone does not prove storage readiness.
 
 ## Library and fleet checks
 
@@ -205,10 +179,10 @@ The [documentation contract](skills/skill-smith/reference/documentation.md) is t
 python skills/skill-smith/scripts/bump_version.py . --level patch --dry-run
 ```
 
-Release preparation refuses drift, non-advancing/noncanonical versions, invalid or regressing dates,
-and empty/placeholder target notes. Existing substantive Unreleased needs no duplicate `--notes`;
-otherwise supply actual notes. ROADMAP refers to CHANGELOG rather than inventing release history.
-The tool aligns five surfaces and never commits, tags or pushes. A prepared version is not a publication.
+Follow the documentation contract for release preflight and preserved history, and the
+[scaffold reference](skills/skill-smith/reference/scaffold.md#bump-version-preparation) for version
+options. The tool aligns five surfaces and never commits, tags or pushes. Package releases also
+need the aligned `pyproject.toml` version described in the Python API; preparation is not publication.
 
 ## Evidence and runtime prerequisites
 
@@ -229,8 +203,7 @@ fixtures exercise contracts; they cannot prove real task improvement or live int
 
 ## Limitations
 
-The evidence CLI does not run evaluator models or award acceptance. G8 uses explicit source-owned
-applicability and declared native lifecycle paths. Static checks leave readiness unmeasured;
+G8 uses explicit source-owned applicability and declared native lifecycle paths. Static checks leave readiness unmeasured;
 `--run-synthetic` opts into inspected fixture commands, with separate blank-template, deterministic
 generation and configured A/B results. Scenario-eval and external providers must actually exist to be selected.
 Same-account private paths provide procedural separation, not proven read denial. Installation,

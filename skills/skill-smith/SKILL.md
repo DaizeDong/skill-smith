@@ -61,9 +61,11 @@ contracts and cannot award acceptance. Follow
    fail. Hooks use `.githooks`, never the potentially empty `guards/hooks` directory directly.
 9. Use `scripts/bump_version.py` to align version surfaces. Verify the installed alias, resources and
    published tree separately from the current worktree.
-10. Complete applicable documents under `reference/documentation.md`. Record `docs_impact` per
-    affected behavior; freeze final implementation/docs/version bytes before evidence and independent
-    review. Draft scaffolds and structural checks alone cannot establish document completion.
+10. Complete applicable documents under `reference/documentation.md`: update authoritative existing
+    sections, consolidate superseded guidance, preserve facts and current EN/CN meaning, and keep
+    README, ROADMAP and CHANGELOG roles distinct. Record `docs_impact` per affected behavior; freeze
+    final implementation/docs/version bytes before evidence and independent review. Draft scaffolds
+    and structural checks alone cannot establish document completion.
 
 ## Deliver and resume
 

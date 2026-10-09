@@ -8,6 +8,9 @@ All notable changes to this project are documented here (Keep a Changelog style)
   HOME, preserving native write admission while checking deterministic templates and readiness.
 
 ### Fixed
+- Update the current ROADMAP version heading in place during release preparation. Consecutive
+  bumps preserve current capability prose, planned work and existing history without adding
+  sections; LF/CRLF and nonstandard-heading preservation have synthetic regression coverage.
 - Require source-owned configuration applicability instead of inferring settings from prose.
   Missing declarations remain unknown; storage-only tools retain E8 without invented registries.
 - Bind report, staging, worklist and rollback writes to their declared producer artifacts through
@@ -17,9 +20,13 @@ All notable changes to this project are documented here (Keep a Changelog style)
   execution requires an inspected fixture opt-in and keeps all E1-E8 result rows.
 
 ### Changed
-- Replace the README flowcharts with compact color PNGs, checked-in DOT sources and a renderer.
-- Add matching English and Chinese README flowcharts for creation, evidence validation,
-  independent review, iteration and authorized deployment, with evaluator availability limits.
+- Use matching English and Chinese color PNG workflow diagrams, with checked-in DOT sources
+  and a renderer, for creation, evidence validation, independent review, iteration and authorized
+  deployment; preserve evaluator availability limits.
+- Consolidate current documentation in authoritative sections, separate the roadmap from release
+  history, and require semantic preservation and matching EN/CN meaning during authoring and review.
+  Scaffold README and philosophy templates ask for the problem, evidence, decision, tradeoffs and
+  limits; the roadmap template separates current capabilities from plans and links release history.
 - Move pure storage-contract validation and matching to Guards; Smith retains the thin adapter,
   inventory and reviewed retirement workflow.
 - Accept complete legacy and current Style reports, retaining maintenance-only NOT_APPLICABLE

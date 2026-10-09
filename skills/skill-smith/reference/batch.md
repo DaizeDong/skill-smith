@@ -1,10 +1,11 @@
-# Step 7, Batch / series (P4: the library token budget is the real constraint)
+# Batch creation and the whole-library budget
 
-"Create a series of skills" is NOT "generate N SKILL.md files." The system prompt has a hard budget
-for skill descriptions (the written rule says ~15k chars; measured 2026-08-01, 21,565 chars survived
-out of 53,821 declared on this machine). Past it, descriptions are **silently dropped and the skills
-become invisible**. So a batch is "fit the most valuable skills within one global budget," and on a
-library already over capacity every admission is a swap, not an addition.
+A batch shares the host's description budget with the existing library. Descriptions omitted from
+the current host listing may prevent skill selection, so admitting candidates requires a measured
+library-wide budget and an explicit decision for each candidate that does not fit.
+The earlier ~15k-character rule and the 2026-08-01 observation of 21,565 visible characters from
+53,821 declared describe historical assumptions and one machine; they do not establish current
+capacity. Use a current captured listing and policy for G3.
 
 ## Pipeline
 
@@ -25,15 +26,17 @@ candidate list (from Step-0 brief: the focused jobs)
 
 ## Rules
 
-- **Per-skill gates run in parallel; the budget + dedup gates run once over the whole set** (a barrier).
-  A skill that is great alone can still be deferred because the set would overflow, that is correct.
-- **Rank by proven lift, not by count.** The output of a batch is a *ranked, budget-fit, deduped set*,
-  with the deferred remainder listed explicitly (never silently dropped).
-- **Prefer a clean set of focused skills over a few fat ones** (P5): coverage comes from composition.
-- Re-run `budget_check.py` after admission; if a future batch pushes the library over budget, the
-  manager must prune/merge existing low-lift skills, not just refuse the new ones.
+- Run per-skill gates in parallel, then evaluate budget and dedup once across the complete set.
+  A candidate that passes its own gates may still need to be deferred to stay within the budget.
+- Rank by measured lift and list every deferred candidate with its reason.
+- Keep each skill focused (P5); use composition for broader coverage.
+- Re-run `budget_check.py` after admission. If a later batch exceeds capacity, include merging or
+  pruning existing low-lift skills in the decision. A required removal remains BLOCKED until
+  resolved; a projected saving is not a measured G3 pass.
 
 ## Output
 
-An admitted set (deployed + handed to self-evolve), a ranked scoreboard (lift per skill), and an
-explicit deferred list with the reason (over budget / low lift / merged-into-X).
+Return the admitted set with its authorized deployment and self-evolve handoff state, a ranked
+scoreboard with measured lift per skill, and the deferred list with reasons such as over budget,
+low lift or merged into another skill. Use the same per-candidate documentation and review duties
+in [documentation.md](documentation.md).

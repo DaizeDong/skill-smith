@@ -55,6 +55,36 @@ inaccessible paths and links in any existing ancestor are errors. The `bytes` an
 is not claimed when source trees are excluded. Plans cannot retire anything
 outside the declared data roots.
 
+## Runtime discovery and outputs
+
+`guards/tools/datadir.py` selects the first existing supported DATA candidate in this order:
+`SKILL_SMITH_DATA_DIR`, `SKILL_SMITH_CONFIG`, `SKILL_SMITH_CONFIG_DIR`, a proven sibling companion,
+`~/.skill-smith-config`, then `~/.skill-smith-data`. Companion-root candidates try `data/` first.
+Writers require the declared layout: `data/fleet-check-status.json`, `data/worklist.json`
+and `data/description-backups/`. Clear an inherited DATA_DIR override when switching CONFIG.
+Unsupported root fallbacks and alternate output paths fail artifact admission, including explicit
+`--status-json`, `--out` and `--backup-dir` destinations.
+
+Before writing, refresh `~/.pii-guard/visibility.json` with the trusted collector. Its `_refreshed`
+timestamp and every physical/effective fetch and push destination must be current and PRIVATE,
+including URL rewrites, SSH aliases and additional push URLs. `gh repo view` does not refresh this
+receipt; `.companion` establishes ownership only. Unsupported or unresolved routing fails. See
+[Guards companion verification](../../../guards/COMPANION.md#verifying-a-companion) and the write
+admission requirements below. Commit and push run data in the private companion. Restore by cloning
+that companion, setting CONFIG, refreshing visibility proof and checking resolved paths before resuming.
+
+`fleet_check.py --print-status-path` prints the default path selected by the report writer's
+resolver. It does not inspect the fleet, create files or prove write readiness.
+`fleet_check.py --no-status` is console-only and needs no report destination.
+`trim_descriptions.py --scan` creates a private review worklist without changing descriptions;
+apply requires reviewed authorization and PyYAML frontmatter validation.
+
+[config.contract.json](../../../config.contract.json) declares Smith as runtime-storage-only:
+G8 validates E8, with E1-E7 not applicable. Profile Sync and operators initialize the four external
+input documents in [Shared runtime configuration inputs](#shared-runtime-configuration-inputs).
+Smith does not create a settings registry. Static G8 conformance does not establish runtime storage
+readiness.
+
 ## Shared CLI
 
 Pure contract validation, path matching and write admission live in the pinned Guards module
@@ -132,11 +162,6 @@ The bounded declaration review uses located producer scripts, recorded input
 receipts and shallow directory metadata. It does not claim a full current tree
 inventory, source-copy comparison or reference closure. Unreviewed scratch remains
 an explicit gap; broaden neither `core` retention nor retired patterns to hide it.
-
-`fleet_check.py --print-status-path` prints the default path selected by the same
-resolver used by the report writer. It does not inspect the fleet, create files,
-or prove that the destination is ready for writes. The writer still performs its
-separate PRIVATE admission checks.
 
 ## Shared runtime configuration inputs
 
