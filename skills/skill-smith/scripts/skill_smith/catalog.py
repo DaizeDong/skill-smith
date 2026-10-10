@@ -21,6 +21,16 @@ EXTERNAL_INSTALLERS = {"cc-setup": "external-installer"}
 
 CONSUMER_FEATURES = {"workflow_roots", "plugin_descriptors", "plugin_metadata_paths"}
 
+# Directory names a skill root walk never enters: version-control stores and
+# tool caches. None of them holds an installed skill, and a skill that is the
+# root of its own repository would otherwise have its whole object store probed
+# entry by entry. Compared case-insensitively.
+WALK_EXCLUDED_NAMES = frozenset({
+    ".git", ".hg", ".svn", ".bzr", "_darcs",
+    "node_modules", "__pycache__", ".venv", ".tox", ".nox",
+    ".mypy_cache", ".pytest_cache", ".ruff_cache",
+})
+
 
 def timestamp(value):
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00")) if isinstance(value, str) else value
@@ -42,6 +52,21 @@ class Discovery:
             stage: {"status": "unchecked", "observed_at": self.now, "reason": "input not configured"}
             for stage in STAGES
         }
+        # One pass observes each physical entry once. Two links to one target
+        # (for example the same skill mounted for two clients) share these
+        # facts; each spelling still gets its own path and containment verdict.
+        self._facts = {}
+        self._listings = {}
+        self._resolved = {}
+
+    def probe(self, path, roots):
+        name = Path(path).name
+        parent = self._resolved.get(normalize(Path(path).parent))
+        key = (normalize(parent), name) if parent and name not in ("", ".", "..") else None
+        observation = probe(path, roots, memo=self._facts, physical_key=key)
+        if observation["resolved_path"]:
+            self._resolved[normalize(path)] = observation["resolved_path"]
+        return observation
 
     def problem(self, stage, reason, path=None, record=None):
         issue = {"stage": stage, "reason": reason, "path": str(path) if path is not None else None}
@@ -113,7 +138,7 @@ class Discovery:
         return existing
 
     def locate(self, record, path, roots, stage):
-        observation = probe(path, roots)
+        observation = self.probe(path, roots)
         record.update({key: value for key, value in observation.items() if key != "resolved"})
         self.observe(record, "resolved", observation["resolved"], observation["resolution"])
         if observation["resolved"] != "yes":
@@ -123,7 +148,7 @@ class Discovery:
 
     def entry(self, record, path, roots, stage, *, kind="skill", client=None, scope=None,
               installed="unknown", install_name=None, relative_path=None):
-        observation = probe(path, roots)
+        observation = self.probe(path, roots)
         if observation["resolved"] != "yes":
             self.problem(stage, observation["resolution"], path, record)
             if record["kind"] != "plugin":
@@ -245,16 +270,24 @@ class Discovery:
         if self.locate(record, path, roots, stage):
             self.entry(record, Path(path) / "SKILL.md", roots, stage, install_name=name)
 
-    def children(self, path, roots, stage, record=None):
-        observation = probe(path, roots)
+    def children(self, path, roots, stage, record=None, *, prune=False):
+        observation = self.probe(path, roots)
         if observation["resolved"] != "yes":
             self.problem(stage, observation["resolution"], path, record)
             return []
-        try:
-            return sorted(Path(path).iterdir(), key=lambda p: p.name)
-        except OSError:
+        key = normalize(observation["resolved_path"])
+        names = self._listings.get(key)
+        if names is None:
+            try:
+                names = sorted(p.name for p in Path(path).iterdir())
+            except OSError:
+                names = False
+            self._listings[key] = names
+        if names is False:
             self.problem(stage, "directory unreadable", path, record)
             return []
+        return [Path(path) / name for name in names
+                if not (prune and name.casefold() in WALK_EXCLUDED_NAMES)]
 
     def skill_roots(self):
         stage = "skill_roots"
@@ -270,16 +303,16 @@ class Discovery:
             if descriptor.get("include_root") is True:
                 self.local_skill(Path(root), descriptor, roots, stage, depth=0)
             else:
-                for child in self.children(root, roots, stage):
+                for child in self.children(root, roots, stage, prune=True):
                     self.local_skill(child, descriptor, roots, stage, depth=1)
 
     def local_skill(self, path, descriptor, roots, stage, depth):
-        observation = probe(path, roots)
+        observation = self.probe(path, roots)
         if observation["resolved"] == "yes" and not observation.get("is_directory"):
             return
-        skill_observation = probe(path / "SKILL.md", roots) if observation["resolved"] == "yes" else None
+        skill_observation = self.probe(path / "SKILL.md", roots) if observation["resolved"] == "yes" else None
         if observation["resolved"] == "yes" and depth < descriptor.get("max_depth", 1):
-            for child in self.children(path, roots, stage):
+            for child in self.children(path, roots, stage, prune=True):
                 self.local_skill(child, descriptor, roots, stage, depth + 1)
         if skill_observation and skill_observation["resolution"] == "missing":
             return

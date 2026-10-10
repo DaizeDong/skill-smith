@@ -54,6 +54,6 @@ jobs:
       - name: Run deterministic package contracts
         run: >-
           python -m pytest tests/test_catalog_contract.py tests/test_catalog_acquisition.py
-          tests/test_catalog_path_aliases.py
+          tests/test_catalog_path_aliases.py tests/test_catalog_walk_bounds.py
           tests/test_runtime_overlays.py tests/test_resource_resolution.py
           tests/test_t10_source_workflows.py tests/test_agent_entrypoints.py -q

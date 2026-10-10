@@ -51,6 +51,11 @@ Catalog requests support `skill_roots`, `repo_roots`, `plugin_registries`,
 malformed, unreadable or ambiguous supplied inputs produce partial coverage.
 Record identity and declared/enabled/cached/installed/resolved/discovered/compatible
 observations remain separate. Filesystem presence cannot establish runtime use.
+A skill root is walked up to its `max_depth` (1 to 16, default 1) and never enters
+version-control or tool-cache directories (`.git`, `.hg`, `.svn`, `node_modules`,
+`__pycache__`, `.venv`, `.pytest_cache` and similar; compared case-insensitively).
+Within one call each physical entry is observed once, so links from several roots to
+one target share that observation; each mount is still reported under its own root.
 
 On Windows, resolved containment expands 8.3 spellings of approved roots without
 following their junction or symlink targets. A short spelling of the same root
