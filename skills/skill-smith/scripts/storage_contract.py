@@ -303,8 +303,17 @@ def _control_files(repo, root, proof):
         # Ask Git for its exact system/global locations, including empty or
         # absent files which do not occur in --show-origin output.
         for variable in ("GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL"):
-            locations = subprocess.run(["git", "var", variable], cwd=root, env=environment,
-                                       capture_output=True, check=True).stdout.decode("utf-8", "strict")
+            result = subprocess.run(["git", "var", variable], cwd=root, env=environment,
+                                    capture_output=True)
+            disabled = (environment.get(variable) == "" or (
+                variable == "GIT_CONFIG_SYSTEM"
+                and environment.get("GIT_CONFIG_NOSYSTEM", "").lower() in {"1", "true", "yes", "on"}))
+            # Git reports an explicitly disabled location as no value. Unknown
+            # variables and other failures must still stop configuration discovery.
+            if result.returncode and not (disabled and result.returncode == 1
+                                          and not result.stdout and not result.stderr):
+                result.check_returncode()
+            locations = result.stdout.decode("utf-8", "strict")
             for location in locations.splitlines():
                 if location and location.casefold() != os.devnull.casefold():
                     path = Path(location)

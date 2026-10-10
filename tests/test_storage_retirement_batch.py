@@ -24,6 +24,7 @@ import storage_contract as storage
 from make_fixtures import storage_contract_fixture, write_json
 
 REAL_CONTROL_FILES = storage._control_files
+REAL_LOAD_GUARD = storage.load_guard
 
 
 @pytest.fixture
@@ -346,6 +347,118 @@ def test_real_git_control_discovery_includes_existing_and_absent_configuration(b
     assert not any(path.is_relative_to(profile.resolve()) for path in discovered)
     assert all(path.is_relative_to(batch_layout["temporary_root"].resolve()) for path in discovered)
     assert all(not path.parent.exists() for path in (absent_include, absent_home_include, absent_system))
+
+
+@pytest.fixture
+def controlled_git_layout(batch_layout, monkeypatch):
+    """Use Guards' real physical/effective Git contexts without external attestation."""
+    root = batch_layout["companion"]
+    home = batch_layout["temporary_root"] / "controlled-home"
+    home.mkdir()
+    global_config, system_config = home / ".gitconfig", home / "system.config"
+    included = home / "included.config"
+    included.write_text("[core]\n\tautocrlf = false\n", encoding="utf-8")
+    global_config.write_text("[include]\n\tpath = included.config\n", encoding="utf-8")
+    system_config.write_text("[core]\n\tlongpaths = true\n", encoding="utf-8")
+    for key in list(os.environ):
+        if key.upper().startswith("GIT_"):
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
+    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(system_config))
+    guard = REAL_LOAD_GUARD(batch_layout["repo"], "data_boundary")
+    context = guard._companion_git_context(str(root))
+    proof = SimpleNamespace(root=root, repositories=("example/synthetic-config",), _context=context)
+    return {**batch_layout, "proof": proof, "global": global_config,
+            "system": system_config, "included": included}
+
+
+@pytest.mark.native
+def test_guards_physical_context_keeps_effective_configuration_controls(controlled_git_layout):
+    layout = controlled_git_layout
+    root, proof = layout["companion"], layout["proof"]
+    physical = proof._context[1]
+    assert physical["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert physical["GIT_CONFIG_GLOBAL"] == physical["GIT_CONFIG_SYSTEM"] == os.devnull
+    query = subprocess.run(["git", "var", "GIT_CONFIG_SYSTEM"], cwd=root,
+                           env=physical, capture_output=True)
+    assert (query.returncode, query.stdout, query.stderr) == (1, b"", b"")
+
+    discovered = {path.resolve() for path in REAL_CONTROL_FILES(layout["repo"], root, proof)}
+
+    expected = {layout["global"], layout["system"], layout["included"],
+                layout["repo"] / storage.CONTRACT, root / ".git/config"}
+    assert {path.resolve() for path in expected} <= discovered
+    assert all(path.is_relative_to(layout["temporary_root"].resolve()) for path in discovered)
+
+
+@pytest.mark.native
+@pytest.mark.parametrize("variable,value,disabled", [
+    ("GIT_CONFIG_NOSYSTEM", "true", "system"),
+    ("GIT_CONFIG_NOSYSTEM", "0", None),
+    ("GIT_CONFIG_GLOBAL", "", "global"),
+    ("GIT_CONFIG_SYSTEM", "", "system"),
+])
+def test_explicit_config_disabling_uses_real_git_semantics(controlled_git_layout, variable, value, disabled):
+    layout = controlled_git_layout
+    root = layout["companion"]
+    environment = dict(layout["proof"]._context[2])
+    environment[variable] = value
+    proof = SimpleNamespace(_context=(root, environment, dict(environment)))
+
+    discovered = {path.resolve() for path in REAL_CONTROL_FILES(layout["repo"], root, proof)}
+
+    for control in ("global", "system"):
+        assert (layout[control].resolve() in discovered) == (control != disabled)
+    assert (layout["included"].resolve() in discovered) == (disabled != "global")
+    assert (root / ".git/config").resolve() in discovered
+    assert (layout["repo"] / storage.CONTRACT).resolve() in discovered
+
+
+@pytest.mark.native
+def test_malformed_effective_git_config_is_not_treated_as_disabled(controlled_git_layout):
+    layout = controlled_git_layout
+    layout["global"].write_text("[synthetic broken configuration\n", encoding="utf-8")
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        REAL_CONTROL_FILES(layout["repo"], layout["companion"], layout["proof"])
+    assert caught.value.returncode == 128
+    assert caught.value.cmd[:2] == ["git", "config"]
+
+
+@pytest.mark.parametrize("variable,disabled,returncode,stdout,stderr", [
+    ("GIT_CONFIG_SYSTEM", False, 1, b"", b""),
+    ("GIT_CONFIG_GLOBAL", False, 1, b"", b""),
+    ("GIT_CONFIG_SYSTEM", True, 1, b"unexpected", b""),
+    ("GIT_CONFIG_SYSTEM", True, 1, b"", b"synthetic failure"),
+    ("GIT_CONFIG_SYSTEM", True, 128, b"", b""),
+    ("GIT_CONFIG_GLOBAL", True, 129, b"", b"unsupported variable"),
+])
+def test_git_location_errors_are_not_silently_omitted(controlled_git_layout, monkeypatch,
+                                                     variable, disabled, returncode, stdout, stderr):
+    layout = controlled_git_layout
+    root = layout["companion"]
+    environment = dict(layout["proof"]._context[2])
+    if variable == "GIT_CONFIG_SYSTEM":
+        environment["GIT_CONFIG_NOSYSTEM"] = "1" if disabled else "0"
+    elif disabled:
+        environment[variable] = ""
+    proof = SimpleNamespace(_context=(root, environment, dict(environment)))
+    original_run = storage.subprocess.run
+
+    def failed_query(args, **kwargs):
+        if args == ["git", "var", variable]:
+            result = subprocess.CompletedProcess(args, returncode, stdout=stdout, stderr=stderr)
+            if kwargs.get("check"):
+                result.check_returncode()
+            return result
+        return original_run(args, **kwargs)
+
+    monkeypatch.setattr(storage.subprocess, "run", failed_query)
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        REAL_CONTROL_FILES(layout["repo"], root, proof)
+    assert caught.value.cmd == ["git", "var", variable]
+    assert caught.value.returncode == returncode
 
 
 @pytest.mark.native

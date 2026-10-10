@@ -12,6 +12,9 @@ All notable changes to this project are documented here (Keep a Changelog style)
   Keep exact plan approval, private storage proof and per-file boundary and content
   checks, and report partial completion on failure. Current transaction plans use
   a bounded transient family instead of expanding retained maintenance reports.
+- Recognize Git's explicitly disabled configuration locations when checking a
+  retirement batch. Effective configuration files remain covered; unsupported
+  queries and diagnostic failures still stop the operation.
 - Update the current ROADMAP version heading in place during release preparation. Consecutive
   bumps preserve current capability prose, planned work and existing history without adding
   sections; LF/CRLF and nonstandard-heading preservation have synthetic regression coverage.
