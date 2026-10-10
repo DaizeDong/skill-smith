@@ -4,6 +4,22 @@
   "max_bytes": 67108864,
   "artifacts": [
     {
+      "artifact_id": "retirement-plan",
+      "path_pattern": "data/retirement-plans/**",
+      "purpose": "Current approved retirement transaction with exact artifact snapshots",
+      "schema": "Source-owned reviewed-retirement plan schema version 1",
+      "producer": "Explicitly requested maintenance using the source retirement CLI",
+      "consumer_or_final_deliverable": "Retirement apply verifies exact plan bytes before removing the selected obsolete artifacts",
+      "persistence": "transient",
+      "transient_reason": "Only the current bounded transaction is needed; completed counts and digests belong in the retained maintenance result",
+      "retention_rule": {
+        "class": "rebuildable",
+        "rule": "Keep the current plan through verification or interruption. Remove completed plans after recording the result; do not accumulate past batches. Never clean an active transaction."
+      },
+      "rebuild_or_restore": "Reinventory remaining approved targets and create a fresh plan after checking any partial completion",
+      "max_bytes": 16777216
+    },
+    {
       "artifact_id": "companion-readme",
       "path_pattern": "README.md",
       "purpose": "Link to source-owned configuration and storage rules",

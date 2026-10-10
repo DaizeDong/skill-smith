@@ -87,6 +87,15 @@ readiness.
 
 ## Shared CLI
 
+Smith keeps only the current reviewed retirement plan under the private companion's
+`data/retirement-plans/`. This transient family has a 16 MiB bound, including atomic
+replacement files. It is separate from the 24 MiB retained-maintenance family.
+Create batches that fit both the current plan and its replacement; preserve a
+failed or interrupted plan until the remaining targets have been reconciled.
+After a successful batch, keep counts, selection and plan digests in the compact
+maintenance result and remove the completed transaction. The source contract
+permits this transient family to be ignored by Git; final results remain versioned.
+
 Pure contract validation, path matching and write admission live in the pinned Guards module
 `guards/tools/storage_contract.py`. Smith's adapter reexports those primitives and owns the
 inventory and reviewed-retirement CLI. Run that CLI from the canonical source checkout:

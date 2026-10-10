@@ -19,6 +19,8 @@ def layout(tmp_path, monkeypatch):
     value = storage_contract_fixture(tmp_path)
     proof = SimpleNamespace(root=value["companion"], repositories=("example/synthetic-config",))
     monkeypatch.setattr(storage, "prove_companion", lambda *args: (value["companion"], proof))
+    monkeypatch.setattr(storage, "_control_files", lambda repo, root, proof:
+                        [Path(repo) / storage.CONTRACT, Path(root) / ".git"])
     return value
 
 
@@ -214,6 +216,8 @@ def combined_layout(tmp_path, monkeypatch):
         return PrivateBoundary()
 
     monkeypatch.setattr(storage, "load_guard", load_guard)
+    monkeypatch.setattr(storage, "_control_files", lambda repo, root, proof:
+                        [Path(repo) / storage.CONTRACT, Path(root) / ".git"])
     return value
 
 
