@@ -197,14 +197,14 @@
       "artifact_id": "requested-maintenance-result",
       "path_pattern": "data/maintenance/*",
       "purpose": "Requested current maintenance report and its compact supporting measurements",
-      "schema": "Source-owned maintenance output and plan schemas",
+      "schema": "Source-owned maintenance output and plan schemas; recovery-index v1 is defined in skills/skill-smith/reference/storage-contract.md",
       "producer": "Explicitly requested maintenance task",
       "consumer_or_final_deliverable": "User review and completion of the current maintenance task",
       "retention_rule": {
         "class": "core",
         "rule": "Keep current top-level deliverables, their atomic staging files, and immediate directory shells. Nested history has separate ownership."
       },
-      "rebuild_or_restore": "Rerun the bounded inventory and preserve the selected final conclusion",
+      "rebuild_or_restore": "Rerun bounded inventories where sufficient. Recover deduplicated files from the complete versioned recovery index, its receipt bindings, and verified anchors; digests alone cannot reconstruct the mapping.",
       "max_bytes": 3145728
     },
     {

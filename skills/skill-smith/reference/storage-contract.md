@@ -99,6 +99,30 @@ After a successful batch, keep counts, selection and plan digests in the compact
 maintenance result and remove the completed transaction. The source contract
 permits this transient family to be ignored by Git; final results remain versioned.
 
+A complete target-to-anchor index required to recover deduplicated files is a core
+maintenance deliverable. Retain the full index and its required anchors while the
+recorded recovery obligation remains open. A digest or a repeated inventory cannot
+replace the mapping.
+
+Recovery-index v1 is gzip-compressed UTF-8 JSON with `schema_version: 1`, an `anchors`
+array and a `targets` array. Each anchor is
+`[group, retain_relative_posix_path, bytes, lowercase_sha256]`. Each target is
+`[group, target_relative_posix_path, zero_based_anchor_index]`.
+
+Paths follow the contract's canonical relative-path rules within the receipt-bound
+namespace for their group. Each target appears exactly once and references a valid
+index in the complete `anchors` array. Target and anchor groups must match; retained
+anchors must be outside the deletion set. Each target must have been verified
+byte-identical to its anchor before removal.
+
+The companion receipt records SHA256 over the exact gzip bytes and exact decompressed
+UTF-8 bytes, source identity and revision, group-to-namespace bindings, and anchor and
+target counts. Verify and version the complete core index before removing its transient
+plan copy. The existing core budget includes atomic staging space.
+
+This format preserves necessary file-content recovery relationships. It does not admit
+runtime logs or establish restoration of unrecorded filesystem metadata.
+
 Protected paths retain prior policy refusals, unreviewed material, required recovery
 and failure evidence, and temporary files. Changing a retention class does not
 authorize deletion or override a prior refusal; each concrete selection still needs
