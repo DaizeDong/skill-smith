@@ -14,6 +14,10 @@ All notable changes to this project are documented here (Keep a Changelog style)
   a bounded transient family instead of expanding retained maintenance reports.
   Split maintenance storage into 3 MiB top-level core and 21 MiB nested history;
   nested historical paths reject new writes.
+  Define recovery-index v1 and retain the complete gzip-compressed mapping required
+  to restore deduplicated files within the existing core budget. Bind its receipt to
+  compressed and uncompressed hashes, source identity, namespace mappings, and anchor
+  and target counts.
 - Recognize Git's explicitly disabled configuration locations when checking a
   retirement batch. Effective configuration files remain covered; unsupported
   queries and diagnostic failures still stop the operation.
