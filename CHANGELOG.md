@@ -8,6 +8,11 @@ All notable changes to this project are documented here (Keep a Changelog style)
   HOME, preserving native write admission while checking deterministic templates and readiness.
 
 ### Fixed
+- Keep catalog skill-root walks out of version-control and tool-cache directories (`.git`,
+  `node_modules`, `__pycache__`, `.venv` and similar), so a skill that is the root of its own
+  repository no longer has its object store probed entry by entry. One discovery pass observes
+  each physical entry once: the same target mounted under several skill roots shares the
+  filesystem observation while every mount keeps its own path, record and containment verdict.
 - Batch reviewed retirement without starting a shell for every selected file.
   Keep exact plan approval, private storage proof and per-file boundary and content
   checks, and report partial completion on failure. Current transaction plans use

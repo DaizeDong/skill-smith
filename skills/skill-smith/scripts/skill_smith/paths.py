@@ -62,29 +62,81 @@ def _long_path_spelling(path):
     return value
 
 
-def probe(path, approved_roots):
-    """Retain direct and final targets; distinguish missing from unreadable."""
+def _observe(path):
+    """Filesystem facts for one path, in the order probe() consults them.
+
+    The facts are a pure function of the physical directory entry, so one
+    observation can serve every spelling of it (another junction to the same
+    target). Containment against approved roots is not part of it: that depends
+    on the spelling and is always recomputed by probe().
+    """
+    facts = {"is_link": False, "direct_target": None, "resolved_path": None, "error": None}
+    try:
+        try:
+            info = os.lstat(path)
+            facts["is_link"] = stat.S_ISLNK(info.st_mode) or bool(
+                getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+            if facts["is_link"]:
+                facts["direct_target"] = os.readlink(path)
+        except FileNotFoundError:
+            pass
+        facts["resolved_path"] = os.path.realpath(path)
+    except (FileNotFoundError, NotADirectoryError):
+        facts["error"] = "missing"
+    except (OSError, ValueError):
+        facts["error"] = "unreadable"
+    return facts
+
+
+def _observe_target(path, facts):
+    """Add the final target's type to ``facts``; only asked for inside the roots."""
+    if "stat_error" not in facts:
+        facts["is_directory"], facts["stat_error"] = None, None
+        try:
+            facts["is_directory"] = stat.S_ISDIR(os.stat(path).st_mode)
+        except (FileNotFoundError, NotADirectoryError):
+            facts["stat_error"] = "missing"
+        except (OSError, ValueError):
+            facts["stat_error"] = "unreadable"
+    return facts
+
+
+def probe(path, approved_roots, *, memo=None, physical_key=None):
+    """Retain direct and final targets; distinguish missing from unreadable.
+
+    ``memo`` and ``physical_key`` let one discovery pass observe a physical entry
+    once: callers key an entry by its resolved parent directory plus its name, so
+    two links to the same target share the filesystem calls while each spelling
+    keeps its own path and its own containment verdict.
+    """
     result = {"path": str(path), "resolved_path": None, "direct_target": None,
               "is_link": False, "resolution": "unreadable", "resolved": "unknown"}
     try:
         if not any(within(path, root) for root in approved_roots):
             result.update(resolution="outside_approved_roots", resolved="no")
             return result
-        try:
-            info = os.lstat(path)
-            result["is_link"] = stat.S_ISLNK(info.st_mode) or bool(
-                getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT)
-            if result["is_link"]:
-                result["direct_target"] = os.readlink(path)
-        except FileNotFoundError:
-            pass
-        result["resolved_path"] = os.path.realpath(path)
+        facts = memo.get(physical_key) if memo is not None and physical_key is not None else None
+        if facts is None:
+            facts = _observe(path)
+            if memo is not None and physical_key is not None:
+                memo[physical_key] = facts
+        result["is_link"] = facts["is_link"]
+        result["direct_target"] = facts["direct_target"]
+        if facts["error"] is not None:
+            if facts["error"] == "missing":
+                result.update(resolution="missing", resolved="no")
+            return result
+        result["resolved_path"] = facts["resolved_path"]
         if not any(within(result["resolved_path"], _long_path_spelling(root))
                    for root in approved_roots):
             result.update(resolution="outside_approved_roots", resolved="no")
             return result
-        info = os.stat(path)
-        result["is_directory"] = stat.S_ISDIR(info.st_mode)
+        _observe_target(path, facts)
+        if facts["stat_error"] is not None:
+            if facts["stat_error"] == "missing":
+                result.update(resolution="missing", resolved="no")
+            return result
+        result["is_directory"] = facts["is_directory"]
         result.update(resolution="resolved", resolved="yes")
     except (FileNotFoundError, NotADirectoryError):
         result.update(resolution="missing", resolved="no")
