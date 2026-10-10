@@ -2,6 +2,45 @@
   "schema_version": 1,
   "tool": "skill-smith",
   "max_bytes": 67108864,
+  "protected_paths": [
+    "**/*.tmp/**",
+    "data/maintenance/*-doc-lifecycle-audit/**",
+    "data/maintenance/*-main-only/**",
+    "data/maintenance/*-git-history-cleanup/**",
+    "data/maintenance/*-skill-config-audit/**",
+    "data/maintenance/*-skill-config-repair/**",
+    "data/maintenance/*-doc-lifecycle-repair/[!Ff]*/**",
+    "data/maintenance/*-doc-lifecycle-repair/*.bundle",
+    "data/maintenance/*-doc-lifecycle-repair/FINAL-MATRIX.json",
+    "data/maintenance/*-doc-lifecycle-repair/FINAL-REVIEW.json",
+    "data/maintenance/*-doc-lifecycle-repair/FINAL-TESTS.json",
+    "data/maintenance/*-doc-lifecycle-repair/FINAL-TESTS.skill-*.*",
+    "data/maintenance/*-doc-lifecycle-repair/FINAL-TESTS.style-*.*",
+    "data/maintenance/*-doc-lifecycle-repair/FINAL-TESTS.*-???????-failure.*",
+    "data/maintenance/*-doc-lifecycle-repair/FINAL-TESTS.*-incoming-baseline.*",
+    "data/maintenance/*-doc-lifecycle-repair/FINAL-TESTS.*-*-final.json",
+    "data/maintenance/*-doc-lifecycle-repair/FINAL-TESTS.*.gz",
+    "data/maintenance/*-layout/*",
+    "data/maintenance/*-layout/prune-*/**",
+    "data/maintenance/*-layout/retained/**",
+    "data/maintenance/*-layout/retired-source-residue/**",
+    "data/maintenance/*-layout/execution/*",
+    "data/maintenance/*-layout/execution/*-package/**",
+    "data/maintenance/*-layout/execution/*-review-fix/**",
+    "data/maintenance/*-layout/execution/*-fixture-check/**",
+    "data/maintenance/*-layout/execution/*-test-dependencies/**",
+    "data/maintenance/*-layout/execution/*-buy/**",
+    "data/maintenance/*-layout/execution/**/__pycache__/**",
+    "data/maintenance/*-layout/execution/*/untracked/**",
+    "data/maintenance/*-layout/execution/*/*.json",
+    "data/maintenance/*-layout/execution/*/*.patch",
+    "data/maintenance/*-layout/execution/*/*.tap",
+    "data/maintenance/*-layout/execution/*/doctor*.log",
+    "data/maintenance/*-layout/execution/*/client-*/*",
+    "data/maintenance/*-layout/execution/*-reminder/full-tests.log",
+    "data/maintenance/*-layout/execution/*/affected-tests.log",
+    "data/maintenance/*-layout/execution/*/*.txt"
+  ],
   "artifacts": [
     {
       "artifact_id": "retirement-plan",
@@ -156,17 +195,31 @@
     },
     {
       "artifact_id": "requested-maintenance-result",
-      "path_pattern": "data/maintenance/**",
+      "path_pattern": "data/maintenance/*",
       "purpose": "Requested current maintenance report and its compact supporting measurements",
       "schema": "Source-owned maintenance output and plan schemas",
       "producer": "Explicitly requested maintenance task",
       "consumer_or_final_deliverable": "User review and completion of the current maintenance task",
       "retention_rule": {
         "class": "core",
-        "rule": "Keep requested final deliverables and the minimal current execution evidence; remove obsolete rounds and source/test copies after completion"
+        "rule": "Keep current top-level deliverables, their atomic staging files, and immediate directory shells. Nested history has separate ownership."
       },
       "rebuild_or_restore": "Rerun the bounded inventory and preserve the selected final conclusion",
-      "max_bytes": 25165824
+      "max_bytes": 3145728
+    },
+    {
+      "artifact_id": "retired-maintenance-transition",
+      "path_pattern": "data/maintenance/*/*/**",
+      "purpose": "Bound nested historical maintenance artifacts during their reviewed retirement transition",
+      "schema": "Historical maintenance outputs and preservation receipts, not current acceptance evidence",
+      "producer": "Retired maintenance workflows; new writes are forbidden",
+      "consumer_or_final_deliverable": "One-time reconciliation and explicitly reviewed retirement",
+      "retention_rule": {
+        "class": "retired",
+        "rule": "Retire only individually reviewed obsolete artifacts after preserving required conclusions and useful unique data, proving writer and reference inactivity, and clearing recovery, Git and link obligations. Prior policy refusals and unreviewed or required evidence remain protected. Classification is not deletion authorization."
+      },
+      "rebuild_or_restore": "Preserve useful unique inputs before retirement; retain approved final conclusions and applicable source history",
+      "max_bytes": 22020096
     },
     {
       "artifact_id": "retired-development-campaign",
