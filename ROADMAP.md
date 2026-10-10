@@ -39,9 +39,9 @@ production readiness.
 
 ## Planned
 
-- Verify reviewed retirement on large obsolete artifact groups while retaining
-  compact final conclusions. Keep partial completion explicit and remove finished
-  transaction plans after their receipts are saved.
+- Complete remaining individually reviewed retirement of obsolete artifact groups
+  while retaining compact final conclusions. Keep partial completion explicit and
+  remove finished transaction plans after their receipts are saved.
 
 ### v0.2 follow-up, evaluator integration
 

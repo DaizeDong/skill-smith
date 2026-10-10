@@ -12,6 +12,8 @@ All notable changes to this project are documented here (Keep a Changelog style)
   Keep exact plan approval, private storage proof and per-file boundary and content
   checks, and report partial completion on failure. Current transaction plans use
   a bounded transient family instead of expanding retained maintenance reports.
+  Split maintenance storage into 3 MiB top-level core and 21 MiB nested history;
+  nested historical paths reject new writes.
 - Recognize Git's explicitly disabled configuration locations when checking a
   retirement batch. Effective configuration files remain covered; unsupported
   queries and diagnostic failures still stop the operation.

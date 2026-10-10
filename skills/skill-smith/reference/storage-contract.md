@@ -89,12 +89,20 @@ readiness.
 
 Smith keeps only the current reviewed retirement plan under the private companion's
 `data/retirement-plans/`. This transient family has a 16 MiB bound, including atomic
-replacement files. It is separate from the 24 MiB retained-maintenance family.
+replacement files. It is separate from the 24 MiB maintenance bound: 3 MiB for
+top-level core reports and staging files, and 21 MiB for nested historical artifacts
+in a retirement transition. The existing maintenance writer ID covers top-level
+paths; nested history rejects new writes. Immediate directory shells remain core.
 Create batches that fit both the current plan and its replacement; preserve a
 failed or interrupted plan until the remaining targets have been reconciled.
 After a successful batch, keep counts, selection and plan digests in the compact
 maintenance result and remove the completed transaction. The source contract
 permits this transient family to be ignored by Git; final results remain versioned.
+
+Protected paths retain prior policy refusals, unreviewed material, required recovery
+and failure evidence, and temporary files. Changing a retention class does not
+authorize deletion or override a prior refusal; each concrete selection still needs
+its own review and current admission.
 
 Pure contract validation, path matching and write admission live in the pinned Guards module
 `guards/tools/storage_contract.py`. Smith's adapter reexports those primitives and owns the
