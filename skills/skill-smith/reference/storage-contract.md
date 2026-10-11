@@ -87,16 +87,17 @@ readiness.
 
 ## Shared CLI
 
-Smith keeps only the current reviewed retirement plan under the private companion's
-`data/retirement-plans/`. This transient family has a 16 MiB bound, including atomic
-replacement files. It is separate from the 24 MiB maintenance bound: 3 MiB for
-top-level core reports and staging files, and 21 MiB for nested historical artifacts
+Smith keeps only the current selection and reviewed retirement plan under the private
+companion's `data/retirement-plans/`. This transient family has a 16 MiB bound,
+including atomic replacement files. It is separate from the 24 MiB maintenance
+bound: 3 MiB for top-level core reports and staging files, and 21 MiB for nested historical artifacts
 in a retirement transition. The existing maintenance writer ID covers top-level
 paths; nested history rejects new writes. Immediate directory shells remain core.
-Create batches that fit both the current plan and its replacement; preserve a
+Create batches that fit the selection, current plan and its replacement; preserve a
 failed or interrupted plan until the remaining targets have been reconciled.
 After a successful batch, keep counts, selection and plan digests in the compact
-maintenance result and remove the completed transaction. The source contract
+maintenance result and remove the completed selection and plan. Do not accumulate
+per-batch process logs or redundant inventories. The source contract
 permits this transient family to be ignored by Git; final results remain versioned.
 
 A complete target-to-anchor index required to recover deduplicated files is a core
@@ -136,11 +137,37 @@ inventory and reviewed-retirement CLI. Run that CLI from the canonical source ch
 python skills/skill-smith/scripts/storage_contract.py validate --repo SOURCE
 python skills/skill-smith/scripts/storage_contract.py check --repo SOURCE --companion PRIVATE_COMPANION --json
 python skills/skill-smith/scripts/storage_contract.py plan --repo SOURCE --companion PRIVATE_COMPANION --path cache/obsolete --reason "Selected result supersedes this cache" --inactive-evidence "Writer stopped and current references checked"
+python skills/skill-smith/scripts/storage_contract.py plan --repo SOURCE --companion PRIVATE_COMPANION --paths-file PRIVATE_SELECTION --reason "Selected result supersedes these paths" --inactive-evidence "Writers stopped and current dependencies checked"
 python skills/skill-smith/scripts/storage_contract.py apply --repo SOURCE --companion PRIVATE_COMPANION --plan PRIVATE_PLAN --approve-sha256 REVIEWED_PLAN_SHA256
 ```
 
-All commands emit JSON. `check` is read-only. Exit 0 means the requested operation
-passed; exit 1 means a failed or unobserved requirement. PRIVATE admission always uses
+For one or a few concrete paths, repeat `--path`. For a larger selection, use
+`--paths-file` with a UTF-8 JSON array of canonical companion-relative path strings.
+The file must contain at most 10,000 entries and be no larger than 1 MiB
+(1,048,576 bytes). Do not combine the two input modes. Empty selections, duplicates,
+ancestor/descendant overlap and wildcards are rejected; Windows also rejects
+duplicates after case folding. Selection flags apply only to `plan`; other commands
+reject them. A selection file identifies candidates only and does not approve
+retirement.
+
+On Windows, `plan` rejects more than 10,000 snapshot rows, counting both ordinary
+files and directories, or a native request larger than 16 MiB (16,777,216 bytes).
+The request size includes control-file snapshots, so neither the selection entry
+count nor the saved plan's byte size alone proves that a batch fits. The native
+apply path enforces the same limits again. These limits are separate from the
+16 MiB transient-storage budget above.
+
+Choose small concrete batches whose dependency checks are complete. The CLI does
+not split selections automatically. If a selected directory exceeds a limit,
+review a narrower selection before creating another plan; the number of selected
+roots does not bound their descendants. Review and hash-approve each exact plan
+separately. Size, age and a successful plan do not establish inactivity.
+
+Operation results are JSON on stdout: exit 0 means the requested operation passed;
+exit 1 means a failed or unobserved requirement. Argument-parser usage errors,
+including mixed selection modes or selection flags on another command, print
+diagnostics to stderr and exit 2 without an operation result. `check` is read-only.
+PRIVATE admission always uses
 the shared checker's own pinned Guards proof and resolver, including for targets
 that do not ship Guards. The resolver is explicitly bound to the target source
 for companion discovery. There is no target/shared fallback. Unknown/public/unversioned
@@ -160,6 +187,13 @@ must match these source declarations. The contract and transport signature must 
 between admission and writing. An ignored staging path is refused, even if the final report path
 would otherwise pass.
 
+`plan` prints JSON to stdout without saving a file. Before persisting a selection
+or successful plan under `data/retirement-plans/`, the writer must call
+`authorize_artifact_write(..., artifact_id="retirement-plan")` for the concrete
+output path, including any atomic staging file, and respect the shared storage
+budget. Check the plan command's exit status before saving its output; an error
+response is not a retirement plan.
+
 Save a plan only in a verified private location. Review its concrete paths,
 reason, inactivity evidence and byte snapshots, then authorize its exact file
 SHA256. Inactivity is an explicit operator assertion, not inferred from directory
@@ -169,6 +203,11 @@ items, active markers, protected paths, links, junctions and nested repositories
 Windows removal uses PowerShell `Remove-Item -LiteralPath` on individual leaves,
 never recursive traversal. A mid-operation failure is visible and can leave a
 partially removed disposable group; prepare a fresh plan after inspecting it.
+
+The dedicated storage-contract CI runs the core storage and retirement-batch suites
+on Linux and Windows. Windows exercises native removal against generated fixtures;
+those tests stub external PRIVATE attestation and do not establish readiness for a
+live companion or permission to remove its data.
 
 The skill-smith companion has a 64 MiB working-data budget. The retired campaign is a temporary
 classification for removal after dependency clearance, not an allowed future

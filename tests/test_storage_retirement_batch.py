@@ -129,6 +129,53 @@ def test_ten_thousand_path_plan_reports_scaling_without_a_wall_time_gate(batch_l
     print(json.dumps(evidence, sort_keys=True))
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Checks Windows plan admission limits")
+def test_plan_rejects_more_than_ten_thousand_snapshot_rows(batch_layout, monkeypatch):
+    paths = ["retired/batch/telemetry-%05d.json" % index for index in range(10001)]
+    stub_snapshot(batch_layout, monkeypatch)
+    with pytest.raises(ValueError, match="1..10000 rows"):
+        storage.create_plan(batch_layout["repo"], batch_layout["companion"], paths,
+                            "Reviewed synthetic paths", "Synthetic writer inactive")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Counts directories in Windows plan admission")
+def test_plan_row_limit_includes_selected_directory_shells(batch_layout, monkeypatch):
+    row = {"path": "retired/batch", "type": "directory", "bytes": 0, "mtime_ns": 0}
+    payload = {"path": "retired/batch/file.json", "type": "file", "bytes": 0,
+               "mtime_ns": 0, "sha256": hashlib.sha256(b"").hexdigest()}
+    monkeypatch.setattr(storage, "retirement_rows", lambda *args: [row] + [payload] * 10000)
+    with pytest.raises(ValueError, match="1..10000 rows"):
+        storage.create_plan(batch_layout["repo"], batch_layout["companion"], ["retired/batch"],
+                            "Reviewed synthetic directory", "Synthetic writer inactive")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Checks complete Windows native request bytes")
+def test_plan_size_limit_includes_configuration_controls(batch_layout, monkeypatch):
+    root = batch_layout["companion"]
+    before = (root / "cache/result.json").read_bytes()
+    rows = storage.retirement_rows(storage.validate_contract(batch_layout["repo"]), root, "cache/result.json")
+    without_controls = json.dumps({"root": str(root), "rows": rows, "controls": []}).encode("utf-8")
+    monkeypatch.setattr(storage, "MAX_NATIVE_REQUEST_BYTES", len(without_controls))
+    with pytest.raises(ValueError, match="request exceeds"):
+        storage.create_plan(batch_layout["repo"], root, ["cache/result.json"],
+                            "Reviewed synthetic payload", "Synthetic writer inactive")
+    assert (root / "cache/result.json").read_bytes() == before
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Checks Windows case-insensitive selection")
+def test_paths_file_rejects_casefold_duplicates(batch_layout, tmp_path, capsys):
+    selection = tmp_path / "selection.json"
+    write_json(selection, ["cache/result.json", "CACHE/result.json"])
+    before = (batch_layout["companion"] / "cache/result.json").read_bytes()
+    assert storage.main(["plan", "--repo", str(batch_layout["repo"]),
+                         "--companion", str(batch_layout["companion"]),
+                         "--paths-file", str(selection), "--reason", "reviewed",
+                         "--inactive-evidence", "inactive"]) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is False and "items" not in result
+    assert (batch_layout["companion"] / "cache/result.json").read_bytes() == before
+
+
 @pytest.mark.native
 @pytest.mark.skipif(os.name != "nt", reason="Measures the Windows native batch-removal path")
 def test_thousand_files_use_two_proofs_and_one_native_process(batch_layout, monkeypatch):

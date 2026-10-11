@@ -23,6 +23,10 @@ production readiness.
 - Report and trim writers use the pinned Guards artifact admission API. PRIVATE transport,
   committed storage, ownership, producer identity, ignore rules and source-contract freshness
   are checked before writes. Synthetic tests do not establish live fleet readiness.
+- Reviewed retirement accepts bounded JSON path selections and rejects plans above Windows
+  snapshot row or native request limits before approval. Operators choose each concrete batch;
+  exact plan hashes, current PRIVATE proof and dependency checks remain required. Dedicated
+  storage CI exercises synthetic core and native retirement contracts on Linux and Windows.
 - The Python package provides schema 1 source catalogs, exact selection, validated overlays and
   llmcall adapters. Synthetic contract and wheel checks are separate from live loader,
   provider-permission and deployment acceptance.
@@ -40,8 +44,10 @@ production readiness.
 ## Planned
 
 - Complete remaining individually reviewed retirement of obsolete artifact groups
-  while retaining compact final conclusions. Keep partial completion explicit and
-  remove finished transaction plans after their receipts are saved.
+  after recovery, reader, writer, reference and Git dependencies are cleared.
+  Retain compact final conclusions and required recovery mappings, keep partial
+  completion explicit, and remove each finished selection and plan after its
+  compact result is saved. Keep only the current transient transaction.
 
 ### v0.2 follow-up, evaluator integration
 

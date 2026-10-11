@@ -94,6 +94,92 @@ def test_missing_inactivity_evidence_refuses_retirement(layout):
         storage.create_plan(layout["repo"], layout["companion"], ["cache"], "reviewed", "")
 
 
+def plan_cli(layout, *selection):
+    return storage.main(["plan", "--repo", str(layout["repo"]),
+                         "--companion", str(layout["companion"]),
+                         "--reason", "Reviewed synthetic selection",
+                         "--inactive-evidence", "Synthetic writer never started", *selection])
+
+
+def test_paths_file_plans_exact_selection_without_removing_files(layout, tmp_path, capsys):
+    selection = tmp_path / "selection.json"
+    write_json(selection, ["retired/result.json", "cache/result.json"])
+    before = {name: (layout["companion"] / name).read_bytes()
+              for name in ("cache/result.json", "retired/result.json")}
+    assert plan_cli(layout, "--paths-file", str(selection)) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["mode"] == "review_required"
+    assert [item["path"] for item in result["items"]] == ["cache/result.json", "retired/result.json"]
+    assert all((layout["companion"] / name).read_bytes() == content for name, content in before.items())
+
+
+@pytest.mark.parametrize("selection", [
+    {}, [], [None], ["cache/result.json", 7],
+    ["cache/result.json", "cache/result.json"],
+    ["cache", "cache/result.json"],
+    ["cache/result.json", "retired/*"],
+    ["cache/result.json", "retired/[ab].json"],
+    ["../outside.json"],
+])
+def test_paths_file_invalid_selection_emits_no_plan_and_preserves_data(layout, tmp_path, capsys, selection):
+    path = tmp_path / "selection.json"
+    write_json(path, selection)
+    before = {name: (layout["companion"] / name).read_bytes()
+              for name in ("cache/result.json", "retired/result.json")}
+    assert plan_cli(layout, "--paths-file", str(path)) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is False and "items" not in result
+    assert all((layout["companion"] / name).read_bytes() == content for name, content in before.items())
+
+
+@pytest.mark.parametrize("limit", ["bytes", "entries"])
+def test_paths_file_rejects_bounded_input_before_emitting_plan(layout, tmp_path, capsys, limit):
+    selection = tmp_path / "selection.json"
+    before = (layout["companion"] / "cache/result.json").read_bytes()
+    if limit == "bytes":
+        write_json(selection, ["retired/" + "x" * (1024 * 1024)])
+    else:
+        write_json(selection, ["retired/%05d.json" % index for index in range(10001)])
+    assert plan_cli(layout, "--paths-file", str(selection)) == 1
+    result = json.loads(capsys.readouterr().out)
+    assert result["ok"] is False and "items" not in result
+    assert (layout["companion"] / "cache/result.json").read_bytes() == before
+
+
+def test_repeated_direct_selection_is_not_silently_deduplicated(layout):
+    with pytest.raises(ValueError, match="duplicate|non-overlapping"):
+        storage.create_plan(layout["repo"], layout["companion"],
+                            ["cache/result.json", "cache/result.json"], "reviewed", "inactive")
+
+
+def test_paths_file_cannot_be_mixed_with_direct_paths(layout, tmp_path):
+    selection = tmp_path / "selection.json"
+    write_json(selection, ["retired/result.json"])
+    before = (layout["companion"] / "cache/result.json").read_bytes()
+    with pytest.raises(SystemExit) as exc:
+        plan_cli(layout, "--paths-file", str(selection), "--path", "cache/result.json")
+    assert exc.value.code == 2
+    assert (layout["companion"] / "cache/result.json").read_bytes() == before
+
+
+@pytest.mark.parametrize("empty_argument", [False, True])
+def test_paths_file_is_not_ignored_during_apply(layout, tmp_path, empty_argument):
+    plan = storage.create_plan(layout["repo"], layout["companion"], ["cache/result.json"],
+                               "Reviewed synthetic payload", "Synthetic writer inactive")
+    plan_path = tmp_path / "plan.json"
+    write_json(plan_path, plan)
+    selection = tmp_path / "selection.json"
+    write_json(selection, ["retired/*"])
+    before = (layout["companion"] / "cache/result.json").read_bytes()
+    with pytest.raises(SystemExit) as exc:
+        storage.main(["apply", "--repo", str(layout["repo"]),
+                      "--companion", str(layout["companion"]),
+                      "--paths-file", "" if empty_argument else str(selection), "--plan", str(plan_path),
+                      "--approve-sha256", hashlib.sha256(plan_path.read_bytes()).hexdigest()])
+    assert exc.value.code == 2
+    assert (layout["companion"] / "cache/result.json").read_bytes() == before
+
+
 def plan_file(layout, tmp_path):
     plan = storage.create_plan(layout["repo"], layout["companion"], ["cache"], "reviewed disposable cache", "synthetic writer never started")
     target = tmp_path / "plan.json"

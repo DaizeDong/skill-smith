@@ -8,6 +8,13 @@ All notable changes to this project are documented here (Keep a Changelog style)
   HOME, preserving native write admission while checking deterministic templates and readiness.
 
 ### Fixed
+- Reject oversized Windows retirement plans before approval: at most 10,000 file
+  and directory snapshot rows and a 16 MiB native request, including control-file
+  snapshots. Accept a bounded `--paths-file` JSON array as an alternative to
+  repeated `--path`, capped at 1 MiB and 10,000 entries with duplicate and overlap
+  rejection. Each concrete plan still needs separate review and exact SHA256
+  approval; selection files confer no deletion permission. Run the dedicated
+  storage and retirement-batch regressions on both Linux and Windows.
 - Batch reviewed retirement without starting a shell for every selected file.
   Keep exact plan approval, private storage proof and per-file boundary and content
   checks, and report partial completion on failure. Current transaction plans use

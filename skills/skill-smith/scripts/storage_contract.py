@@ -19,6 +19,7 @@ import sys
 
 MAX_NATIVE_ROWS = 10000
 MAX_NATIVE_REQUEST_BYTES = 16 * 1024 * 1024
+MAX_PATHS_FILE_BYTES = 1024 * 1024
 
 
 def load_guard(repo, name):
@@ -226,12 +227,42 @@ def canonical_hash(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def read_paths_file(path):
+    """Read one bounded selection; the planner still validates every concrete path."""
+    path = no_links(path)
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("paths-file must be an ordinary UTF-8 JSON file")
+    if info.st_size > MAX_PATHS_FILE_BYTES:
+        raise ValueError("paths-file exceeds 1 MiB; select a smaller batch")
+    with path.open("rb") as stream:
+        raw = stream.read(MAX_PATHS_FILE_BYTES + 1)
+    if len(raw) > MAX_PATHS_FILE_BYTES:
+        raise ValueError("paths-file exceeds 1 MiB; select a smaller batch")
+    paths = json.loads(raw.decode("utf-8-sig"))
+    if not isinstance(paths, list) or not 1 <= len(paths) <= MAX_NATIVE_ROWS:
+        raise ValueError("paths-file requires a JSON array of 1..10000 concrete paths")
+    return paths
+
+
+def _native_request(root, rows, *, control_files=()):
+    """Use the same bounded request encoding during planning and native apply."""
+    if not rows or len(rows) > MAX_NATIVE_ROWS:
+        raise ValueError("native retirement requires 1..10000 rows; review smaller concrete plans")
+    request = json.dumps({"root": str(root), "rows": rows, "controls": list(control_files)})
+    if len(request.encode("utf-8")) > MAX_NATIVE_REQUEST_BYTES:
+        raise ValueError("native retirement request exceeds 16 MiB; review smaller concrete plans")
+    return request
+
+
 def create_plan(repo, companion, paths, reason, inactive_evidence):
     if not reason.strip() or not inactive_evidence.strip():
         raise ValueError("retirement needs a reviewed reason and evidence that writers/references are inactive")
     contract = validate_contract(repo)
     root, proof = prove_companion(repo, companion)
-    clean = sorted(set(relative_path(p) for p in paths))
+    clean = sorted(relative_path(p) for p in paths)
+    if any(character in path for path in clean for character in "[]"):
+        raise ValueError("retirement requires concrete paths without glob patterns")
     normalized = [p.casefold() if os.name == "nt" else p for p in clean]
     selected = set(normalized)
     if (not clean or len(selected) != len(clean) or any(
@@ -239,6 +270,10 @@ def create_plan(repo, companion, paths, reason, inactive_evidence):
             for path in normalized for parts in [path.split("/")] for i in range(1, len(parts)))):
         raise ValueError("select non-overlapping concrete retirement paths")
     items = [{"path": p, "snapshot": retirement_rows(contract, root, p)} for p in clean]
+    if os.name == "nt":
+        rows = [row for item in items for row in item["snapshot"]]
+        controls = _control_snapshots(_control_files(repo, root, proof))
+        _native_request(root, rows, control_files=controls)
     return {"schema_version": 1, "mode": "review_required", "companion": str(root),
             "repositories": list(proof.repositories), "contract_sha256": canonical_hash(contract),
             "reason": reason, "inactive_evidence": inactive_evidence,
@@ -348,11 +383,7 @@ def remove_exact(root, rows, *, control_files=()):
     """
     ordered = sorted(rows, key=lambda row: (row["path"].count("/"), row["path"]), reverse=True)
     if os.name == "nt":
-        if not ordered or len(ordered) > MAX_NATIVE_ROWS:
-            raise ValueError("native retirement requires 1..10000 rows; review smaller concrete plans")
-        request = json.dumps({"root": str(root), "rows": ordered, "controls": list(control_files)})
-        if len(request.encode("utf-8")) > MAX_NATIVE_REQUEST_BYTES:
-            raise ValueError("native retirement request exceeds 16 MiB; review smaller concrete plans")
+        request = _native_request(root, ordered, control_files=control_files)
         # Feed data through stdin, never interpolate paths into executable shell text.
         script = r"""
 $ErrorActionPreference = 'Stop'
@@ -622,12 +653,16 @@ def main(argv=None):
     parser.add_argument("--repo", required=True)
     parser.add_argument("--companion")
     parser.add_argument("--json", action="store_true", help="JSON is the stable output format")
-    parser.add_argument("--path", action="append", default=[])
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--path", action="append", default=[], help="Concrete companion-relative path; plan only")
+    selection.add_argument("--paths-file", help="UTF-8 JSON array, at most 1 MiB and 10000 paths; plan only")
     parser.add_argument("--reason", default="")
     parser.add_argument("--inactive-evidence", default="")
     parser.add_argument("--plan")
     parser.add_argument("--approve-sha256")
     args = parser.parse_args(argv)
+    if args.command != "plan" and (args.path or args.paths_file is not None):
+        parser.error("--path and --paths-file are only valid for plan")
     try:
         if args.command == "validate":
             contract = validate_contract(args.repo)
@@ -635,7 +670,8 @@ def main(argv=None):
         elif args.command == "check":
             result = check_storage(args.repo, args.companion)
         elif args.command == "plan":
-            result = create_plan(args.repo, args.companion, args.path, args.reason, args.inactive_evidence)
+            paths = read_paths_file(args.paths_file) if args.paths_file is not None else args.path
+            result = create_plan(args.repo, args.companion, paths, args.reason, args.inactive_evidence)
         else:
             if not args.plan or not args.approve_sha256:
                 raise ValueError("apply requires --plan and --approve-sha256")
