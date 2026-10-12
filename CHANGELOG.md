@@ -4,6 +4,9 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 
+- Stop passing `mcp_isolation=True` for `read_only` requirements: llmcall removed the
+  option. read_only still runs judge mode on sandboxed Codex rungs and remains not a
+  permission guarantee.
 - Let reviewed synthetic G8 runs use prepared PRIVATE Git companions and generated visibility
   HOME, preserving native write admission while checking deterministic templates and readiness.
 

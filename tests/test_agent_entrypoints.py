@@ -196,9 +196,9 @@ def test_tool_restrictions_fail_closed_and_never_degrade(tmp_path):
 
 
 @pytest.mark.parametrize("requested, mode, extra", [
-    ({"access": "read_only"}, "judge", {"mcp_isolation": True}),
+    ({"access": "read_only"}, "judge", {}),
     (LegacyRequirements(access="read_only", tool_network="forbidden"), "judge",
-     {"web_search": False, "mcp_isolation": True}),
+     {"web_search": False}),
     ({"access": "workspace_write", "tool_network": "required"}, "agent", {"web_search": True}),
 ])
 def test_enforceable_requirements_run_only_on_sandboxed_rungs(tmp_path, requested, mode, extra):
@@ -208,9 +208,8 @@ def test_enforceable_requirements_run_only_on_sandboxed_rungs(tmp_path, requeste
     options = stub.calls[0][1]
     assert options["chain"] == ["codexg", "codex"] and options["mode"] == mode
     assert {k: options[k] for k in extra} == extra
-    # Read-only asks llmcall to drop Codex MCP servers (a sandboxed judge keeps them otherwise);
-    # an agent keeps its tools, and llmcall ignores the request for agent calls anyway.
-    assert ("mcp_isolation" in options) is (mode == "judge")
+    # llmcall no longer takes mcp_isolation; passing it would be a TypeError at call time.
+    assert "mcp_isolation" not in options
 
 
 def test_control_no_requirements_keeps_configured_mcp(tmp_path):

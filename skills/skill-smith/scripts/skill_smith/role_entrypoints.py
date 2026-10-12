@@ -251,13 +251,10 @@ def _route(client, options, requirements, mode, avoid=None):
         if requirements["access"] == "read_only":
             mode = "judge"
             # The read-only sandbox binds the filesystem only: Codex keeps its configured MCP
-            # servers in judge mode, and an MCP tool runs outside the sandbox. Ask llmcall to
-            # disable them. llmcall treats this as a verified best effort, not a boundary: when it
-            # cannot verify the configuration the rung runs with its tools, and the Result does
-            # not say so. That is why read_only is not a permission guarantee, and why the
+            # servers in judge mode, and an MCP tool runs outside the sandbox. llmcall has no
+            # option to disable them, so read_only is not a permission guarantee, and the
             # llmcall.permissions capability stays unverified (which keeps every overlay whose
             # source restricts tools blocked before it can reach this function).
-            routed["mcp_isolation"] = True
         if requirements["tool_network"] != "default":
             routed["web_search"] = requirements["tool_network"] == "required"
     if narrowed:

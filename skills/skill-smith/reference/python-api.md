@@ -109,18 +109,15 @@ Execution requirements are plain mappings (`workspace`, `access`, `tool_network`
 `ExecutionRequirements` instance is read field by field. Source restrictions are
 intersected with caller requests and never weakened. llmcall enforces them only
 through its Codex sandbox, so any requirement narrows the chain to Codex rungs:
-`read_only` runs judge mode (read-only sandbox) with `mcp_isolation=True`,
+`read_only` runs judge mode (read-only sandbox),
 `workspace_write` keeps the requested mode, and `tool_network` sets `web_search`.
 Tool allowlists and required tools or MCP servers have no llmcall equivalent and
 fail closed with `execution_requirements_unenforceable:<field>`, as does a chain
 with no Codex rung.
 
 `read_only` binds the filesystem, not every tool. Codex keeps its configured MCP
-servers in judge mode and an MCP tool runs outside the sandbox, so read-only calls
-ask llmcall to disable them. llmcall verifies the effective configuration first and
-treats the request as a best effort: when verification is unavailable the rung runs
-with its original tools, and the Result does not report it. read_only is therefore
-not a permission guarantee. Keep the `llmcall.permissions` capability unverified;
+servers in judge mode and an MCP tool runs outside the sandbox; llmcall has no
+option to disable them. read_only is therefore not a permission guarantee. Keep the `llmcall.permissions` capability unverified;
 that is what blocks every overlay whose source restricts tools before it can run.
 
 llmcall 0.3.0 has no per-call cwd, environment or cancellation. Its clients run in
