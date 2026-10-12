@@ -18,13 +18,14 @@ Config discovery order:
 2. `$__ENVVAR__`, environment variable (location-independent).
 3. `$__ENVVAR___DIR`, accepted alias.
 4. The pinned resolver's existing candidates: `$__DATAENV__`, then the sibling
-   `__NAME__-config/`, then `~/__DEFAULTDIR__/`, then `~/.__NAME__-data/`.
+   `__NAME__-config/`. There is no home-directory candidate.
 
 Explicit config selections never fall through: the doctor fails if the selected directory is
 missing; initialization can create the selected skeleton. The resolver requires sibling ownership
 proof from a `.companion` file containing `__NAME__` or an origin named `__NAME__-config`.
-It skips an unproven sibling only when a later candidate qualifies; otherwise it fails.
-If no candidate exists, the doctor exits 1 and initialization creates `~/__DEFAULTDIR__/`.
+An unproven sibling fails with instructions.
+If no candidate exists, the doctor exits 1 and initialization stops with instructions: create a
+PRIVATE companion repository beside this one as `__NAME__-config/`, set `$__ENVVAR__`, or pass `--out`.
 Missing or mismatched guards and destinations inside the consumer always fail.
 XDG config directories and vendored resolver copies are not discovery fallbacks.
 

@@ -3,7 +3,8 @@
 
 Uses the emitted consumer identity and its pinned guards resolver, regardless of caller cwd.
 Explicit --out, CONFIG and CONFIG_DIR selections take precedence. Without a selection, reuse
-an existing companion; create ~/.<skill>-config only when no companion exists.
+an existing companion; when none exists, stop with instructions to create one (there is no
+home-directory default).
 
 Usage: python scripts/init_config.py [--skill <consumer-name>] [--out <dir>] [--force]
 Stdlib only. Never writes secrets. A skeleton does not establish functional readiness.

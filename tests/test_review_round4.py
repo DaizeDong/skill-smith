@@ -85,6 +85,23 @@ def test_unproven_sibling_is_a_failure(consumer, config_env):
         marker.write_bytes(original)
 
 
+def test_init_without_any_companion_stops_with_instructions_and_creates_no_home_copy(consumer, config_env):
+    """No home-directory default (2026-10-12): with no variable and no sibling companion, the
+    initializer refuses and says how to create the companion, and nothing appears under HOME."""
+    companion = consumer["companion"]
+    parked = companion.with_name(companion.name + " parked")
+    companion.rename(parked)
+    try:
+        result = invoke(consumer, "init_config.py", config_env)
+        out = result.stdout + result.stderr
+        assert result.returncode != 0, out
+        assert "PRIVATE companion repository" in out and "--out" in out, out
+        assert "Traceback" not in out
+        assert list(Path(config_env["HOME"]).iterdir()) == []
+    finally:
+        parked.rename(companion)
+
+
 def test_consumer_boundary_applies_in_linked_worktrees_too(consumer, config_env):
     inside = config_companion(consumer["consumer"] / "synthetic forbidden config")
     config_env["ACME_COLD_TOOL_CONFIG"] = str(inside)

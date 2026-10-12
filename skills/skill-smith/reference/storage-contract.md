@@ -58,8 +58,8 @@ outside the declared data roots.
 ## Runtime discovery and outputs
 
 `guards/tools/datadir.py` selects the first existing supported DATA candidate in this order:
-`SKILL_SMITH_DATA_DIR`, `SKILL_SMITH_CONFIG`, `SKILL_SMITH_CONFIG_DIR`, a proven sibling companion,
-`~/.skill-smith-config`, then `~/.skill-smith-data`. Companion-root candidates try `data/` first.
+`SKILL_SMITH_DATA_DIR`, `SKILL_SMITH_CONFIG`, `SKILL_SMITH_CONFIG_DIR`, then a proven sibling
+companion. There is no home-directory candidate. Companion-root candidates try `data/` first.
 Writers require the declared layout: `data/fleet-check-status.json`, `data/worklist.json`
 and `data/description-backups/`. Clear an inherited DATA_DIR override when switching CONFIG.
 Unsupported root fallbacks and alternate output paths fail artifact admission, including explicit

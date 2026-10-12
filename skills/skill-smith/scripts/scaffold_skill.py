@@ -279,7 +279,6 @@ def emit_config_bearing(root, name, force, write_fn):
     - storage.contract.json declaring companion artifacts and retention (E8)
     """
     env = name.upper().replace("-", "_") + "_CONFIG"
-    defaultdir = ".%s-config" % name
     applicability = {
         "schema_version": 1, "repository_kind": "skill", "configuration": "settings",
         "rationale": "This scaffold owns companion settings; capability-specific readiness remains unfinished.",
@@ -296,8 +295,7 @@ def emit_config_bearing(root, name, force, write_fn):
     def fill(t):
         return (t.replace("__NAME__", name)
                  .replace("__ENVVAR__", env)
-                 .replace("__DATAENV__", name.upper().replace("-", "_") + "_DATA_DIR")
-                 .replace("__DEFAULTDIR__", defaultdir))
+                 .replace("__DATAENV__", name.upper().replace("-", "_") + "_DATA_DIR"))
 
     # The shared runtime binds both commands to the emitted consumer's plugin identity.
     for script in ("init_config.py", "verify_config.py", "config_runtime.py"):

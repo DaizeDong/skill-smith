@@ -171,7 +171,7 @@ data = json.loads((root / 'registry.json').read_text(encoding='utf-8'))
 print((Path(data['required_root']) / 'source.txt').read_text(encoding='utf-8'))
 ''',
     }
-    discovery = ('ACME_CONFIG_TOOL_CONFIG env var; ACME_CONFIG_TOOL_CONFIG_DIR alias; discovery order ~/.acme-config-tool-config fallback. '
+    discovery = ('ACME_CONFIG_TOOL_CONFIG env var; ACME_CONFIG_TOOL_CONFIG_DIR alias; discovery order then the proven sibling acme-config-tool-config companion. '
                  'init_config.py then fill required_root, verify; switch configs.\n')
     doctor = texts['scripts/verify_config.py']
     if doctor_mode == "ready_when_blank":
