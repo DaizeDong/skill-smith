@@ -20,12 +20,12 @@ production readiness.
   Static declarations, blank-required rejection, deterministic templates and configured doctor
   evidence are separate. Smith declares runtime-storage-only applicability; external operators
   own initialization of its supplied configuration inputs.
-- Report and trim writers use the pinned Guards artifact admission API. PRIVATE transport,
-  committed storage, ownership, producer identity, ignore rules and source-contract freshness
-  are checked before writes. Synthetic tests do not establish live fleet readiness.
+- Report and trim writers check each destination once: inside a versioned companion, outside
+  the tool repository. PRIVATE publication is enforced by commit-time hooks and CI, not at write
+  time. Synthetic tests do not establish live fleet readiness.
 - Reviewed retirement accepts bounded JSON path selections and rejects plans above Windows
   snapshot row or native request limits before approval. Operators choose each concrete batch;
-  exact plan hashes, current PRIVATE proof and dependency checks remain required. Dedicated
+  exact plan hashes and dependency checks remain required. Dedicated
   storage CI exercises synthetic core and native retirement contracts on Linux and Windows.
 - The Python package provides schema 1 source catalogs, exact selection, validated overlays and
   llmcall adapters. Synthetic contract and wheel checks are separate from live loader,

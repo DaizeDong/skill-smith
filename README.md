@@ -142,10 +142,10 @@ export SKILL_SMITH_CONFIG="$(cd ../skill-smith-config && pwd)"
 ```
 
 For an existing companion, clone it and set the same variable. The visibility query must return
-`PRIVATE`. Refresh the trusted visibility receipt before writing; the query does not update it.
+`PRIVATE`. PRIVATE publication is enforced by commit-time hooks and CI; writers do not prove it at runtime.
 See [runtime discovery and outputs](skills/skill-smith/reference/storage-contract.md#runtime-discovery-and-outputs)
-for selection precedence, exact output paths, write admission, console-only operation and recovery,
-and [Guards companion verification](guards/COMPANION.md#verifying-a-companion) for transport proof.
+for selection precedence, exact output paths, the destination check, console-only operation and recovery,
+and [Guards companion verification](guards/COMPANION.md#verifying-a-companion) for the commit-time audit.
 Smith owns runtime storage only; Profile Sync and operators initialize the external configuration
 inputs listed in the storage reference. G8 conformance alone does not prove storage readiness.
 

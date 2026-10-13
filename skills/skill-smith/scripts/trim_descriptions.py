@@ -82,7 +82,7 @@ def validate_replacement(text, name, description):
 
 
 def do_scan(base, cap, out_path):
-    out_path, proof = _storage_path(out_path)
+    out_path = _storage_path(out_path)
     rows = []
     for p in find_skill_mds(base):
         txt = read_text(p)
@@ -99,9 +99,7 @@ def do_scan(base, cap, out_path):
         rows.append({"path": p, "name": name or os.path.basename(os.path.dirname(p)),
                      "cap": cap, "old": desc, "old_len": len(desc), "new": ""})
     rows.sort(key=lambda r: -r["old_len"])
-    _storage_module().recheck_status_path(out_path, proof)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    _storage_module().recheck_status_path(out_path, proof)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(rows, f, ensure_ascii=False, indent=2)
     print("scan: %d skills over cap %d -> %s" % (len(rows), cap, out_path))
@@ -110,9 +108,9 @@ def do_scan(base, cap, out_path):
 
 
 def do_apply(worklist_path, dry_run, backup_dir):
-    worklist_path, _worklist_proof = _storage_path(worklist_path)
+    worklist_path = _storage_path(worklist_path)
     if not dry_run:
-        backup_dir, backup_proof = _storage_path(backup_dir, directory=True)
+        backup_dir = _storage_path(backup_dir, directory=True)
     with open(worklist_path, "r", encoding="utf-8") as f:
         rows = json.load(f)
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -174,16 +172,13 @@ def do_apply(worklist_path, dry_run, backup_dir):
             raise FileExistsError("Description backup destination already exists: " + bdir)
         pending.append((p, bdir, new_text))
     if pending:
-        _storage_module().recheck_status_path(backup_root, backup_proof, directory=True)
         os.makedirs(backup_root, exist_ok=False)
         # Finish every exclusive backup before changing any source file.
         for p, bdir, _new_text in pending:
-            _storage_module().recheck_status_path(bdir, backup_proof)
             with open(p, "rb") as source, open(bdir, "xb") as backup:
                 shutil.copyfileobj(source, backup)
             shutil.copystat(p, bdir)
         for p, _bdir, new_text in pending:
-            _storage_module().recheck_status_path(_bdir, backup_proof)
             with open(p, "w", encoding="utf-8", newline="\n") as source:
                 source.write(new_text)
             applied += 1
@@ -199,7 +194,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file
 
 
 def _storage_module():
-    """Use the same pinned-resolver and provider checks as the fleet report writer."""
+    """Use the same pinned resolver and destination check as the fleet report writer."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fleet_check.py")
     spec = importlib.util.spec_from_file_location("_fleet_storage_for_trim", path)
     if spec is None or spec.loader is None:
@@ -216,12 +211,8 @@ def _default_out_path():
 
 
 def _storage_path(path, directory=False):
-    module = _storage_module()
-    result, proof = module.resolve_status_path(
-        path, module.DEFAULT_VISIBILITY, default_name="description-backups" if directory else "worklist.json",
-        directory=directory, artifact_id="description-rollback" if directory else "worklist")
-    print("storage: " + module.private_output_description(proof))
-    return result, proof
+    return _storage_module().resolve_status_path(
+        path, default_name="description-backups" if directory else "worklist.json", directory=directory)
 
 
 def main():
@@ -231,10 +222,10 @@ def main():
     ap.add_argument("--scan", action="store_true")
     ap.add_argument("--apply", metavar="WORKLIST.json")
     ap.add_argument("--out", default=None,
-                    help="worklist in a verified PRIVATE Git repository; default uses the pinned companion resolver")
+                    help="worklist in the versioned companion; default uses the pinned companion resolver")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--backup-dir", default=os.environ.get("SKILL_SMITH_BACKUP_DIR"),
-                    help="verified PRIVATE backup directory; defaults to companion DATA/description-backups")
+                    help="backup directory in the versioned companion; defaults to companion DATA/description-backups")
     a = ap.parse_args()
     base = os.path.abspath(os.path.expanduser(a.skills_dir))
     try:

@@ -1,6 +1,7 @@
 """Exercise storage boundaries and real leaf removal using generated synthetic data."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -15,13 +16,8 @@ from make_fixtures import storage_contract_fixture, write_json
 
 
 @pytest.fixture
-def layout(tmp_path, monkeypatch):
-    value = storage_contract_fixture(tmp_path)
-    proof = SimpleNamespace(root=value["companion"], repositories=("example/synthetic-config",))
-    monkeypatch.setattr(storage, "prove_companion", lambda *args: (value["companion"], proof))
-    monkeypatch.setattr(storage, "_control_files", lambda repo, root, proof:
-                        [Path(repo) / storage.CONTRACT, Path(root) / ".git"])
-    return value
+def layout(tmp_path):
+    return storage_contract_fixture(tmp_path)
 
 
 @pytest.mark.parametrize("bad", ["../outside", "/absolute", "C:/outside", "cache\\outside", "NUL.json", "cache/file:stream", "cache/trailing.", "**"])
@@ -216,15 +212,6 @@ def test_hardlinks_are_not_followed_or_deleted(layout):
         storage.create_plan(layout["repo"], layout["companion"], ["cache"], "reviewed", "writer stopped")
 
 
-def test_public_or_unknown_private_proof_failure_is_not_clean(tmp_path, monkeypatch):
-    layout = storage_contract_fixture(tmp_path)
-    class Refuse:
-        def prove_private_companion(self, root):
-            raise RuntimeError("PUBLIC or UNKNOWN destination")
-    monkeypatch.setattr(storage, "load_guard", lambda *args: Refuse())
-    assert storage.main(["check", "--repo", str(layout["repo"]), "--companion", str(layout["companion"])]) == 1
-
-
 def test_junction_metadata_is_reported_without_descending(layout, monkeypatch):
     original = Path.lstat
     target = layout["companion"] / "cache"
@@ -256,6 +243,7 @@ def test_uppercase_nested_repository_refuses_retirement(layout):
         storage.create_plan(layout["repo"], layout["companion"], ["cache"], "reviewed", "writer stopped")
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows freezes the contract inside the native executor instead")
 def test_contract_change_after_full_preflight_preserves_targets(layout, tmp_path, monkeypatch):
     plan, digest = plan_file(layout, tmp_path)
     target = layout["companion"] / "cache/result.json"
@@ -290,21 +278,8 @@ def test_uppercase_active_markers_refuse_retirement(layout, name):
 
 
 @pytest.fixture
-def combined_layout(tmp_path, monkeypatch):
-    value = storage_contract_fixture(tmp_path, combined=True)
-
-    class PrivateBoundary:
-        def prove_private_companion(self, root):
-            return SimpleNamespace(root=root, repositories=("example/synthetic-config",))
-
-    def load_guard(repo, name):
-        assert name == "data_boundary", "combined layout must prove its own repository"
-        return PrivateBoundary()
-
-    monkeypatch.setattr(storage, "load_guard", load_guard)
-    monkeypatch.setattr(storage, "_control_files", lambda repo, root, proof:
-                        [Path(repo) / storage.CONTRACT, Path(root) / ".git"])
-    return value
+def combined_layout(tmp_path):
+    return storage_contract_fixture(tmp_path, combined=True)
 
 
 def test_default_layout_rejects_source_as_its_own_companion(combined_layout):
@@ -315,17 +290,12 @@ def test_default_layout_rejects_source_as_its_own_companion(combined_layout):
     write_json(repo / storage.CONTRACT, contract)
 
     with pytest.raises(ValueError, match="separate|combined|same"):
-        storage.prove_companion(repo, repo)
+        storage.resolve_companion(repo, repo)
 
 
-def test_explicit_combined_private_layout_proves_the_shared_root(combined_layout):
+def test_explicit_combined_layout_uses_the_shared_root(combined_layout):
     repo = combined_layout["repo"]
-
-    root, proof = storage.prove_companion(repo, repo)
-
-    assert root == repo.resolve()
-    assert proof.root == repo.resolve()
-    assert proof.repositories == ("example/synthetic-config",)
+    assert storage.resolve_companion(repo, repo) == repo.resolve()
 
 
 def test_combined_layout_rejects_a_different_companion(combined_layout, tmp_path):
@@ -333,19 +303,7 @@ def test_combined_layout_rejects_a_different_companion(combined_layout, tmp_path
     other.mkdir()
 
     with pytest.raises(ValueError, match="same|source|combined"):
-        storage.prove_companion(combined_layout["repo"], other)
-
-
-@pytest.mark.parametrize("visibility", ["PUBLIC", "UNKNOWN"])
-def test_combined_layout_still_requires_private_proof(combined_layout, monkeypatch, visibility):
-    class RefuseBoundary:
-        def prove_private_companion(self, root):
-            raise RuntimeError(visibility + " destination")
-
-    monkeypatch.setattr(storage, "load_guard", lambda *args: RefuseBoundary())
-
-    with pytest.raises(RuntimeError, match=visibility):
-        storage.prove_companion(combined_layout["repo"], combined_layout["companion"])
+        storage.resolve_companion(combined_layout["repo"], other)
 
 
 @pytest.mark.parametrize("roots", [
@@ -489,7 +447,7 @@ def test_combined_missing_root_does_not_hide_a_junction_ancestor(combined_layout
 
 
 @pytest.mark.parametrize("name,api", [
-    ("data_boundary", "prove_private_companion"),
+    ("storage_contract", "validate_contract"),
     ("datadir", "resolve_companion_root"),
 ])
 def test_guard_loading_uses_the_checker_package_without_consumer_guards(tmp_path, name, api):

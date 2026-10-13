@@ -96,20 +96,13 @@ def test_native_powershell_initializer_is_supported(tmp_path):
     assert "[PASS] E3" in result.stdout and "[PASS] E4" in result.stdout
 
 
-@pytest.mark.parametrize("visibility", ["PRIVATE", "PUBLIC", "UNKNOWN"])
-def test_native_initializer_retains_private_admission_with_prepared_fixtures(tmp_path, visibility):
-    layout = private_config_lifecycle(tmp_path, visibility=visibility)
+def test_native_initializer_with_prepared_fixtures(tmp_path):
+    layout = private_config_lifecycle(tmp_path)
     command = [sys.executable, str(CHECKER), str(layout["source"]), "--run-synthetic",
-               "--synthetic-root", str(tmp_path), "--synthetic-home", str(layout["home"])]
+               "--synthetic-root", str(tmp_path)]
     for flag, key in (("--template-a", "template-a"), ("--template-b", "template-b"),
                       ("--config-a", "configured-a"), ("--config-b", "configured-b")):
         command.extend((flag, str(layout[key])))
     result = subprocess.run(command, capture_output=True, text=True, timeout=90)
-    if visibility == "PRIVATE":
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert all(f"[PASS] E{number}" in result.stdout for number in (3, 4, 5))
-    else:
-        assert result.returncode == 1, result.stdout + result.stderr
-        assert "[FAIL] E4" in result.stdout
-        assert not (layout["template-a"] / "registry.json").exists()
-        assert not (layout["template-b"] / "registry.json").exists()
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert all(f"[PASS] E{number}" in result.stdout for number in (3, 4, 5))

@@ -112,9 +112,9 @@ def test_trim_preserves_string_type_and_contents(tmp_path, monkeypatch, case):
     replacement = review10_replacements()[case]
     fixture = review10_trim(tmp_path, replacement)
     trim = module("trim_descriptions")
-    monkeypatch.setattr(trim, "_storage_path", lambda path, **kwargs: (str(path), None))
+    monkeypatch.setattr(trim, "_storage_path", lambda path, **kwargs: str(path))
     monkeypatch.setattr(trim, "_storage_module", lambda: SimpleNamespace(
-        reject_output_aliases=lambda path: path, recheck_status_path=lambda path, proof, **kwargs: path))
+        reject_output_aliases=lambda path: path))
     assert trim.do_apply(str(fixture["worklist"]), False, str(fixture["backup"])) == 0
     result = fixture["path"].read_text(encoding="utf-8")
     assert budget.parse_frontmatter(result) == ("acme-report", replacement)
@@ -125,9 +125,9 @@ def test_trim_preserves_string_type_and_contents(tmp_path, monkeypatch, case):
 def test_trim_validates_complete_frontmatter_before_mutation(tmp_path, monkeypatch):
     fixture = review10_trim(tmp_path, review10_replacements()["plain"], malformed=True)
     trim = module("trim_descriptions")
-    monkeypatch.setattr(trim, "_storage_path", lambda path, **kwargs: (str(path), None))
+    monkeypatch.setattr(trim, "_storage_path", lambda path, **kwargs: str(path))
     monkeypatch.setattr(trim, "_storage_module", lambda: SimpleNamespace(
-        reject_output_aliases=lambda path: path, recheck_status_path=lambda path, proof, **kwargs: path))
+        reject_output_aliases=lambda path: path))
     with pytest.raises(ValueError, match="frontmatter|metadata"):
         trim.do_apply(str(fixture["worklist"]), False, str(fixture["backup"]))
     assert fixture["path"].read_text(encoding="utf-8") == fixture["before"]
@@ -151,18 +151,10 @@ def test_fleet_requires_complete_live_measurement(monkeypatch, kind, expected):
     ("push_default", False), ("branch_push", False), ("branch_remote", False),
     ("missing_route", False), ("local_route", False), ("config_failure", False)])
 def test_private_data_requires_effective_private_push_routes(private_output, scenario, allowed):
-    fixture = materialize_output_routes(private_output, scenario)
-    fleet = private_output["fleet"]
-    path = private_output["data"] / "fleet-check-status.json"
-    if allowed:
-        result, proof = fleet.resolve_status_path(str(path), str(private_output["visibility"]))
-        assert result == str(path)
-        assert proof.repositories
-        assert all(fixture["visibility"][slug] == "PRIVATE" for slug in proof.repositories)
-    else:
-        with pytest.raises(ValueError, match="PRIVATE|publication|push|routing"):
-            fleet.resolve_status_path(str(path), str(private_output["visibility"]))
-    assert not path.exists()
+    materialize_output_routes(private_output, scenario)
+    result = private_output["fleet"].check_data_boundary(
+        str(private_output["visibility"]), {"synthetic-tool": str(private_output["consumer"])}, offline=True)
+    assert result.count("PASS") == (1 if allowed else 0), result.rows
 
 
 @pytest.mark.parametrize("scenario,allowed", [("active", True), ("restored", True),

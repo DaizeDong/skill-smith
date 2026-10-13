@@ -7,8 +7,14 @@ All notable changes to this project are documented here (Keep a Changelog style)
 - Stop passing `mcp_isolation=True` for `read_only` requirements: llmcall removed the
   option. read_only still runs judge mode on sandboxed Codex rungs and remains not a
   permission guarantee.
-- Let reviewed synthetic G8 runs use prepared PRIVATE Git companions and generated visibility
-  HOME, preserving native write admission while checking deterministic templates and readiness.
+- Let reviewed synthetic G8 runs use prepared Git companions while checking deterministic
+  templates and readiness.
+- Remove the runtime PRIVATE proof from every writer. Report, worklist and backup writers check
+  their destination once (inside a versioned companion, outside the tool repository) instead of
+  running the Guards proof and `authorize_artifact_write` before and again around each write;
+  retirement resolves the companion without proving it and no longer freezes Git configuration
+  files. `--synthetic-home` and its visibility receipts are gone. PRIVATE publication stays
+  enforced by commit-time hooks and CI; the fleet DATA-boundary audit still checks visibility.
 
 ### Fixed
 - Reject oversized Windows retirement plans before approval: at most 10,000 file

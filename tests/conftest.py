@@ -54,7 +54,7 @@ def local_kit_transports(monkeypatch, local_kits):
 
 @pytest.fixture
 def private_output(tmp_path, monkeypatch):
-    """Exercise writer proofs on generated native Git without network or SSH execution."""
+    """Exercise writers and the fleet audit on generated native Git without network or SSH execution."""
     import importlib.util
     root = Path(__file__).resolve().parents[1]
     scripts = root / "skills/skill-smith/scripts"
@@ -78,11 +78,10 @@ def private_output(tmp_path, monkeypatch):
         return module
 
     fleet, trim = load("fleet_check"), load("trim_descriptions")
-    boundary = fleet._private_output_boundary()
+    boundary = fleet._data_boundary()
     ssh = [str(value["home"] / ".ssh/config"), str(tmp_path / "ssh_config")]
     monkeypatch.setattr(boundary, "_ssh_config_sources", lambda: {"paths": ssh, "chains": [ssh]})
-    value["boundary_loader"] = fleet._private_output_boundary
-    monkeypatch.setattr(fleet, "_private_output_boundary", lambda: boundary)
+    monkeypatch.setattr(fleet, "_data_boundary", lambda: boundary)
     monkeypatch.setattr(trim, "_storage_module", lambda: fleet)
     native = subprocess.run
 

@@ -59,11 +59,11 @@ def run(args, env=None, cwd=None, timeout=30):
                           encoding="utf-8", errors="replace", timeout=timeout, env=env, cwd=cwd)
 
 
-def synthetic_environment(scratch, environment, selected, home=None):
+def synthetic_environment(scratch, environment, selected):
     # Preserve platform executables, never inherit credentials, aliases or user config.
     allowed = {"PATH", "PATHEXT", "SYSTEMROOT", "WINDIR", "COMSPEC"}
     env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
-    home = Path(home) if home else Path(scratch) / "home"
+    home = Path(scratch) / "home"
     home.mkdir(exist_ok=True)
     env.update(HOME=str(home), USERPROFILE=str(home), APPDATA=str(home / "appdata"),
                LOCALAPPDATA=str(home / "local"), XDG_CONFIG_HOME=str(home / "config"),
@@ -190,9 +190,9 @@ def secret_check(root):
     return not problems, "; ".join(problems)
 
 
-def prepared_inputs(root, synthetic_root, template_a, template_b, synthetic_home, config_a, config_b):
+def prepared_inputs(root, synthetic_root, template_a, template_b, config_a, config_b):
     """Admit explicit fixture directories without creating or approving their Git repositories."""
-    supplied = [path for path in (template_a, template_b, synthetic_home, config_a, config_b) if path]
+    supplied = [path for path in (template_a, template_b, config_a, config_b) if path]
     if not supplied:
         return
     if not synthetic_root or bool(template_a) != bool(template_b) or bool(config_a) != bool(config_b):
@@ -210,22 +210,20 @@ def prepared_inputs(root, synthetic_root, template_a, template_b, synthetic_home
     for path in (template_a, template_b):
         if path and (not (Path(path) / ".git").is_dir() or tree_snapshot(path)):
             raise ValueError("prepared template roots need ordinary Git administration and no working files")
-    if synthetic_home:
-        tree_snapshot(synthetic_home)
 
 
 def run_lifecycle(root, settings, initializer, doctor, results, config_a, config_b, synthetic_root,
-                  *, template_a=None, template_b=None, synthetic_home=None, subprocess_timeout=30):
+                  *, template_a=None, template_b=None, subprocess_timeout=30):
     scratch = tempfile.mkdtemp(prefix="cfgconf_")
     try:
         if type(subprocess_timeout) is not int or not 1 <= subprocess_timeout <= 300:
             raise ValueError("synthetic subprocess timeout must be between 1 and 300 seconds")
-        prepared_inputs(root, synthetic_root, template_a, template_b, synthetic_home, config_a, config_b)
+        prepared_inputs(root, synthetic_root, template_a, template_b, config_a, config_b)
         a = Path(template_a) if template_a else Path(scratch) / "A"
         b = Path(template_b) if template_b else Path(scratch) / "B"
 
         def execute(args, selected):
-            environment = synthetic_environment(scratch, settings["environment"], selected, synthetic_home)
+            environment = synthetic_environment(scratch, settings["environment"], selected)
             return run(args, env=environment, cwd=root, timeout=subprocess_timeout)
 
         templates, generated = [], True
@@ -280,7 +278,7 @@ def run_lifecycle(root, settings, initializer, doctor, results, config_a, config
 
 
 def check_config(root, no_run, config_a=None, config_b=None, *, run_synthetic=False, synthetic_root=None,
-                 template_a=None, template_b=None, synthetic_home=None, subprocess_timeout=30):
+                 template_a=None, template_b=None, subprocess_timeout=30):
     print("Configuration gate (G8): " + str(root))
     results = {number: (FAIL, "applicability UNKNOWN") for number in range(1, 9)}
     try:
@@ -356,7 +354,7 @@ def check_config(root, no_run, config_a=None, config_b=None, *, run_synthetic=Fa
     if run_synthetic and not no_run:
         if initializer and doctor and all(results[number][0] == PASS for number in (1, 2)):
             run_lifecycle(root, settings, initializer, doctor, results, config_a, config_b, synthetic_root,
-                          template_a=template_a, template_b=template_b, synthetic_home=synthetic_home,
+                          template_a=template_a, template_b=template_b,
                           subprocess_timeout=subprocess_timeout)
         else:
             results[4] = results[5] = (NOT_RUN, "native lifecycle/schema/discovery prerequisites failed")
@@ -364,7 +362,7 @@ def check_config(root, no_run, config_a=None, config_b=None, *, run_synthetic=Fa
 
 
 def main(root, no_run, config_a=None, config_b=None, *, run_synthetic=False, synthetic_root=None,
-         template_a=None, template_b=None, synthetic_home=None, subprocess_timeout=30):
+         template_a=None, template_b=None, subprocess_timeout=30):
     root = os.path.abspath(os.path.expanduser(root))
     try:
         if not stat.S_ISDIR(path_mode(root)):
@@ -372,7 +370,7 @@ def main(root, no_run, config_a=None, config_b=None, *, run_synthetic=False, syn
         os.listdir(root)
         return check_config(root, no_run, config_a, config_b,
                             run_synthetic=run_synthetic, synthetic_root=synthetic_root,
-                            template_a=template_a, template_b=template_b, synthetic_home=synthetic_home,
+                            template_a=template_a, template_b=template_b,
                             subprocess_timeout=subprocess_timeout)
     except (OSError, UnicodeError, ValueError) as exc:
         print("FAIL: G8 target could not be inspected (%s); applicability is UNKNOWN." % type(exc).__name__)
@@ -390,10 +388,9 @@ if __name__ == "__main__":
     ap.add_argument("--synthetic-root", help="reviewed generated fixture directory containing both selected config roots")
     ap.add_argument("--template-a", help="prepared synthetic Git companion with no working files, for first initialization")
     ap.add_argument("--template-b", help="second independent prepared synthetic Git companion")
-    ap.add_argument("--synthetic-home", help="generated HOME under --synthetic-root, including synthetic visibility receipts")
     ap.add_argument("--subprocess-timeout", type=int, default=30, help="native synthetic command timeout, 1 to 300 seconds (default 30)")
     a = ap.parse_args()
     sys.exit(main(a.repo, a.no_run, a.config_a, a.config_b,
                   run_synthetic=a.run_synthetic, synthetic_root=a.synthetic_root,
-                  template_a=a.template_a, template_b=a.template_b, synthetic_home=a.synthetic_home,
+                  template_a=a.template_a, template_b=a.template_b,
                   subprocess_timeout=a.subprocess_timeout))

@@ -95,14 +95,12 @@ python scripts/check_config_conformance.py TOOL_REPO --no-run
 python scripts/check_config_conformance.py TOOL_REPO --run-synthetic --config-a SYNTHETIC_ROOT/A --config-b SYNTHETIC_ROOT/B --synthetic-root SYNTHETIC_ROOT
 ```
 
-Native initializers that require PRIVATE versioned storage also receive `--template-a` and
+Native initializers that require versioned storage also receive `--template-a` and
 `--template-b`, naming two prepared ordinary Git repositories with committed empty histories and
-no working files, plus `--synthetic-home` containing generated visibility receipts. All five
-directories, including the configured A/B roots, must be distinct, nonoverlapping children of
-`--synthetic-root` and separate from the source. Generate these repositories and receipts with the
-reviewed test fixture recipe; the checker does not initialize Git, approve visibility, or relax
-native write admission. PUBLIC and UNKNOWN controls must remain refused. Fixture HOME is retained
-for native visibility discovery while inherited global Git configuration stays disabled.
+no working files. All four directories, including the configured A/B roots, must be distinct,
+nonoverlapping children of `--synthetic-root` and separate from the source. Generate these
+repositories with the reviewed test fixture recipe; the checker does not initialize Git. Inherited
+global Git configuration stays disabled.
 
 The default and `--no-run` execute no initializer or doctor. Static E1/E2/E6/E7/E8 results check
 declarations, referenced files and representative ignore behavior, not semantic completeness or
@@ -159,9 +157,9 @@ Declare core structured runtime records plus the minimum necessary configuration
 instructions and final deliverables. A PRIVATE repository does not make development history,
 intermediate reports or obsolete snapshots necessary to retain.
 
-Before each write, use the pinned Guards `authorize_artifact_write` API with the expected
-artifact id. It separately proves PRIVATE versioned storage, exact ownership, permitted producer
-and current ignore behavior. Undeclared or retired artifacts must not be written. Existing undeclared paths require review and are not
+Write only declared, non-retired artifacts, into the companion and outside the source tree.
+Writers do not prove PRIVATE publication at runtime; commit-time hooks and CI enforce it, and
+`storage_contract.py check` reports undeclared paths. Undeclared or retired artifacts must not be written. Existing undeclared paths require review and are not
 deleted by default. A retention class does not itself authorize deletion: verify that producers,
 consumers and active recovery needs permit retirement before applying a reviewed removal plan.
 The scaffold contract covers the generated configuration skeleton, per-tool templates and minimal

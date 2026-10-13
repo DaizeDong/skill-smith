@@ -25,14 +25,6 @@ def layout(private_output):
     return private_output
 
 
-@pytest.mark.parametrize("index", range(5))
-def test_non_github_identity_never_borrows_private_visibility(layout, monkeypatch, index):
-    fc = layout["fleet"]
-    layout["git"](layout["private"], "remote", "set-url", "origin", layout["bad_origins"][index])
-    with pytest.raises(ValueError, match="PRIVATE"):
-        fc.resolve_status_path(str(layout["data"] / "report.json"), str(layout["visibility"]))
-
-
 def test_verified_github_and_explicit_ssh_alias_remain_supported(layout):
     fc = module("fleet_check")
     assert fc.slug_from_url(layout["origin"]) == layout["slug"]
@@ -94,13 +86,9 @@ def test_budget_preserves_unresolved_coverage_and_known_failure(layout, monkeypa
     assert check.count(fc.UNKNOWN) >= 1
 
 
-@pytest.mark.parametrize("kind", ["PUBLIC", "UNKNOWN", "unversioned"])
-def test_trim_scan_requires_private_versioned_output(layout, monkeypatch, kind):
+def test_trim_scan_requires_versioned_output(layout, monkeypatch):
     trim = layout["trim"]
-    states = json.loads(layout["visibility"].read_text(encoding="utf-8"))
-    states[layout["slug"]] = kind
-    layout["visibility"].write_text(json.dumps(states), encoding="utf-8")
-    target = (layout["home"] if kind == "unversioned" else layout["data"]) / "worklist.json"
+    target = layout["home"] / "worklist.json"
     monkeypatch.setattr(sys, "argv", ["trim", "--scan", "--skills-dir", str(layout["library"]), "--out", str(target)])
     assert trim.main() != 0
     assert not target.exists()
@@ -121,9 +109,8 @@ def test_status_refuses_hardlinked_write_target(layout, monkeypatch):
     original.write_text("synthetic\n", encoding="utf-8")
     linked = layout["data"] / "report.json"
     os.link(original, linked)
-    oracle = SimpleNamespace(visibility=lambda *a: ("PRIVATE", "synthetic"))
     with pytest.raises(ValueError, match="hardlink|alias"):
-        fc.resolve_status_path(str(linked), "unused", oracle=oracle)
+        fc.resolve_status_path(str(linked))
 
 
 def private_storage(layout, monkeypatch):
@@ -182,13 +169,3 @@ def test_github_queries_ignore_inherited_other_host(layout, monkeypatch):
     assert fc.run(["gh", "repo", "view", layout["slug"], "--json", "visibility"])[0] == 0
     assert seen[0]["GH_HOST"] == "github.com"
 
-
-def test_existing_backup_directory_uses_its_own_repository_identity(layout, monkeypatch):
-    fc, trim = private_storage(layout, monkeypatch)
-    nested = layout["data"] / "description-backups"
-    nested.mkdir()
-    layout["git"](nested, "init", "-q")
-    public_origin = layout["git"](layout["public"], "remote", "get-url", "origin").stdout.strip()
-    layout["git"](nested, "remote", "add", "origin", public_origin)
-    with pytest.raises(ValueError, match="PRIVATE"):
-        fc.resolve_status_path(str(nested), str(layout["visibility"]), directory=True)

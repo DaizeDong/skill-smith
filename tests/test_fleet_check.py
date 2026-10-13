@@ -274,7 +274,7 @@ def _companion(tmp_path, name, origin):
 
 @pytest.fixture
 def private_boundary(private_output, monkeypatch):
-    monkeypatch.setattr(fc, "_private_output_boundary", private_output["fleet"]._private_output_boundary)
+    monkeypatch.setattr(fc, "_data_boundary", private_output["fleet"]._data_boundary)
 
 
 def test_data_dir_inside_a_public_repo_fails(tmp_path, monkeypatch, private_boundary):

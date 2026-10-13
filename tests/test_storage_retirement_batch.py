@@ -1,10 +1,9 @@
 """Exercise bounded batch retirement using generated data and real native deletion.
 
-Native tests stub the external PRIVATE attestation and its control-file list;
-plans, hashes, path boundaries and Windows Remove-Item remain real. Pure path
-planning tests separately substitute bounded snapshot metadata. Timing evidence
-describes this synthetic workload and has no machine-speed gate. Control-source
-discovery separately exercises actual Git and the production discovery API.
+Plans, hashes, path boundaries, the frozen source contract and Windows
+Remove-Item are real. Pure path planning tests separately substitute bounded
+snapshot metadata. Timing evidence describes this synthetic workload and has no
+machine-speed gate.
 """
 import hashlib
 import json
@@ -13,7 +12,6 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from types import SimpleNamespace
 
 import pytest
 
@@ -23,32 +21,9 @@ sys.path.insert(0, str(ROOT / "tools"))
 import storage_contract as storage
 from make_fixtures import storage_contract_fixture, write_json
 
-REAL_CONTROL_FILES = storage._control_files
-REAL_LOAD_GUARD = storage.load_guard
-
-
 @pytest.fixture
-def batch_layout(tmp_path, monkeypatch):
+def batch_layout(tmp_path):
     value = storage_contract_fixture(tmp_path)
-    environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
-    environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
-    subprocess.run(["git", "-C", str(value["companion"]), "init", "-q"],
-                   env=environment, check=True, capture_output=True)
-    original = storage.load_guard
-
-    class PrivateBoundary:
-        def prove_private_companion(self, root):
-            assert Path(root).resolve() == value["companion"].resolve()
-            return SimpleNamespace(root=root, repositories=("example/synthetic-config",))
-
-    def load_guard(repo, name):
-        return PrivateBoundary() if name == "data_boundary" else original(repo, name)
-
-    monkeypatch.setattr(storage, "load_guard", load_guard)
-    # The synthetic external proof has no provider authentication context. These
-    # are real fixture control files; their hashes and native freeze locks run.
-    monkeypatch.setattr(storage, "_control_files", lambda repo, root, proof:
-                        [Path(repo) / storage.CONTRACT, Path(root) / ".git/config"], raising=False)
     value["temporary_root"] = tmp_path
     return value
 
@@ -178,7 +153,7 @@ def test_paths_file_rejects_casefold_duplicates(batch_layout, tmp_path, capsys):
 
 @pytest.mark.native
 @pytest.mark.skipif(os.name != "nt", reason="Measures the Windows native batch-removal path")
-def test_thousand_files_use_two_proofs_and_one_native_process(batch_layout, monkeypatch):
+def test_thousand_files_use_one_plan_check_and_one_native_process(batch_layout, monkeypatch):
     paths = generated_leaves(batch_layout, ("telemetry-%05d.json" % index for index in range(1000)))
     start = time.perf_counter()
     assert not legacy_pairwise_overlap(paths)
@@ -187,10 +162,10 @@ def test_thousand_files_use_two_proofs_and_one_native_process(batch_layout, monk
     plan_path, digest, plan = approved_plan(batch_layout, paths)
     planning_seconds = time.perf_counter() - start
     original_plan, original_run = storage.create_plan, storage.subprocess.run
-    calls = {"proofs": 0, "powershell": 0}
+    calls = {"plans": 0, "powershell": 0}
 
     def counted_plan(*args, **kwargs):
-        calls["proofs"] += 1
+        calls["plans"] += 1
         return original_plan(*args, **kwargs)
 
     def counted_run(args, **kwargs):
@@ -203,7 +178,7 @@ def test_thousand_files_use_two_proofs_and_one_native_process(batch_layout, monk
     start = time.perf_counter()
     result = storage.apply_plan(batch_layout["repo"], batch_layout["companion"], plan_path, digest)
     apply_seconds = time.perf_counter() - start
-    assert 1 <= calls["proofs"] <= 2
+    assert calls["plans"] == 1
     assert calls["powershell"] == 1
     assert result["removed"] == [item["path"] for item in plan["items"]]
     assert result["bytes"] == len(paths) * len(batch_layout["sentinel"])
@@ -215,7 +190,7 @@ def test_thousand_files_use_two_proofs_and_one_native_process(batch_layout, monk
                 "approved_plan_bytes": plan_path.stat().st_size,
                 "legacy_pairwise_overlap_seconds": legacy_seconds,
                 "current_full_plan_seconds": planning_seconds,
-                "native_apply_seconds": apply_seconds, "full_proofs_during_apply": calls["proofs"],
+                "native_apply_seconds": apply_seconds, "plan_checks_during_apply": calls["plans"],
                 "powershell_invocations": calls["powershell"]}
     write_json(batch_layout["temporary_root"] / "native-batch-performance.json", evidence)
     print(json.dumps(evidence, sort_keys=True))
@@ -297,24 +272,20 @@ def test_late_leaf_or_parent_change_fails_closed_with_exact_partial_result(batch
 
 
 @pytest.mark.native
-@pytest.mark.skipif(os.name != "nt", reason="Exercises Windows contract and Git-config freeze locks")
-@pytest.mark.parametrize("control", ["contract", "private_git_config"])
-def test_control_file_is_frozen_or_change_stops_all_removals(batch_layout, monkeypatch, control):
+@pytest.mark.skipif(os.name != "nt", reason="Exercises the Windows contract freeze lock")
+def test_contract_is_frozen_or_change_stops_all_removals(batch_layout, monkeypatch):
     paths = generated_leaves(batch_layout, ["a.json", "z.json"])
     plan_path, digest, _ = approved_plan(batch_layout, paths)
     root = batch_layout["companion"]
-    target = batch_layout["repo"] / storage.CONTRACT if control == "contract" else root / ".git/config"
+    target = batch_layout["repo"] / storage.CONTRACT
     before = target.read_bytes()
     observed = {"blocked": False}
 
     def mutate():
         try:
-            if control == "contract":
-                contract = json.loads(before)
-                contract["artifacts"][1]["purpose"] = "Synthetic changed consumer after review"
-                write_json(target, contract)
-            else:
-                target.write_bytes(before + b"\n# Synthetic private configuration changed after review\n")
+            contract = json.loads(before)
+            contract["artifacts"][1]["purpose"] = "Synthetic changed consumer after review"
+            write_json(target, contract)
         except PermissionError:
             observed["blocked"] = True
             assert target.read_bytes() == before
@@ -358,228 +329,6 @@ def test_selected_activity_marker_cannot_enter_an_approved_batch(batch_layout, m
     with pytest.raises(ValueError, match="active|marker"):
         approved_plan(batch_layout, paths)
     assert (batch_layout["companion"] / paths[0]).read_bytes() == batch_layout["sentinel"]
-
-
-@pytest.mark.native
-def test_real_git_control_discovery_includes_existing_and_absent_configuration(batch_layout):
-    root = batch_layout["companion"]
-    home = batch_layout["temporary_root"] / "synthetic-home"
-    home.mkdir()
-    profile = batch_layout["temporary_root"] / "synthetic-profile"
-    profile.mkdir()
-    global_config = home / ".gitconfig"
-    existing_include = home / "existing.inc"
-    absent_include = home / "absent-parent/deeper/missing.inc"
-    absent_home_include = home / "tilde-absent/deeper/missing.inc"
-    absent_system = home / "absent-system/gitconfig"
-    existing_include.write_text("[core]\n\tautocrlf = false\n", encoding="utf-8")
-    global_config.write_text("[include]\n\tpath = existing.inc\n"
-                             "\tpath = absent-parent/deeper/missing.inc\n"
-                             "\tpath = ~/tilde-absent/deeper/missing.inc\n", encoding="utf-8")
-    visibility = home / ".pii-guard/visibility.json"
-    write_json(visibility, {"example/synthetic-config": {"visibility": "PRIVATE"}})
-    environment = {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
-    environment.update(HOME=str(home), USERPROFILE=str(profile), GIT_DIR=str(root / ".git"),
-                       GIT_WORK_TREE=str(root), GIT_CONFIG_GLOBAL=str(global_config),
-                       GIT_CONFIG_SYSTEM=str(absent_system))
-    proof = SimpleNamespace(root=root, repositories=("example/synthetic-config",),
-                            _context=(root, environment, dict(environment)))
-
-    discovered = {path.resolve() for path in REAL_CONTROL_FILES(batch_layout["repo"], root, proof)}
-
-    expected = {root / ".git/config", batch_layout["repo"] / storage.CONTRACT,
-                global_config, existing_include, absent_include, absent_home_include, absent_system}
-    assert {path.resolve() for path in expected} <= discovered
-    assert visibility.resolve() not in discovered
-    assert not any(path.is_relative_to(profile.resolve()) for path in discovered)
-    assert all(path.is_relative_to(batch_layout["temporary_root"].resolve()) for path in discovered)
-    assert all(not path.parent.exists() for path in (absent_include, absent_home_include, absent_system))
-
-
-@pytest.fixture
-def controlled_git_layout(batch_layout, monkeypatch):
-    """Use Guards' real physical/effective Git contexts without external attestation."""
-    root = batch_layout["companion"]
-    home = batch_layout["temporary_root"] / "controlled-home"
-    home.mkdir()
-    global_config, system_config = home / ".gitconfig", home / "system.config"
-    included = home / "included.config"
-    included.write_text("[core]\n\tautocrlf = false\n", encoding="utf-8")
-    global_config.write_text("[include]\n\tpath = included.config\n", encoding="utf-8")
-    system_config.write_text("[core]\n\tlongpaths = true\n", encoding="utf-8")
-    for key in list(os.environ):
-        if key.upper().startswith("GIT_"):
-            monkeypatch.delenv(key)
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(global_config))
-    monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(system_config))
-    guard = REAL_LOAD_GUARD(batch_layout["repo"], "data_boundary")
-    context = guard._companion_git_context(str(root))
-    proof = SimpleNamespace(root=root, repositories=("example/synthetic-config",), _context=context)
-    return {**batch_layout, "proof": proof, "global": global_config,
-            "system": system_config, "included": included}
-
-
-@pytest.mark.native
-def test_guards_physical_context_keeps_effective_configuration_controls(controlled_git_layout):
-    layout = controlled_git_layout
-    root, proof = layout["companion"], layout["proof"]
-    physical = proof._context[1]
-    assert physical["GIT_CONFIG_NOSYSTEM"] == "1"
-    assert physical["GIT_CONFIG_GLOBAL"] == physical["GIT_CONFIG_SYSTEM"] == os.devnull
-    query = subprocess.run(["git", "var", "GIT_CONFIG_SYSTEM"], cwd=root,
-                           env=physical, capture_output=True)
-    assert (query.returncode, query.stdout, query.stderr) == (1, b"", b"")
-
-    discovered = {path.resolve() for path in REAL_CONTROL_FILES(layout["repo"], root, proof)}
-
-    expected = {layout["global"], layout["system"], layout["included"],
-                layout["repo"] / storage.CONTRACT, root / ".git/config"}
-    assert {path.resolve() for path in expected} <= discovered
-    assert all(path.is_relative_to(layout["temporary_root"].resolve()) for path in discovered)
-
-
-@pytest.mark.native
-@pytest.mark.parametrize("variable,value,disabled", [
-    ("GIT_CONFIG_NOSYSTEM", "true", "system"),
-    ("GIT_CONFIG_NOSYSTEM", "0", None),
-    ("GIT_CONFIG_GLOBAL", "", "global"),
-    ("GIT_CONFIG_SYSTEM", "", "system"),
-])
-def test_explicit_config_disabling_uses_real_git_semantics(controlled_git_layout, variable, value, disabled):
-    layout = controlled_git_layout
-    root = layout["companion"]
-    environment = dict(layout["proof"]._context[2])
-    environment[variable] = value
-    proof = SimpleNamespace(_context=(root, environment, dict(environment)))
-
-    discovered = {path.resolve() for path in REAL_CONTROL_FILES(layout["repo"], root, proof)}
-
-    for control in ("global", "system"):
-        assert (layout[control].resolve() in discovered) == (control != disabled)
-    assert (layout["included"].resolve() in discovered) == (disabled != "global")
-    assert (root / ".git/config").resolve() in discovered
-    assert (layout["repo"] / storage.CONTRACT).resolve() in discovered
-
-
-@pytest.mark.native
-def test_malformed_effective_git_config_is_not_treated_as_disabled(controlled_git_layout):
-    layout = controlled_git_layout
-    layout["global"].write_text("[synthetic broken configuration\n", encoding="utf-8")
-    with pytest.raises(subprocess.CalledProcessError) as caught:
-        REAL_CONTROL_FILES(layout["repo"], layout["companion"], layout["proof"])
-    assert caught.value.returncode == 128
-    assert caught.value.cmd[:2] == ["git", "config"]
-
-
-@pytest.mark.parametrize("variable,disabled,returncode,stdout,stderr", [
-    ("GIT_CONFIG_SYSTEM", False, 1, b"", b""),
-    ("GIT_CONFIG_GLOBAL", False, 1, b"", b""),
-    ("GIT_CONFIG_SYSTEM", True, 1, b"unexpected", b""),
-    ("GIT_CONFIG_SYSTEM", True, 1, b"", b"synthetic failure"),
-    ("GIT_CONFIG_SYSTEM", True, 128, b"", b""),
-    ("GIT_CONFIG_GLOBAL", True, 129, b"", b"unsupported variable"),
-])
-def test_git_location_errors_are_not_silently_omitted(controlled_git_layout, monkeypatch,
-                                                     variable, disabled, returncode, stdout, stderr):
-    layout = controlled_git_layout
-    root = layout["companion"]
-    environment = dict(layout["proof"]._context[2])
-    if variable == "GIT_CONFIG_SYSTEM":
-        environment["GIT_CONFIG_NOSYSTEM"] = "1" if disabled else "0"
-    elif disabled:
-        environment[variable] = ""
-    proof = SimpleNamespace(_context=(root, environment, dict(environment)))
-    original_run = storage.subprocess.run
-
-    def failed_query(args, **kwargs):
-        if args == ["git", "var", variable]:
-            result = subprocess.CompletedProcess(args, returncode, stdout=stdout, stderr=stderr)
-            if kwargs.get("check"):
-                result.check_returncode()
-            return result
-        return original_run(args, **kwargs)
-
-    monkeypatch.setattr(storage.subprocess, "run", failed_query)
-    with pytest.raises(subprocess.CalledProcessError) as caught:
-        REAL_CONTROL_FILES(layout["repo"], root, proof)
-    assert caught.value.cmd == ["git", "var", variable]
-    assert caught.value.returncode == returncode
-
-
-@pytest.mark.native
-@pytest.mark.skipif(os.name != "nt", reason="Exercises native missing-control guards")
-@pytest.mark.parametrize("appears", [False, True])
-def test_missing_control_with_absent_parents_is_preserved_or_blocks_batch(batch_layout, monkeypatch, appears):
-    paths = generated_leaves(batch_layout, ["a.json", "z.json"])
-    plan_path, digest, _ = approved_plan(batch_layout, paths)
-    missing = batch_layout["temporary_root"] / "absent-parent/deeper/private.inc"
-    assert not missing.parent.exists()
-    monkeypatch.setattr(storage, "_control_files", lambda repo, root, proof:
-                        [Path(repo) / storage.CONTRACT, missing])
-
-    if appears:
-        def mutate():
-            missing.parent.mkdir(parents=True)
-            missing.write_bytes(batch_layout["sentinel"])
-
-        changed_before_native(batch_layout, monkeypatch, mutate)
-        with pytest.raises(storage.RetirementApplyError) as caught:
-            storage.apply_plan(batch_layout["repo"], batch_layout["companion"], plan_path, digest)
-        assert caught.value.result["removed"] == []
-        assert caught.value.result["ok"] is False
-        assert all((batch_layout["companion"] / path).is_file() for path in paths)
-        assert missing.read_bytes() == batch_layout["sentinel"]
-    else:
-        result = storage.apply_plan(batch_layout["repo"], batch_layout["companion"], plan_path, digest)
-        assert result["removed"] == paths
-        assert all(not (batch_layout["companion"] / path).exists() for path in paths)
-        assert not missing.parent.exists()
-
-
-@pytest.mark.native
-@pytest.mark.skipif(os.name != "nt", reason="Exercises final context proof after native partial failure")
-def test_final_private_proof_runs_after_partial_failure_without_losing_original_receipts(batch_layout, monkeypatch):
-    paths = generated_leaves(batch_layout, ["a.json", "z.json"])
-    plan_path, digest, _ = approved_plan(batch_layout, paths)
-    root = batch_layout["companion"]
-    victim = root / paths[0]
-    original_remove, original_prove = storage.remove_exact, storage.prove_companion
-    state = {"native_done": False, "final_proofs": 0, "native_failure": None}
-
-    def changed_remove(root, rows, *args, **kwargs):
-        before = victim.stat()
-        victim.write_bytes(batch_layout["sentinel"][::-1])
-        os.utime(victim, ns=(before.st_atime_ns, before.st_mtime_ns))
-        try:
-            return original_remove(root, rows, *args, **kwargs)
-        except storage.RetirementApplyError as exc:
-            state["native_failure"] = dict(exc.result)
-            raise
-        finally:
-            state["native_done"] = True
-
-    def changed_proof(*args, **kwargs):
-        if state["native_done"]:
-            state["final_proofs"] += 1
-            raise ValueError("Synthetic PUBLIC destination discovered after native failure")
-        return original_prove(*args, **kwargs)
-
-    monkeypatch.setattr(storage, "remove_exact", changed_remove)
-    monkeypatch.setattr(storage, "prove_companion", changed_proof)
-    with pytest.raises(storage.RetirementApplyError) as caught:
-        storage.apply_plan(batch_layout["repo"], root, plan_path, digest)
-
-    result = caught.value.result
-    assert state["final_proofs"] == 1 and state["native_failure"] is not None
-    assert result["removed"] == state["native_failure"]["removed"] == [paths[1]]
-    assert result["failed_path"] == state["native_failure"]["failed_path"] == paths[0]
-    assert result["error"] == state["native_failure"]["error"]
-    assert "Synthetic PUBLIC" in result["final_context_error"]
-    assert result["removed_count"] == 1
-    assert victim.read_bytes() == batch_layout["sentinel"][::-1]
-    assert not (root / paths[1]).exists()
 
 
 @pytest.mark.native

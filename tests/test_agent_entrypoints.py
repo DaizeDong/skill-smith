@@ -208,7 +208,7 @@ def test_enforceable_requirements_run_only_on_sandboxed_rungs(tmp_path, requeste
     options = stub.calls[0][1]
     assert options["chain"] == ["codexg", "codex"] and options["mode"] == mode
     assert {k: options[k] for k in extra} == extra
-    # llmcall no longer takes mcp_isolation; passing it would be a TypeError at call time.
+    # llmcall has no mcp_isolation option; passing one raises TypeError at call time.
     assert "mcp_isolation" not in options
 
 

@@ -220,23 +220,11 @@ $encoding = New-Object System.Text.UTF8Encoding($false)
     return root
 
 
-def private_config_lifecycle(root, *, visibility="PRIVATE"):
-    """Generate native Guards-admitted config fixtures without live credentials or Git config."""
-    from datetime import datetime, timezone
+def private_config_lifecycle(root):
+    """Generate config fixtures with prepared Git companions, without live credentials or Git config."""
     root = Path(root)
     source = config_lifecycle(root / "source", doctor_mode="json")
-    guard = Path(__file__).resolve().parents[1] / "guards/tools/storage_contract.py"
-    initializer = source / "scripts/init_config.py"
-    script = initializer.read_text(encoding="utf-8")
-    admission = ("import importlib.util\n"
-                 "spec = importlib.util.spec_from_file_location('native_storage', %r)\n"
-                 "storage = importlib.util.module_from_spec(spec)\n"
-                 "spec.loader.exec_module(storage)\n"
-                 "storage.authorize_artifact_write(%r, root, 'registry.json', artifact_id='settings')\n"
-                 % (str(guard), str(source)))
-    initializer.write_text(script.replace("root.mkdir", admission + "root.mkdir"), encoding="utf-8")
-    home = root / "home"
-    roots, states = {}, {"_refreshed": datetime.now(timezone.utc).isoformat()}
+    roots = {}
     for label in ("template-a", "template-b", "configured-a", "configured-b"):
         target = root / label
         target.mkdir(parents=True)
@@ -245,15 +233,13 @@ def private_config_lifecycle(root, *, visibility="PRIVATE"):
         subprocess.run(["git", "-C", str(target), "remote", "add", "origin",
                         "https://github.com/" + slug + ".git"], check=True, capture_output=True)
         synthetic_git_commit(target)
-        states[slug] = visibility
         roots[label] = target
         if label.startswith("configured"):
             resource = root / (label + "-resource")
             resource.mkdir()
             (resource / "source.txt").write_text("Synthetic " + label + "\n", encoding="utf-8")
             write_json(target / "registry.json", {"schema_version": 1, "required_root": str(resource)})
-    write_json(home / ".pii-guard/visibility.json", states)
-    return {"source": source, "home": home, **roots}
+    return {"source": source, **roots}
 
 
 def storage_contract_document():
@@ -711,9 +697,9 @@ def fleet_alias_fixture(root, source_root):
         subprocess.Popen = no_subprocess
         fleet = runpy.run_path(sys.argv[1], run_name="fleet_alias_probe")
         destination = fleet["default_data_path"]("synthetic-status.json")
-        boundary = fleet["_private_output_boundary"]()
+        boundary = fleet["_data_boundary"]()
         try:
-            fleet["resolve_status_path"](sys.argv[2], None)
+            fleet["resolve_status_path"](sys.argv[2])
         except ValueError as exc:
             refusal = str(exc)
         else:
@@ -790,7 +776,7 @@ def storage_review_fixture(root):
 
 
 def output_proof_fixture(root):
-    """Generate real Git worktrees and fresh synthetic visibility for writer controls."""
+    """Generate real Git worktrees and fresh synthetic visibility for writers and the fleet audit."""
     from datetime import datetime, timezone
     layout = storage_review_fixture(root)
     private = layout["data"].parent
@@ -816,10 +802,8 @@ def output_proof_fixture(root):
             "consumer": consumer,
             "ssh_origin": "git@github.com:AcmeCorp/skill-smith-config.git",
             "ssh_override": "ssh -o HostName=example.com",
-            "changed_signature": "synthetic-changed-configuration",
             "replacement": "Summarize synthetic records.",
-            "counts": {key: 0 for key in ("pass", "fail", "warn", "skip", "unknown")},
-            "incompatible_api": "def prove_private_companion(destination):\n    return None\n"}
+            "counts": {key: 0 for key in ("pass", "fail", "warn", "skip", "unknown")}}
 
 
 def synthetic_git_commit(root):
@@ -1543,31 +1527,6 @@ def review13_publication_cases():
         "helper_failure": "Synthetic publication helper failure",
     }
 
-def materialize_review13_repositories(layout):
-    """Use native Git to materialize every generated fetch and push identity."""
-    case = review13_publication_cases()
-    root = layout["private"]
-
-    def git(*args):
-        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
-
-    def url(slug):
-        return "https://github.com/" + slug + ".git"
-
-    git("remote", "set-url", "origin", url(case["fetch"]))
-    for remote, targets in case["routes"].items():
-        if remote != "origin":
-            git("remote", "add", remote, url(targets[0]))
-        for slug in targets:
-            git("config", "--add", "remote." + remote + ".pushurl", url(slug))
-    git("config", "remote.pushDefault", case["selected"])
-    states = json.loads(layout["visibility"].read_text(encoding="utf-8"))
-    identities = sorted({case["fetch"], *(slug for values in case["routes"].values() for slug in values)})
-    states.update({slug: "PRIVATE" for slug in identities})
-    write_json(layout["visibility"], states)
-    return {**case, "identities": identities}
-
-
 # Source14 author inputs: every record and Git object is synthetic.
 def review14_resolver(marker="base"):
     return ("MARKER = %r\n"
@@ -1659,37 +1618,6 @@ def review14_plugin_identity(consumer):
     path = Path(consumer) / ".claude-plugin/plugin.json"
     path.parent.mkdir()
     path.write_text('{"name":"acme-fixture"}\n', encoding="utf-8")
-
-
-def review14_visibility(slug):
-    value = ("PRIVATE" if slug == "acmecorp/synthetic-private" else
-             "PUBLIC" if slug == "acmecorp/synthetic-public" else "UNKNOWN")
-    return value, "synthetic"
-
-
-def materialize_review14_repositories(layout):
-    """Configure the native output fixture for the physical-repository regressions."""
-    states = json.loads(layout["visibility"].read_text(encoding="utf-8"))
-    for key, visibility in (("private", "PRIVATE"), ("public", "PUBLIC")):
-        slug = review14_repository_config(layout[key], visibility)
-        states[slug] = visibility
-    write_json(layout["visibility"], states)
-
-
-def review14_routing_scenarios(private, public):
-    return [
-        ("private", private, {}, True),
-        ("public", public, {}, False),
-        ("borrowed-repository", public,
-         {"GIT_DIR": str(private / ".git"), "GIT_WORK_TREE": str(private)}, False),
-        ("borrowed-url", public,
-         {"GIT_CONFIG_COUNT": "1",
-          "GIT_CONFIG_KEY_0": "url.https://github.com/AcmeCorp/synthetic-private.git.insteadOf",
-          "GIT_CONFIG_VALUE_0": "https://github.com/AcmeCorp/synthetic-public.git"}, False),
-        ("effective-public-push", private,
-         {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "remote.origin.pushurl",
-          "GIT_CONFIG_VALUE_0": "https://github.com/AcmeCorp/synthetic-public.git"}, False),
-    ]
 
 
 def review16_budget_inputs():

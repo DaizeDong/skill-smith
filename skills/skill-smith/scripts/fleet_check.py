@@ -187,7 +187,7 @@ import textwrap
 import threading
 import time
 from datetime import datetime, timezone
-from typing import NamedTuple
+from functools import lru_cache
 from urllib.parse import quote, urlsplit
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -1369,7 +1369,7 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30, oracl
         age, trouble = oracle.map_age()
         c.note += (" | the map %s" % trouble if trouble
                    else " | the map was refreshed %s ago" % human_age(age))
-    # Resolve and prove locally before the optional live visibility lookups.
+    # Resolve and audit locally before the optional live visibility lookups.
     plan = []
     for name, path in sorted(repos.items()):
         dd = os.path.join(path, "guards", "tools", "datadir.py")
@@ -1414,13 +1414,20 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30, oracl
                          "%s is unversioned; DATA requires a verified PRIVATE companion repository" % resolved))
             continue
         try:
-            _resolved, proof = inspect_private_path(
-                resolved, visibility_path, directory=True, source_root=path)
-        except ValueError as error:
+            boundary = _data_boundary()
+        except (OSError, ImportError) as error:
+            plan.append(("row", UNKNOWN, name, "cannot load the pinned PRIVATE audit: %s" % error))
+            continue
+        try:
+            proof = boundary.prove_private_companion(reject_output_aliases(resolved), visibility_map=visibility_path)
+        except (boundary.GitError, ValueError) as error:
             plan.append(("row", FAIL, name, "%s: %s; failing closed" % (resolved, error)))
             continue
-        except (OSError, ImportError, RuntimeError) as error:
-            plan.append(("row", UNKNOWN, name, "cannot load the pinned PRIVATE proof: %s" % error))
+        except (OSError, RuntimeError) as error:
+            plan.append(("row", UNKNOWN, name, "cannot run the pinned PRIVATE audit: %s" % error))
+            continue
+        if Path(path).resolve().is_relative_to(Path(proof.root).resolve()):
+            plan.append(("row", FAIL, name, "%s: the companion contains the tool repository; failing closed" % resolved))
             continue
         plan.append(("vis", name, resolved, proof))
 
@@ -1909,32 +1916,14 @@ def default_data_path(name):
     return os.path.join(directory, name)
 
 
-def _artifact_storage():
-    repo = os.path.realpath(os.path.join(HERE, "..", "..", ".."))
-    module = load_datadir(os.path.join(repo, "guards", "tools", "storage_contract.py"),
-                         "skill_smith_artifact_storage")
-    if not callable(getattr(module, "authorize_artifact_write", None)):
-        raise ImportError("Pinned guards lacks source-owned artifact write admission")
-    return module
+@lru_cache(maxsize=None)
+def _load_data_boundary(repo):
+    return load_datadir(os.path.join(repo, "guards", "tools", "data_boundary.py"), "skill_smith_data_boundary")
 
 
-def _private_output_boundary():
-    """Load the supported proof API from this consumer's pinned Guards kit."""
-    module = _artifact_storage().load_boundary()
-    error = getattr(module, "GitError", None)
-    if (not callable(getattr(module, "prove_private_companion", None))
-            or not isinstance(error, type) or not issubclass(error, Exception)):
-        raise ImportError("Pinned guards lacks the supported PRIVATE companion proof API")
-    return module
-
-
-class OutputProof(NamedTuple):
-    root: str
-    repositories: tuple
-    signature: str
-    artifact_id: str
-    contract_sha256: str
-    source_root: str
+def _data_boundary():
+    """The pinned Guards data_boundary, loaded once; only the fleet audit asks it for publication routes."""
+    return _load_data_boundary(os.path.realpath(os.path.join(HERE, "..", "..", "..")))
 
 
 def private_output_description(proof):
@@ -1942,9 +1931,12 @@ def private_output_description(proof):
     return "PRIVATE " + ", ".join(proof.repositories)
 
 
-def inspect_private_path(path, visibility_path, offline=False, oracle=None, *,
-                         default_name="fleet-check-status.json", directory=False, source_root=None):
-    """Read-only transport inspection; this does not admit any artifact write."""
+def resolve_status_path(path, *, default_name="fleet-check-status.json", directory=False, source_root=None):
+    """Check a DATA destination once, before writing: inside a versioned companion, outside the tool repo.
+
+    The companion is the nearest Git worktree above the destination. Its PRIVATE publication is
+    enforced by commit-time hooks and CI, not here.
+    """
     repo = os.path.realpath(source_root or os.path.join(HERE, "..", "..", ".."))
     path = reject_output_aliases(default_data_path(default_name) if path is None else path)
     if os.path.exists(path) and os.path.isdir(path) != directory:
@@ -1955,71 +1947,18 @@ def inspect_private_path(path, visibility_path, offline=False, oracle=None, *,
         inside_own = False
     if inside_own:
         raise ValueError("Report DATA cannot be written inside the tool repository")
-    parent = path if directory and os.path.isdir(path) else os.path.dirname(path)
-    while not os.path.isdir(parent):
-        higher = os.path.dirname(parent)
-        if higher == parent:
-            raise ValueError("Report requires an existing PRIVATE versioned companion")
-        parent = higher
-    nearest = next((node for node in (Path(parent), *Path(parent).parents)
-                    if os.path.lexists(node / ".git")), None)
+    nearest = next((node for node in (Path(path), *Path(path).parents) if os.path.lexists(node / ".git")), None)
     if nearest is None:
-        raise ValueError("Report requires a PRIVATE versioned companion, not an unversioned directory")
-    # Writer admission uses fresh shared receipts, independently of the inventory oracle.
-    boundary = _private_output_boundary()
-    try:
-        proof = boundary.prove_private_companion(parent, visibility_map=visibility_path)
-    except boundary.GitError as exc:
-        raise ValueError("Cannot prove PRIVATE DATA destination: " + str(exc)) from exc
-    root = Path(proof.root).resolve()
-    if root != nearest.resolve() or not Path(path).is_relative_to(root):
-        raise ValueError("PRIVATE proof does not identify the destination's nearest worktree")
-    if Path(repo).is_relative_to(root):
-        raise ValueError("Report DATA requires a separate PRIVATE worktree outside the tool repository")
-    return path, proof
+        raise ValueError("Report requires a versioned companion, not an unversioned directory")
+    if Path(repo).is_relative_to(nearest):
+        raise ValueError("Report DATA requires a separate companion worktree outside the tool repository")
+    return path
 
 
-def resolve_status_path(path, visibility_path, offline=False, oracle=None, *,
-                        default_name="fleet-check-status.json", directory=False, source_root=None,
-                        artifact_id="fleet-status"):
-    """Admit a concrete report/worklist/backup artifact under its source contract."""
-    repo = os.path.realpath(source_root or os.path.join(HERE, "..", "..", ".."))
-    path, inspected = inspect_private_path(path, visibility_path, offline, oracle,
-                                          default_name=default_name, directory=directory, source_root=repo)
-    root = Path(inspected.root).resolve()
-    boundary = _private_output_boundary()
-    try:
-        admitted = _artifact_storage().authorize_artifact_write(
-            repo, root, Path(path).relative_to(root).as_posix(), artifact_id=artifact_id,
-            directory=directory, visibility_map=visibility_path)
-    except boundary.GitError as exc:
-        raise ValueError("Cannot admit versioned PRIVATE DATA artifact: " + str(exc)) from exc
-    proof = admitted.proof
-    return str(admitted.path), OutputProof(proof.root, proof.repositories, proof.signature,
-                                          admitted.artifact_id, admitted.contract_sha256, repo)
-
-
-def recheck_status_path(path, proof, visibility_path=None, *, directory=False, artifact_id=None):
-    """Require the same physical publication proof immediately before a DATA write."""
-    try:
-        resolved, current = resolve_status_path(path, visibility_path, directory=directory,
-                                               artifact_id=artifact_id or proof.artifact_id,
-                                               source_root=proof.source_root)
-    except ValueError as exc:
-        raise ValueError("DATA admission changed or failed before writing: " + str(exc)) from exc
-    if ((proof.root, proof.repositories, proof.signature, proof.contract_sha256)
-            != (current.root, current.repositories, current.signature, current.contract_sha256)):
-        raise ValueError("PRIVATE DATA destination or source storage contract changed before writing")
-    return resolved
-
-
-def write_status(path, checks, tot, started_utc, elapsed, exit_code, *,
-                 proof=None, visibility_path=None):
+def write_status(path, checks, tot, started_utc, elapsed, exit_code):
+    """Write the report to a destination already checked by resolve_status_path."""
     path = reject_output_aliases(path)
     tmp = reject_output_aliases(path + ".tmp")
-    if proof is None:
-        path, proof = resolve_status_path(path, visibility_path)
-    recheck_status_path(path, proof, visibility_path)
     line, verdict = digest_line(tot)
     payload = {
         "tool": "fleet_check",
@@ -2051,12 +1990,9 @@ def write_status(path, checks, tot, started_utc, elapsed, exit_code, *,
     d = os.path.dirname(path)
     if d:
         os.makedirs(d, exist_ok=True)
-    recheck_status_path(tmp, proof, visibility_path, artifact_id="fleet-status-staging")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, sort_keys=True)
         f.write("\n")
-    recheck_status_path(path, proof, visibility_path)
-    reject_output_aliases(tmp)
     os.replace(tmp, path)
     return payload
 
@@ -2101,7 +2037,7 @@ def main(argv=None):
     oracle = VisibilityOracle(a.visibility, offline=a.offline, timeout=a.gh_timeout)
     if not a.no_status:
         try:
-            a.status_json, storage_proof = resolve_status_path(a.status_json, a.visibility, a.offline, oracle)
+            a.status_json = resolve_status_path(a.status_json)
         except (OSError, ValueError, RuntimeError, ImportError) as e:
             print("status destination rejected: %s" % e, file=sys.stderr)
             return 1
@@ -2158,9 +2094,8 @@ def main(argv=None):
 
     if not a.no_status:
         try:
-            write_status(a.status_json, checks, tot, started_utc, elapsed, exit_code,
-                         proof=storage_proof, visibility_path=a.visibility)
-            print("\nstatus: %s [%s]" % (a.status_json, private_output_description(storage_proof)))
+            write_status(a.status_json, checks, tot, started_utc, elapsed, exit_code)
+            print("\nstatus: %s" % a.status_json)
         except (OSError, ValueError, RuntimeError, ImportError) as e:
             print("\nstatus write FAILED: %s" % e, file=sys.stderr)
             # A caller that cannot see a fresh artifact must not be told everything is fine.

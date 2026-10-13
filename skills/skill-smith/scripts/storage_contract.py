@@ -35,15 +35,18 @@ def load_guard(repo, name):
     return module
 
 
-# Path ownership and admission have one source of truth in the pinned Guards kit.
+# Path ownership has one source of truth in the pinned Guards kit.
 _shared = load_guard(None, "storage_contract")
 for _name in ("CONTRACT", "FIELDS", "CLASSES", "SEPARATE", "COMBINED", "relative_path",
-              "validate_contract", "in_data_scope", "matches", "no_links", "owners",
-              "authorize_artifact_write"):
+              "validate_contract", "in_data_scope", "matches", "no_links", "owners"):
     globals()[_name] = getattr(_shared, _name)
 
 
-def prove_companion(repo, companion=None):
+def resolve_companion(repo, companion=None):
+    """The companion root, separate from the source unless the layout is combined.
+
+    Its PRIVATE publication is enforced by commit-time hooks and CI, not here.
+    """
     repo = no_links(repo).resolve()
     contract = validate_contract(repo)
     combined = contract.get("layout", SEPARATE) == COMBINED
@@ -60,12 +63,8 @@ def prove_companion(repo, companion=None):
         if root != repo:
             raise ValueError("combined_private_repo requires the same source and companion root")
     elif root == repo or root.is_relative_to(repo) or repo.is_relative_to(root):
-        raise ValueError("companion must be a separate PRIVATE worktree")
-    guard = load_guard(repo, "data_boundary")
-    proof = guard.prove_private_companion(root)
-    if Path(proof.root).resolve() != root:
-        raise ValueError("companion must name the exact proven worktree root")
-    return root, proof
+        raise ValueError("companion must be a separate worktree")
+    return root
 
 
 def inventory(root, selected=None, *, hash_files=False):
@@ -114,7 +113,7 @@ def inventory(root, selected=None, *, hash_files=False):
 
 def check_storage(repo, companion=None):
     contract = validate_contract(repo)
-    root, proof = prove_companion(repo, companion)
+    root = resolve_companion(repo, companion)
     layout = contract.get("layout", SEPARATE)
     data_roots = contract.get("data_roots", [])
     rows, errors, missing, excluded = [], [], [], []
@@ -165,7 +164,7 @@ def check_storage(repo, companion=None):
     overhead = git_overhead(root)
     return {"schema_version": 1, "mode": "dry_run", "root": str(root), "layout": layout,
             "data_roots": data_roots, "missing_data_roots": missing, "excluded_source": excluded,
-            "private_repositories": list(proof.repositories), "bytes": total,
+            "bytes": total,
             "artifact_scope_bytes": total, "worktree_bytes_excluding_git": total if layout == SEPARATE else None,
             "git_overhead": overhead,
             "artifact_bytes": totals, "undeclared": undeclared, "ambiguous": ambiguous,
@@ -259,7 +258,7 @@ def create_plan(repo, companion, paths, reason, inactive_evidence):
     if not reason.strip() or not inactive_evidence.strip():
         raise ValueError("retirement needs a reviewed reason and evidence that writers/references are inactive")
     contract = validate_contract(repo)
-    root, proof = prove_companion(repo, companion)
+    root = resolve_companion(repo, companion)
     clean = sorted(relative_path(p) for p in paths)
     if any(character in path for path in clean for character in "[]"):
         raise ValueError("retirement requires concrete paths without glob patterns")
@@ -272,10 +271,10 @@ def create_plan(repo, companion, paths, reason, inactive_evidence):
     items = [{"path": p, "snapshot": retirement_rows(contract, root, p)} for p in clean]
     if os.name == "nt":
         rows = [row for item in items for row in item["snapshot"]]
-        controls = _control_snapshots(_control_files(repo, root, proof))
+        controls = _control_snapshots(_control_files(repo))
         _native_request(root, rows, control_files=controls)
     return {"schema_version": 1, "mode": "review_required", "companion": str(root),
-            "repositories": list(proof.repositories), "contract_sha256": canonical_hash(contract),
+            "contract_sha256": canonical_hash(contract),
             "reason": reason, "inactive_evidence": inactive_evidence,
             "activity_verification": "operator assertion; unknown/active writers must not be approved",
             "items": items}
@@ -289,71 +288,9 @@ class RetirementApplyError(ValueError):
         super().__init__(result["error"])
 
 
-def _control_files(repo, root, proof):
-    """Files determining the proved Git destinations; never freeze visibility receipts."""
-    context = getattr(proof, "_context", None)
-    if not context or len(context) != 3:
-        raise ValueError("PRIVATE proof has no bound configuration context")
-
-    def config_entries(environment, arguments, *, allow_no_matches=False):
-        result = subprocess.run(["git", "config", "--show-origin", "--null", *arguments],
-                                cwd=root, env=environment, capture_output=True)
-        if result.returncode and not (allow_no_matches and result.returncode == 1
-                                      and not result.stdout and not result.stderr):
-            result.check_returncode()
-        fields = result.stdout.decode("utf-8", "strict").rstrip("\0").split("\0")
-        if fields == [""]:
-            return []
-        if len(fields) % 2:
-            raise ValueError("Git configuration origins could not be enumerated")
-        return zip(fields[::2], fields[1::2])
-
-    def origin_path(origin):
-        if not origin.startswith("file:"):
-            raise ValueError("unsupported Git configuration origin")
-        path = Path(origin[5:])
-        return path if path.is_absolute() else root / path
-
-    paths = {Path(repo) / CONTRACT, root / ".git"}
-    for environment in context[1:]:
-        admin = Path(environment["GIT_DIR"])
-        paths.update(admin / name for name in ("config", "config.worktree", "HEAD", "commondir", "gitdir"))
-        if (admin / "commondir").is_file():
-            common = no_links(admin / (admin / "commondir").read_text(encoding="utf-8").strip()).resolve()
-            paths.update(common / name for name in ("config", "config.worktree"))
-        for origin, _ in config_entries(environment, ["--list"]):
-            if origin == "command line:":
-                continue  # the proof's environment is immutable for this invocation
-            paths.add(origin_path(origin))
-        # Git expands ~/ using its own HOME and supports prefix interpolation;
-        # Python's expanduser can resolve a different path on Windows.
-        include_entries = config_entries(environment,
-            ["--type=path", "--get-regexp", r"^(include\.path|includeif\..*\.path)$"], allow_no_matches=True)
-        for origin, setting in include_entries:
-            value = setting.partition("\n")[2]
-            if not value:
-                raise ValueError("Git include path could not be enumerated")
-            include = Path(value)
-            paths.add(include if include.is_absolute() else origin_path(origin).parent / include)
-        # Ask Git for its exact system/global locations, including empty or
-        # absent files which do not occur in --show-origin output.
-        for variable in ("GIT_CONFIG_SYSTEM", "GIT_CONFIG_GLOBAL"):
-            result = subprocess.run(["git", "var", variable], cwd=root, env=environment,
-                                    capture_output=True)
-            disabled = (environment.get(variable) == "" or (
-                variable == "GIT_CONFIG_SYSTEM"
-                and environment.get("GIT_CONFIG_NOSYSTEM", "").lower() in {"1", "true", "yes", "on"}))
-            # Git reports an explicitly disabled location as no value. Unknown
-            # variables and other failures must still stop configuration discovery.
-            if result.returncode and not (disabled and result.returncode == 1
-                                          and not result.stdout and not result.stderr):
-                result.check_returncode()
-            locations = result.stdout.decode("utf-8", "strict")
-            for location in locations.splitlines():
-                if location and location.casefold() != os.devnull.casefold():
-                    path = Path(location)
-                    paths.add(path if path.is_absolute() else root / path)
-    return sorted(paths, key=str)
+def _control_files(repo):
+    """The source contract stays frozen while the native executor removes files."""
+    return [Path(repo) / CONTRACT]
 
 
 def _control_snapshots(paths):
@@ -465,7 +402,7 @@ public static class RetirementNative {
         FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
         try {
             var info = Information(stream.SafeFileHandle);
-            if (info.Links != 1 || Digest(stream) != expected) throw new IOException("Contract or PRIVATE configuration changed");
+            if (info.Links != 1 || Digest(stream) != expected) throw new IOException("Contract changed");
             return stream;
         } catch { stream.Dispose(); throw; }
     }
@@ -493,7 +430,7 @@ try {
     foreach ($control in $request.controls) {
         [RetirementNative]::Parents($control.path, [bool]$control.missing)
         if ($control.missing) {
-            if ([RetirementNative]::Exists($control.path)) { throw 'PRIVATE configuration appeared after proof' }
+            if ([RetirementNative]::Exists($control.path)) { throw 'Contract control appeared after planning' }
         } elseif ($control.directory) {
             $attributes = [IO.File]::GetAttributes($control.path)
             if (($attributes -band [IO.FileAttributes]::ReparsePoint) -or -not ($attributes -band [IO.FileAttributes]::Directory)) { throw 'Configuration directory boundary changed' }
@@ -503,7 +440,7 @@ try {
     }
     foreach ($row in $request.rows) {
         foreach ($control in $request.controls) {
-            if ($control.missing -and [RetirementNative]::Exists($control.path)) { throw 'PRIVATE configuration appeared during removal' }
+            if ($control.missing -and [RetirementNative]::Exists($control.path)) { throw 'Contract control appeared during removal' }
         }
         $target = [RetirementNative]::Target($root, $row.path)
         if ($row.type -eq 'directory') {
@@ -592,51 +529,24 @@ def apply_plan(repo, companion, plan_path, approved_sha256):
     current = create_plan(repo, companion, [i["path"] for i in plan["items"]],
                           plan.get("reason", ""), plan.get("inactive_evidence", ""))
     if current != plan:
-        raise ValueError("contract, PRIVATE identity or artifact snapshot changed; review a fresh plan")
+        raise ValueError("contract or artifact snapshot changed; review a fresh plan")
     root = Path(current["companion"])
     if os.name == "nt":
-        root_check, proof = prove_companion(repo, companion)
-        if root_check != root or list(proof.repositories) != current["repositories"]:
-            raise ValueError("PRIVATE identity changed before retirement")
-        controls = _control_snapshots(_control_files(repo, root, proof))
-        # Finish a second complete comparison before ANY deletion, then freeze the
-        # exact contract/configuration bytes inside the native executor. No proof
-        # or subprocess is repeated once per selected leaf.
-        fresh = create_plan(repo, companion, [i["path"] for i in plan["items"]],
-                            current["reason"], current["inactive_evidence"])
-        fresh_root, fresh_proof = prove_companion(repo, companion)
-        if (fresh != current or fresh_root != root or list(fresh_proof.repositories) != current["repositories"]
-                or getattr(fresh_proof, "signature", None) != getattr(proof, "signature", None)):
-            raise ValueError("retirement contract or PRIVATE identity changed before deletion")
         rows = [row for item in current["items"] for row in item["snapshot"]]
-        failure = None
+        # create_plan just revalidated every snapshot; the native executor freezes the
+        # contract bytes and checks each leaf again as it removes it.
         try:
-            removed = remove_exact(root, rows, control_files=controls)
+            remove_exact(root, rows, control_files=_control_snapshots(_control_files(repo)))
         except RetirementApplyError as exc:
             failure = dict(exc.result)
-            removed = failure["removed"]
         except Exception as exc:
-            removed = []
-            failure = {"ok": False, "mode": "partial", "removed": removed,
+            failure = {"ok": False, "mode": "partial", "removed": [],
                        "failed_path": rows[0]["path"], "error": str(exc)}
-        try:
-            final_root, final_proof = prove_companion(repo, companion)
-            if (final_root != root or list(final_proof.repositories) != current["repositories"]
-                    or getattr(final_proof, "signature", None) != getattr(proof, "signature", None)
-                    or canonical_hash(validate_contract(repo)) != current["contract_sha256"]
-                    or _control_snapshots(_control_files(repo, root, final_proof)) != controls):
-                raise ValueError("contract or PRIVATE identity changed during retirement")
-        except Exception as exc:
-            if failure is None:
-                failure = {"ok": False, "mode": "partial", "removed": removed,
-                           "failed_path": None, "error": str(exc)}
-            else:
-                failure["final_context_error"] = str(exc)
-        if failure is not None:
-            failure["removed_count"] = len(removed)
-            raise RetirementApplyError(failure)
-        return {"schema_version": 1, "mode": "applied", "removed": [i["path"] for i in current["items"]],
-                "bytes": sum(r["bytes"] for r in rows)}
+        else:
+            return {"schema_version": 1, "mode": "applied", "removed": [i["path"] for i in current["items"]],
+                    "bytes": sum(r["bytes"] for r in rows)}
+        failure["removed_count"] = len(failure["removed"])
+        raise RetirementApplyError(failure)
     for item in current["items"]:
         # Revalidate each concrete tree immediately before the first deletion in that tree.
         fresh = create_plan(repo, companion, [item["path"]], current["reason"], current["inactive_evidence"])

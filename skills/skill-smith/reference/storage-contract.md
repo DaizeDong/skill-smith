@@ -60,18 +60,17 @@ outside the declared data roots.
 `guards/tools/datadir.py` selects the first existing supported DATA candidate in this order:
 `SKILL_SMITH_DATA_DIR`, `SKILL_SMITH_CONFIG`, `SKILL_SMITH_CONFIG_DIR`, then a proven sibling
 companion. There is no home-directory candidate. Companion-root candidates try `data/` first.
-Writers require the declared layout: `data/fleet-check-status.json`, `data/worklist.json`
+Writers use the declared layout: `data/fleet-check-status.json`, `data/worklist.json`
 and `data/description-backups/`. Clear an inherited DATA_DIR override when switching CONFIG.
-Unsupported root fallbacks and alternate output paths fail artifact admission, including explicit
-`--status-json`, `--out` and `--backup-dir` destinations.
+Each writer checks its destination once, before writing: it must sit inside a versioned companion
+(the nearest Git worktree above it) and outside the tool repository, with no links or hardlinks.
+This applies to explicit `--status-json`, `--out` and `--backup-dir` destinations too. There is no
+in-repo fallback; an unresolved companion fails.
 
-Before writing, refresh `~/.pii-guard/visibility.json` with the trusted collector. Its `_refreshed`
-timestamp and every physical/effective fetch and push destination must be current and PRIVATE,
-including URL rewrites, SSH aliases and additional push URLs. `gh repo view` does not refresh this
-receipt; `.companion` establishes ownership only. Unsupported or unresolved routing fails. See
-[Guards companion verification](../../../guards/COMPANION.md#verifying-a-companion) and the write
-admission requirements below. Commit and push run data in the private companion. Restore by cloning
-that companion, setting CONFIG, refreshing visibility proof and checking resolved paths before resuming.
+PRIVATE publication of the companion is enforced by commit-time hooks and CI, not at write time; see
+[Guards companion verification](../../../guards/COMPANION.md#verifying-a-companion). `.companion`
+establishes ownership only. Commit and push run data in the private companion. Restore by cloning
+that companion, setting CONFIG and checking resolved paths before resuming.
 
 `fleet_check.py --print-status-path` prints the default path selected by the report writer's
 resolver. It does not inspect the fleet, create files or prove write readiness.
@@ -129,7 +128,7 @@ and failure evidence, and temporary files. Changing a retention class does not
 authorize deletion or override a prior refusal; each concrete selection still needs
 its own review and current admission.
 
-Pure contract validation, path matching and write admission live in the pinned Guards module
+Pure contract validation and path matching live in the pinned Guards module
 `guards/tools/storage_contract.py`. Smith's adapter reexports those primitives and owns the
 inventory and reviewed-retirement CLI. Run that CLI from the canonical source checkout:
 
@@ -167,38 +166,26 @@ Operation results are JSON on stdout: exit 0 means the requested operation passe
 exit 1 means a failed or unobserved requirement. Argument-parser usage errors,
 including mixed selection modes or selection flags on another command, print
 diagnostics to stderr and exit 2 without an operation result. `check` is read-only.
-PRIVATE admission always uses
-the shared checker's own pinned Guards proof and resolver, including for targets
-that do not ship Guards. The resolver is explicitly bound to the target source
-for companion discovery. There is no target/shared fallback. Unknown/public/unversioned
-destinations fail. Inventory reports links without descending into them.
+Companion discovery always uses the shared checker's own pinned Guards resolver,
+including for targets that do not ship Guards. The resolver is explicitly bound to
+the target source. There is no target/shared fallback. A companion inside the source
+fails. Inventory reports links without descending into them. PRIVATE publication is
+enforced by commit-time hooks and CI, not by this CLI.
 
-Runtime producers call `authorize_artifact_write(source_root, companion_root, relative_path,
-artifact_id=EXPECTED_ID)` from the pinned Guards module immediately before each write. It requires
-one declared owner, a matching producer artifact, a committed Git HEAD, current PRIVATE proof,
-ordinary physical paths and admissible ignore rules. The immutable result binds the path, artifact,
-contract hash and publication proof. Recheck before writes; no receipt locks the filesystem.
-Directory admission covers only that directory, so authorize concrete leaves before creating
-structural parents. Inventory transport checks are separate and never grant write permission.
+Smith's report JSON (`fleet-status`), its atomic staging file (`fleet-status-staging`), trim
+worklists (`worklist`) and rollback leaves (`description-rollback`) are declared in the source
+contract. `storage_contract.py check` reports anything written outside these declarations.
 
-Smith binds report JSON to `fleet-status`, exact atomic staging to `fleet-status-staging`, trim
-worklists to `worklist`, and rollback leaves to `description-rollback`. Explicit output flags still
-must match these source declarations. The contract and transport signature must stay unchanged
-between admission and writing. An ignored staging path is refused, even if the final report path
-would otherwise pass.
-
-`plan` prints JSON to stdout without saving a file. Before persisting a selection
-or successful plan under `data/retirement-plans/`, the writer must call
-`authorize_artifact_write(..., artifact_id="retirement-plan")` for the concrete
-output path, including any atomic staging file, and respect the shared storage
+`plan` prints JSON to stdout without saving a file. Persist a selection or successful
+plan only under the declared `data/retirement-plans/` and respect the shared storage
 budget. Check the plan command's exit status before saving its output; an error
 response is not a retirement plan.
 
 Save a plan only in a verified private location. Review its concrete paths,
 reason, inactivity evidence and byte snapshots, then authorize its exact file
 SHA256. Inactivity is an explicit operator assertion, not inferred from directory
-age. Do not approve an unknown or active writer. Apply verifies current PRIVATE
-identity, the contract and file hashes again. It rejects core/undeclared/ambiguous
+age. Do not approve an unknown or active writer. Apply verifies the companion
+root, the contract and file hashes again. It rejects core/undeclared/ambiguous
 items, active markers, protected paths, links, junctions and nested repositories.
 Windows removal uses PowerShell `Remove-Item -LiteralPath` on individual leaves,
 never recursive traversal. A mid-operation failure is visible and can leave a
@@ -206,8 +193,7 @@ partially removed disposable group; prepare a fresh plan after inspecting it.
 
 The dedicated storage-contract CI runs the core storage and retirement-batch suites
 on Linux and Windows. Windows exercises native removal against generated fixtures;
-those tests stub external PRIVATE attestation and do not establish readiness for a
-live companion or permission to remove its data.
+those tests do not establish readiness for a live companion or permission to remove its data.
 
 The skill-smith companion has a 64 MiB working-data budget. The retired campaign is a temporary
 classification for removal after dependency clearance, not an allowed future

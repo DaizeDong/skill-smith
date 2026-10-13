@@ -16,34 +16,17 @@ fc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(fc)
 
 
-@pytest.mark.parametrize("visibility", ["PUBLIC", "UNKNOWN"])
-def test_status_output_rejects_public_or_unknown(private_output, visibility):
+def test_default_output_uses_shared_resolver(private_output, monkeypatch):
     fc = private_output["fleet"]
-    assert hasattr(fc, "resolve_status_path"), "Real output needs a private-companion boundary"
-    receipt = private_output["visibility"]
-    states = json.loads(receipt.read_text(encoding="utf-8"))
-    states[private_output["slug"]] = visibility
-    receipt.write_text(json.dumps(states), encoding="utf-8")
-    with pytest.raises(ValueError, match="PRIVATE"):
-        fc.resolve_status_path(str(private_output["data"] / "result.json"), str(receipt), True)
-
-
-def test_default_output_uses_shared_resolver_and_names_private_repo(private_output, monkeypatch):
-    fc = private_output["fleet"]
-    assert hasattr(fc, "resolve_status_path")
-    storage = fc._artifact_storage()
-    monkeypatch.setattr(fc, "_artifact_storage", lambda: storage)
     monkeypatch.setattr(fc, "load_datadir", lambda *a: SimpleNamespace(
         resolve_data_dir=lambda _: private_output["data"]))
-    path, proof = fc.resolve_status_path(None, str(private_output["visibility"]), True)
+    path = fc.resolve_status_path(None)
     assert Path(path) == private_output["data"] / "fleet-check-status.json"
-    assert proof.repositories == (private_output["slug"],)
 
 
 def test_plain_directory_does_not_become_versioned_data(tmp_path, monkeypatch):
-    assert hasattr(fc, "resolve_status_path")
     with pytest.raises(ValueError, match="versioned"):
-        fc.resolve_status_path(str(tmp_path / "output.json"), "fixture", True)
+        fc.resolve_status_path(str(tmp_path / "output.json"))
 
 
 def test_zero_step_ci_is_distinct_from_executed_failure(monkeypatch):

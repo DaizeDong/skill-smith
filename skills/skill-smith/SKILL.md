@@ -81,15 +81,14 @@ contract and `reference/documentation.md` for its documentation duties.
 remote guard actions and every remote default-branch workflow. It does not repair repositories.
 Scaffold metadata validation and remote action inspection require PyYAML; unavailable remote parsing is reported as unobserved.
 
-Reports use the shared companion resolver and pinned Guards artifact admission before writing.
-The path must have one declared owner, match the writer's artifact, remain unignored and have
-committed PRIVATE storage. Source-contract and transport changes invalidate prior admission.
+Reports use the shared companion resolver and check the destination once before writing: inside
+a versioned companion, outside the tool repository. Commit-time hooks and CI enforce PRIVATE publication.
 `--no-status` is console-only. `--offline` reports remote rows unobserved, never passed. Quote the
 full verdict with its coverage fraction.
 
 Remote identity checks support GitHub URLs and static SSH aliases proven by the local SSH config;
 unsupported hosts and complex alias rules remain unknown. Git inspection failures remain visible
-in inventory coverage. Trim worklists and backups use the same PRIVATE storage checks as reports.
+in inventory coverage. Trim worklists and backups use the same destination check as reports.
 
 An explicit `--workflow-policy` maps repository slugs to `skill`, `security-kit` or `style-kit` with
 a reviewed reason for a non-skill role. Public security remains required for every role. A style

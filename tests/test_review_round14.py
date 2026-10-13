@@ -14,13 +14,10 @@ import types
 import unittest
 from unittest.mock import patch
 
-import pytest
-
 ROOT = Path(os.environ.get("SS_SOURCE", Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(ROOT / "tools"))
-from make_fixtures import (review14_guard_revision, materialize_review14_repositories,
-                           review14_resolver, review14_trim_layout, review14_existing_backup,
-                           review14_plugin_identity, review14_routing_scenarios)
+from make_fixtures import (review14_guard_revision, review14_resolver, review14_trim_layout,
+                           review14_existing_backup, review14_plugin_identity)
 
 
 def load(path, name):
@@ -46,9 +43,9 @@ class Source14Controls(unittest.TestCase):
     def trim(self, fixture):
         sys.path.insert(0, str(self.scripts))
         module = load(self.scripts / "trim_descriptions.py", "trim_author14")
-        module._storage_path = lambda path, **kwargs: (str(path), None)
+        module._storage_path = lambda path, **kwargs: str(path)
         module._storage_module = lambda: types.SimpleNamespace(
-            reject_output_aliases=lambda path: path, recheck_status_path=lambda path, proof, **kwargs: path)
+            reject_output_aliases=lambda path: path)
         module.parse_frontmatter = lambda text: fixture["metadata"].get(text, (None, None))
         # The generated-only parser double does not validate YAML; original YAML tests are unchanged.
         def valid_generated(text, name, description):
@@ -128,23 +125,6 @@ class Source14Controls(unittest.TestCase):
             return value
         with patch.object(module.importlib.util, "module_from_spec", replace_after_check):
             self.assertEqual(module.ConfigRuntime().resolver.MARKER, "base")
-
-
-def test_private_approval_is_bound_to_physical_output_repository(private_output, subtests):
-    materialize_review14_repositories(private_output)
-    module = private_output["fleet"]
-    scenarios = review14_routing_scenarios(private_output["private"], private_output["public"])
-    for label, destination, environment, allowed in scenarios:
-        with subtests.test(scenario=label), patch.dict(os.environ, environment):
-            output = destination / "data/fleet-check-status.json"
-            if allowed:
-                path, proof = module.resolve_status_path(str(output), str(private_output["visibility"]))
-                assert path == str(output)
-                assert proof.repositories == ("acmecorp/synthetic-private",)
-            else:
-                with pytest.raises(ValueError):
-                    module.resolve_status_path(str(output), str(private_output["visibility"]))
-            assert not output.exists()
 
 
 if __name__ == "__main__":

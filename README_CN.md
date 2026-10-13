@@ -129,10 +129,10 @@ export SKILL_SMITH_CONFIG="$(cd ../skill-smith-config && pwd)"
 ```
 
 已有伴生仓时 clone 并设置同一变量。可见性查询必须返回 `PRIVATE`。
-写入前刷新可信可见性回执；上述查询不会刷新回执。
-选择优先级、准确输出路径、写入准入、仅控制台运行和恢复步骤见
+PRIVATE 发布由提交期钩子和 CI 保证，写入时不再做运行时证明。
+选择优先级、准确输出路径、目标检查、仅控制台运行和恢复步骤见
 [运行数据发现与输出](skills/skill-smith/reference/storage-contract.md#runtime-discovery-and-outputs)，
-传输证明见 [Guards 伴生仓核验](guards/COMPANION.md#verifying-a-companion)。
+提交期审计见 [Guards 伴生仓核验](guards/COMPANION.md#verifying-a-companion)。
 Smith 仅管理运行数据；存储参考文档中的外部配置输入由 Profile Sync 和操作者初始化。
 G8 合规本身不证明存储已就绪。
 
