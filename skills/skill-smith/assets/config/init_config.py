@@ -49,7 +49,10 @@ and restore procedure here. Ignore rules do not prevent explicit tracking. The g
 checks those rules, not tracked contents or repository visibility. Committed credentials remain
 in history; rotate the credential itself when required. Never echo values in logs or reports.
 
-Per tool, create `secrets/<slug>.env` with the KEY=VALUE pairs its `tools/<slug>/env.template` lists.
+Per tool, `secrets/<slug>.env` holds the KEY=VALUE pairs its `tools/<slug>/env.template` lists.
+When an external credential store is in use, keep the values there and generate this file from it;
+never hand-edit a generated file, because an ignored file that exists only on one disk has no backup.
+Write it by hand only when no store is in use, and then back it up as described above.
 Files MUST be UTF-8 without BOM.
 """
 
@@ -166,7 +169,8 @@ def main():
 
     print("\nNext:")
     print("  1) For each tool: create tools/<slug>/{claude.json.template,env.template} and")
-    print("     secrets/<slug>.env with real values (ignored by default; see secrets/README.md).")
+    print("     secrets/<slug>.env (ignored by default). Generate it from your credential store when you")
+    print("     use one; never hand-edit a generated file. See secrets/README.md.")
     print("  2) export %s=%s   (or use the default path)" % (env_var(skill), out))
     print("  3) python scripts/verify_config.py   # doctor: checks config shape; add a tool-specific exercise")
     return 0

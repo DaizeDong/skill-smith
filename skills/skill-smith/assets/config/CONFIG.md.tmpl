@@ -56,8 +56,9 @@ requires a kebab-case string `slug` and a Boolean `installed`. Optional `transpo
 must have the declared types when present. The doctor reports invalid field paths without their
 values. Additional fields may carry tool-specific settings, which need tool-specific validation.
 
-Per tool that needs credentials, add `tools/<slug>/{claude.json.template, env.template}` and put the
-real values in `secrets/<slug>.env` (ignored by default). The template/placeholder shape follows market-intel
+Per tool that needs credentials, add `tools/<slug>/{claude.json.template, env.template}`; the real
+values reach `secrets/<slug>.env` (ignored by default), generated from an external credential store
+when one is in use, never by hand-editing a generated file. The template/placeholder shape follows market-intel
 `companion-config-spec.md` §4 (`<UPPER_SNAKE>` placeholders, UTF-8 without BOM).
 
 ## Secrets and private backups (E6)
