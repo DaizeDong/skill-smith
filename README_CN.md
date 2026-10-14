@@ -176,17 +176,6 @@ python skills/skill-smith/scripts/bump_version.py . --level patch --dry-run
 模型和 agent 工作使用 已安装的 `llmcall` 当前路由、超时与回退策略。
 先核对所选调研、生成器和评测能力；缺失时明确保留缺口。
 
-离线测试需要 `requirements-dev.txt` 和 PATH 中的 POSIX `sh`。
-Windows 可使用 Git Bash，或在当前 shell 加入 Git for Windows 的 `bin`：
-
-```bash
-python -m pip install -r requirements-dev.txt
-python -m pytest -c pytest.ini tests/ tools/ -q -ra
-```
-
-测试从当前检出的 kit 版本建立本地镜像，禁止网络 Git 协议。
-生成的 fixture 只能验证契约，不能证明真实任务改进或外部集成。
-
 ## 局限
 
 G8 读取源仓声明的适用性和原生生命周期入口。

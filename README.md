@@ -190,17 +190,6 @@ Use Python 3.10+, Git and PyYAML from `requirements.txt`. Model and agent work u
 `llmcall` current routing, timeout and fallback policy. Preflight the selected research, generation
 and evaluator capabilities; unavailable capabilities remain explicit.
 
-For the offline suite, install `requirements-dev.txt`. Git's POSIX `sh` must be on PATH. On Windows,
-use Git Bash or add Git for Windows' `bin` directory for the current shell:
-
-```bash
-python -m pip install -r requirements-dev.txt
-python -m pytest -c pytest.ini tests/ tools/ -q -ra
-```
-
-Tests use local mirrors of checked-out kit revisions and forbid network Git protocols. Generated
-fixtures exercise contracts; they cannot prove real task improvement or live integration.
-
 ## Limitations
 
 G8 uses explicit source-owned applicability and declared native lifecycle paths. Static checks leave readiness unmeasured;

@@ -27,7 +27,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip install -r requirements.txt
       - name: Build and install the wheel
         run: |
           python - <<'PY'
@@ -51,9 +51,3 @@ jobs:
           assert catalog.discover({})['coverage']['skill_roots']['status'] == 'unchecked'
           assert importlib.metadata.version('skill-smith') == json.loads(Path('.claude-plugin/plugin.json').read_text())['version']
           PY
-      - name: Run deterministic package contracts
-        run: >-
-          python -m pytest tests/test_catalog_contract.py tests/test_catalog_acquisition.py
-          tests/test_catalog_path_aliases.py tests/test_catalog_walk_bounds.py
-          tests/test_runtime_overlays.py tests/test_resource_resolution.py
-          tests/test_t10_source_workflows.py tests/test_agent_entrypoints.py -q

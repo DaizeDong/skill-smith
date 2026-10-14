@@ -4,6 +4,7 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 
+- Delete the test suite, pytest config and dev requirements; CI no longer runs tests.
 - Stop passing `mcp_isolation=True` for `read_only` requirements: llmcall removed the
   option. read_only still runs judge mode on sandboxed Codex rungs and remains not a
   permission guarantee.
