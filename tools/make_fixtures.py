@@ -1125,7 +1125,7 @@ def review11_skill(root, case, root_layout=False):
         "keywords": ["synthetic", "skill"],
     })
     files = {rel: "Synthetic fixture.\n" for rel in (
-        "LICENSE", "guards/tools/pii_guard.py", "guards/tools/test_pii_guard.py",
+        "LICENSE", "guards/tools/pii_guard.py",
         "guards/hooks/pre-commit", "guards/hooks/pre-push", ".github/workflows/pii-guard.yml",
         ".pii-allow", "guards/tools/data_boundary.py", "guards/tools/datadir.py",
         ".dataclass.json", "style/tools/dash_guard.py", ".github/workflows/dash-guard.yml",

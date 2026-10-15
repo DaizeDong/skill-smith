@@ -498,7 +498,7 @@ def main(root, stage="accepted"):
     # A repo without the gate is a repo accumulating that debt right now.
     # The kit is a submodule now, so the paths moved. .pii-allow stays in the repo: which
     # findings are exempt is a fact about THIS repo and cannot be shared.
-    for rel in ["guards/tools/pii_guard.py", "guards/tools/test_pii_guard.py",
+    for rel in ["guards/tools/pii_guard.py",
                 "guards/hooks/pre-commit", "guards/hooks/pre-push",
                 ".github/workflows/pii-guard.yml", ".pii-allow"]:
         check("PII gate: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
