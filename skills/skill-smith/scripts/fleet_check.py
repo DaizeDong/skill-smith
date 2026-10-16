@@ -18,9 +18,7 @@ WHAT IT DELIBERATELY DOES NOT DO
 2. It does not check that a repo has upstream tracking configured. sync-skills.ps1 was rewritten to
    be branch-agnostic and nothing on this machine reads branch.<name>.remote any more, so that check
    would guard a property with no consumer and stay red forever.
-3. It does not check that the per-skill config dotdirs are junctions. The plain-directory shape is
-   the DESIGNED one, spelled out in the fleet-guards tools/datadir.py docstring.
-   The rule behind all three: a nightly check whose first run reports findings that are unfixable by
+   The rule behind both: a nightly check whose first run reports findings that are unfixable by
    design trains the operator to skip the digest line. That is precisely how check_conformance.py
    died the first time, and it would take this driver down with it.
 
