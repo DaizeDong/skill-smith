@@ -108,7 +108,7 @@ OUTPUT CONTRACT
 Source state is read-only, including no `git fetch`; only the private report is written. Exits nonzero
 if any row is FAIL. UNKNOWN and SKIP never affect the exit code, which is safe precisely because
 UNKNOWN can no longer carry a finding. Prints a human-readable report to stdout and writes a
-machine-readable status JSON in the verified PRIVATE versioned companion (override with
+machine-readable status JSON in the PRIVATE versioned companion (override with
 --status-json, subject to the same storage check), carrying a UTC timestamp to verify FRESHNESS, not an
 exit code it cannot reliably read: a scheduled caller runs this in a child shell where the exit code
 is not a promise, and here exit 1 means "some check FAILED", not "the run happened". Those are
@@ -146,7 +146,7 @@ BUDGET = os.path.join(HERE, "budget_check.py")
 
 DEFAULT_SKILLS_DIR = os.path.expanduser("~/.claude/skills")
 DEFAULT_CODE_ROOT = os.path.expanduser("~/CodesClaude")
-# Resolve at execution time, then verify PRIVATE versioned storage before any report write.
+# Resolve at execution time; the report path must sit in a companion worktree (PRIVATE publication is enforced at commit time).
 DEFAULT_STATUS = None
 
 # WARN is "evaluated, not clean, and no edit available today makes it clean". It is deliberately
