@@ -128,10 +128,10 @@ class ConfigRuntime:
         """Explicit config selections never fall through; defaults use the companion resolver."""
         if override:
             return self._destination(override), "explicit CLI path"
-        for variable in (env_var(self.skill), env_var(self.skill) + "_DIR"):
-            value = os.environ.get(variable)
-            if value:
-                return self._destination(value), "env:%s" % variable
+        variable = env_var(self.skill)
+        value = os.environ.get(variable)
+        if value:
+            return self._destination(value), "env:%s" % variable
         root = self.resolver.resolve_companion_root(self.skill)
         if root is not None:
             return self._destination(root), "fleet_guards companion resolver"

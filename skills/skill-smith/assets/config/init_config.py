@@ -2,7 +2,7 @@
 """Initialize a deterministic companion config skeleton outside the consuming tool repo.
 
 Uses the emitted consumer identity and the fleet_guards companion resolver, regardless of caller cwd.
-Explicit --out, CONFIG and CONFIG_DIR selections take precedence. Without a selection, reuse
+Explicit --out and CONFIG selections take precedence. Without a selection, reuse
 an existing companion; when none exists, stop with instructions to create one (there is no
 home-directory default).
 

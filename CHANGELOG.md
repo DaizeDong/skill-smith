@@ -4,6 +4,10 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 
+- `fleet_check` drops the `databoundary` check and its live GitHub visibility oracle and
+  `--visibility` flag; PRIVATE publication is enforced only at commit time by the `.githooks`
+  shims. The scaffold and docs no longer accept a `<SKILL>_CONFIG_DIR` alias, and the storage
+  CLI calls the fleet-guards storage contract directly instead of re-exporting it.
 - Gates run from local checkouts. The `guards` and `style` submodules and the `pii-guard`,
   `dash-guard`, `doc-contract`, `load-budget` and `fleet-sync` workflows are removed; the
   `.githooks` shims run the fleet-guards and fleet-style checkouts named by `git config

@@ -47,8 +47,7 @@ reader rounds into an adjective. A disclosure the reader never reaches is not a 
 
 WHY THIS FILE IS CONCURRENT, AND WHAT THAT IS NOT ALLOWED TO COST
 ------------------------------------------------------------------
-Coverage grew on 2026-07-31 (live visibility per row, EVERY workflow on EVERY repo including the
-private ones) and the run went from 63s to 130s, because each remote question blocked the next. For
+Coverage grew on 2026-07-31 (EVERY workflow on EVERY repo including the private ones) and the run went from 63s to 130s, because each remote question blocked the next. For
 a report a human runs by hand that is a correctness problem, not a comfort one: a two minute report
 gets started, abandoned and then not read, which is the same disease as a gate nobody runs.
 
@@ -98,21 +97,6 @@ THE CHECKS
               the lever (uninstall one, or trim ours, since the cutoff is a running total) is the
               operator's in both cases. Only the per-skill description CAP stays limited to our
               tier, because third-party wording is genuinely not ours to edit.
-  databoundary the INVERSE data-boundary assertion, which is the one check that would have caught
-              the 2026-07 leak: data_boundary.py proves the REPO holds no real-run output, and this
-              proves the reverse, that the resolved real-run output directory is not somewhere the
-              world can read. Both directions were nominally true and the leak still happened,
-              because nobody ever looked from this end.
-              The predicate is PUBLIC-or-UNKNOWN, not in-git. DATA lives in the PRIVATE companion
-              repo, versioned; a data dir inside a private repo PASSES and the row names that repo,
-              so a reader can tell an examined-and-approved row from a skipped one. Unknown
-              visibility FAILS CLOSED, mirroring the PII gate's treatment of an unknown remote.
-              Not-initialized is not a failure: an uninitialized tool is the correct shipping state.
-              If git cannot be run at all the answer is UNKNOWN, never PASS -- a missing git used to
-              silently clear every repo in this check.
-              The data dir is resolved with fleet_guards.runtime.companion_resolver bound to that
-              repo, and its companion's origin visibility comes from LIVE gh, with the map as a
-              bounded-age offline fallback.
   ci          EVERY workflow found on the remote is actually GREEN ON THE DEFAULT BRANCH, reported
               one row per (repo, workflow). Gates do not run in CI any more (they run from the
               .githooks shims against the local fleet-guards and fleet-style checkouts), so these
@@ -164,7 +148,6 @@ BUDGET = os.path.join(HERE, "budget_check.py")
 
 DEFAULT_SKILLS_DIR = os.path.expanduser("~/.claude/skills")
 DEFAULT_CODE_ROOT = os.path.expanduser("~/CodesClaude")
-DEFAULT_VISIBILITY = os.path.expanduser("~/.pii-guard/visibility.json")
 # Resolve at execution time, then verify PRIVATE versioned storage before any report write.
 DEFAULT_STATUS = None
 
@@ -187,16 +170,8 @@ CI_WARN_ONLY = {
 
 
 # --- concurrency, and why a report's wall clock is a correctness property -------------------------
-# On 2026-08-01 this driver took 130s, up from 63s, because coverage grew: the visibility oracle
-# started asking gh live per row, and check_ci started reading EVERY workflow on EVERY repo instead
-# of two names on the public ones. Both of those were the right change. Doing them one blocking
-# round trip at a time was not.
-#
-# Wall clock is not cosmetic for a report a human runs by hand. A two minute report gets started,
-# abandoned, and then not read, which lands in exactly the same place as a gate nobody runs -- the
-# failure mode the whole top of this file is written against. install.py --check had the identical
-# disease and the identical cure in this same effort, going from 185s to 8s by moving its per-repo
-# `git ls-remote` round trips onto a thread pool.
+# check_ci reads EVERY workflow on EVERY repo, one gh round trip each. Wall clock is not cosmetic
+# for a report a human runs by hand: a two minute report gets started, abandoned, and then not read.
 #
 # The rule this file follows: NEVER buy time by asking fewer questions. Every row that was
 # interrogated before is interrogated now, with the same query and the same arguments, so the
@@ -868,228 +843,6 @@ def check_budget(skills_dir, code_root, timeout, listing=None, capacity=None):
     return c
 
 
-def parse_stamp(text):
-    """Epoch seconds from an ISO-8601 timestamp, or None if it is absent or unparseable."""
-    s = str(text or "").strip()
-    if not s:
-        return None
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    try:
-        dt = datetime.fromisoformat(s)
-    except ValueError:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.timestamp()
-
-
-def human_age(seconds):
-    if seconds is None:
-        return "unknown"
-    s = abs(float(seconds))
-    if s < 3600:
-        return "%.0f min" % (s / 60.0)
-    if s < 2 * 86400:
-        return "%.1f h" % (s / 3600.0)
-    return "%.1f days" % (s / 86400.0)
-
-
-class VisibilityOracle:
-    """PUBLIC / PRIVATE / UNKNOWN for a slug. LIVE gh first, the map only as an aged fallback.
-
-    WHY THE ORDER FLIPPED (2026-07-31)
-    ----------------------------------
-    This used to read ~/.pii-guard/visibility.json FIRST and ask gh only on a miss. That made one
-    line of cached JSON able to outvote GitHub forever. Poisoning a copy of the map with
-    `{"daizedong/skill-smith": "PRIVATE"}` -- a genuinely PUBLIC repo -- made check_data_boundary
-    print `PASS ... [PRIVATE per visibility map]` over a data dir sitting in a public repo. Nothing
-    on this machine refreshes that file, so the entry would have said PRIVATE until someone
-    remembered to rerun refresh_visibility.py, and the event this whole control exists to survive is
-    precisely a repo being flipped from private to PUBLIC on GitHub. A cache that can never be wrong
-    is not a cache, it is an assertion.
-
-    THE TRADE THAT WAS MADE
-    -----------------------
-    Three fixes were on the table. A TTL alone is the cheapest, but it does not close the hole: a
-    freshly written map entry is inside any window, so the poisoned-copy demonstration above still
-    passes. Scheduling refresh_visibility.py narrows the drift but leaves a window of exactly the
-    refresh interval, and it makes correctness depend on a scheduled task nobody watches. So the
-    order is inverted instead: gh is asked live, and the map is consulted ONLY when gh cannot answer
-    (--offline, gh missing, unauthenticated, rate limited).
-
-    The cost is real and was accepted deliberately: one `gh repo view` per DISTINCT slug that this
-    check actually reaches, which is the handful of skills with an initialized companion data dir,
-    not the 119 keys in the map. Answers are cached per run. That is small
-    beside the two gh calls per public repo the workflow check already makes.
-
-    The fallback is bounded so the property survives even offline: the map may only vote while it is
-    younger than MAX_MAP_AGE_S, measured from the `_refreshed` stamp refresh_visibility.py writes
-    into it. An unstamped map, a stamp in the future, or a stamp past the window all behave as
-    UNKNOWN, which already fails closed. So a map entry cannot indefinitely outvote reality by any
-    path: online it never gets to vote at all, offline its vote expires.
-
-    When gh and the map DISAGREE the live answer wins and the row says the map is stale, because a
-    disagreement is itself the finding.
-
-    Never WRITES the map back: fleet_check's contract is read-only, and a checker that mutates
-    machine state to answer its own question is a checker whose second run tests something different
-    from its first.
-    """
-
-    # How long a cached visibility answer may still vote once gh has gone silent. Visibility changes
-    # are rare and deliberate, so this is not tuned to how fast the fact changes -- it is tuned to
-    # how long a machine may sit offline before "I cannot see GitHub" should stop being papered over
-    # with an old answer. A week is long enough that a normal disconnection never turns the check
-    # red, and short enough that an abandoned map cannot keep clearing a repo indefinitely.
-    MAX_MAP_AGE_S = 7 * 24 * 3600
-    STAMP_KEY = "_refreshed"        # reserved: a slug always contains "/", so it cannot collide
-
-    def __init__(self, path, offline=False, timeout=30, max_age=None, now=None):
-        self.offline = offline
-        self.timeout = timeout
-        self.max_age = self.MAX_MAP_AGE_S if max_age is None else max_age
-        self.now = now              # epoch seconds; injectable so age is testable without sleeping
-        self.error = ""
-        # Memo, not a plain dict: this oracle is now asked from a thread pool (see prefetch), and a
-        # cache that can be missed twice for the same slug would put the per-row gh cost straight
-        # back. The token cache below is the bigger of the two savings -- `gh auth token --user X`
-        # used to be re-shelled once per account PER SLUG, so the accounts loop cost up to two extra
-        # child processes on every single row it touched.
-        self.cache = Memo()
-        self.tokens = Memo()
-        self.map = {}
-        self.stamp = None
-        try:
-            with open(path, encoding="utf-8") as f:
-                m = json.load(f)
-        except (OSError, ValueError) as e:
-            self.error = str(e)
-            m = {}
-        if isinstance(m, dict):
-            self.stamp = parse_stamp(m.get(self.STAMP_KEY))
-            self.map = {str(k).lower(): str(v).upper()
-                        for k, v in m.items() if k != self.STAMP_KEY}
-
-    def map_age(self):
-        """(age_seconds, trouble). trouble is "" only when the map is fresh enough to vote."""
-        if self.stamp is None:
-            return None, ("it carries no %s stamp, so its age cannot be established; run "
-                          "refresh_visibility.py" % self.STAMP_KEY)
-        age = (time.time() if self.now is None else self.now) - self.stamp
-        if age < 0:
-            return age, "its %s stamp is in the future" % self.STAMP_KEY
-        if age > self.max_age:
-            return age, ("it was last refreshed %s ago, past the %s trust window; run "
-                         "refresh_visibility.py" % (human_age(age), human_age(self.max_age)))
-        return age, ""
-
-    def _mapped(self, slug):
-        v = self.map.get(slug)
-        return "PRIVATE" if v == "INTERNAL" else v
-
-    def _token(self, gh, acct):
-        """The stored token for one gh account, or "" if there is not one. Never logged."""
-        rc, tok, _se = run([gh, "auth", "token", "--hostname", "github.com", "--user", acct], timeout=self.timeout)
-        tok = first_line(tok)
-        return tok if rc == 0 and tok else ""
-
-    def _accounts(self, gh):
-        """Every gh account logged in on this machine, discovered at run time.
-
-        This used to be a hardcoded pair of logins. Two account names sitting next to a comment
-        that explains one machine holds both tokens states, in effect, that those accounts are
-        the same operator, and this repo is PUBLIC. A machine that runs several accounts keeps
-        that mapping in ~/.pii-guard/identities.conf, deliberately outside every worktree so it
-        is never vendored into a public repo; a literal list here walked straight around that.
-        Asking gh at run time works for anyone, with one account or five, and says nothing at
-        all about who is running it.
-        """
-        rc, so, se = run([gh, "auth", "status", "--hostname", "github.com"], timeout=self.timeout)
-        found = []
-        for line in ((so or "") + "\n" + (se or "")).splitlines():
-            if " account " not in line:
-                continue
-            tail = line.split(" account ", 1)[1].strip()
-            if not tail:
-                continue
-            name = tail.split()[0].split("(")[0].strip()
-            if name and name not in found:
-                found.append(name)
-        return found
-
-    def _ask_gh(self, slug):
-        """(visibility, how) from a live query, or (None, why-it-could-not-answer)."""
-        if self.offline:
-            return None, "--offline forbids asking gh"
-        gh = shutil.which("gh")
-        if not gh:
-            return None, "gh is not on PATH"
-        # Every logged in identity: a private repo owned by one account is a 404 to another's
-        # token, so asking with only one of them turns "private, and you cannot see it" into
-        # "no answer". `gh auth switch` would rewrite the machine's ACTIVE account. This tool is
-        # read-only, so it borrows each token for one child process instead and leaves the active account exactly where it found it.
-        def accounts():
-            yield None
-            yield from self._accounts(gh)
-
-        for acct in accounts():
-            env = None
-            if acct:
-                # Memoized per ACCOUNT, not per (account, slug): the token does not depend on which
-                # repo is being asked about, and re-deriving it per row was pure repetition.
-                tok = self.tokens.get(acct, lambda a=acct: self._token(gh, a))
-                if not tok:
-                    continue
-                env = dict(os.environ, GH_TOKEN=tok)
-            rc, so, _se = run([gh, "repo", "view", slug, "--json", "visibility",
-                               "-q", ".visibility"], timeout=self.timeout, env=env)
-            if rc != 0:
-                continue
-            got = first_line(so).upper()
-            if got in ("PUBLIC", "PRIVATE", "INTERNAL"):
-                return ("PRIVATE" if got == "INTERNAL" else got,
-                        "gh" + (" as %s" % acct if acct else ""))
-        return None, "gh could not answer for %s" % slug
-
-    def _from_map(self, slug, gh_why):
-        cached = self._mapped(slug)
-        if cached not in ("PUBLIC", "PRIVATE"):
-            return "UNKNOWN", "%s, and %s is not in the visibility map" % (gh_why, slug)
-        age, trouble = self.map_age()
-        if trouble:
-            return "UNKNOWN", ("%s, and the map's cached %s cannot be trusted because %s"
-                               % (gh_why, cached, trouble))
-        return cached, "the visibility map, refreshed %s ago (%s)" % (human_age(age), gh_why)
-
-    def _resolve(self, slug):
-        live, how = self._ask_gh(slug)
-        if live:
-            cached = self._mapped(slug)
-            if cached in ("PUBLIC", "PRIVATE") and cached != live:
-                how += "; the visibility map still says %s and is STALE" % cached
-            return live, how
-        return self._from_map(slug, how)
-
-    def visibility(self, slug):
-        if not slug:
-            return "UNKNOWN", "no origin remote"
-        return self.cache.get(slug, lambda: self._resolve(slug))
-
-    def prefetch(self, slugs):
-        """Warm the cache for a set of slugs concurrently. Answers are unchanged, only their timing.
-
-        Callers still read every answer back through visibility(), one row at a time, in whatever
-        order they print in. This exists so the WAITING happens once in parallel rather than
-        strung out across a serial row loop; the memo is what makes the second read free, and
-        makes calling this optional rather than load bearing.
-        """
-        want = sorted({s for s in slugs if s})
-        if want:
-            pmap(self.visibility, want)
-
-
-# --- check: the inverse data boundary --------------------------------------------------------------
 def companion_resolver(source_root):
     try:
         from fleet_guards.runtime import companion_resolver as bind
@@ -1097,104 +850,6 @@ def companion_resolver(source_root):
         raise ImportError(
             'fleet_guards is not installed; run: pip install -e "$(git config --get fleet.guards)"') from exc
     return bind(source_root=os.path.abspath(source_root))
-
-
-def data_skill_identity(root):
-    """Companion identity comes from plugin metadata, independently of the checkout name."""
-    path = os.path.join(root, ".claude-plugin", "plugin.json")
-    try:
-        with open(path, encoding="utf-8") as stream:
-            plugin = json.load(stream)
-    except (OSError, ValueError) as error:
-        raise ValueError("plugin identity metadata is missing or unreadable") from error
-    name = plugin.get("name") if isinstance(plugin, dict) else None
-    if not isinstance(name, str) or re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name) is None:
-        raise ValueError("plugin identity metadata requires a valid name")
-    return name
-
-
-def check_data_boundary(visibility_path, repos, offline=False, timeout=30, oracle=None):
-    """Assert no skill's real-run output resolves into a repo the world can read.
-
-    Real-run output belongs in a versioned PRIVATE companion. Being inside a Git worktree
-    is not itself a violation: the publication destinations determine whether DATA can leak.
-    PUBLIC and UNKNOWN fail closed; PRIVATE passes and names the approved repository.
-    An unversioned destination fails because it cannot supply the required private history.
-    """
-    c = Check("databoundary",
-              "resolved real-run data dirs are never inside a PUBLIC or UNKNOWN repo")
-    c.note = ("DATA belongs in the PRIVATE companion repo, versioned; a data dir inside a private "
-              "repo PASSES and the repo is named. Unknown visibility FAILS CLOSED. An uninitialized "
-              "skill has no data dir yet, which is the correct shipping state.")
-    oracle = oracle or VisibilityOracle(visibility_path, offline=offline, timeout=timeout)
-    if oracle.error:
-        c.note += " | visibility map unreadable (%s): there is no fallback left" % oracle.error
-    else:
-        age, trouble = oracle.map_age()
-        c.note += (" | the map %s" % trouble if trouble
-                   else " | the map was refreshed %s ago" % human_age(age))
-    # Resolve and audit locally before the optional live visibility lookups.
-    plan = []
-    for name, path in sorted(repos.items()):
-        # Use the resolver bound to THAT REPO: the question is where its data dir resolves.
-        try:
-            skill = data_skill_identity(path)
-            resolved = companion_resolver(path).resolve_data_dir(skill, create=False)
-        except Exception as e:                                   # noqa: BLE001 (report, never crash)
-            # DataDirInsideOwnRepo is the in-repo fallback shape: a finding, not a gap.
-            if type(e).__name__ == "DataDirInsideOwnRepo":
-                plan.append(("row", FAIL, name, first_line(str(e)) or str(e)))
-            else:
-                plan.append(("row", UNKNOWN, name, "cannot resolve plugin identity or companion: %s" % e))
-            continue
-        if resolved is None:
-            plan.append(("row", SKIP, name, "not initialized"))
-            continue
-        resolved = str(resolved)
-        if not os.path.isdir(resolved):
-            # resolve_data_dir() is supposed to return only existing dirs, so this means a vendored
-            # copy has drifted. It matters because `git -C <missing>` exits nonzero, which the
-            # worktree probe would otherwise read as a clean "outside any repo".
-            plan.append(("row", UNKNOWN, name,
-                         "resolver returned %s, which does not exist" % resolved))
-            continue
-        inside, top = in_git_worktree(resolved)
-        if inside is None:
-            plan.append(("row", UNKNOWN, name, "%s: %s" % (resolved, top)))
-            continue
-        if not inside:
-            plan.append(("row", FAIL, name,
-                         "%s is unversioned; DATA requires a verified PRIVATE companion repository" % resolved))
-            continue
-        if os.path.normcase(os.path.abspath(path)).startswith(os.path.normcase(os.path.abspath(top)) + os.sep) \
-                or os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(top)):
-            plan.append(("row", FAIL, name, "%s: the companion contains the tool repository; failing closed" % resolved))
-            continue
-        rc, so, se = run(["git", "-C", top, "remote", "get-url", "origin"], timeout=20)
-        slug = slug_from_url(first_line(so)) if rc == 0 else None
-        if not slug:
-            plan.append(("row", FAIL, name, "%s: companion %s has no GitHub origin; visibility unknown, failing closed"
-                         % (resolved, top)))
-            continue
-        plan.append(("vis", name, resolved, slug))
-
-    # Phase 2. One concurrent burst instead of one blocking gh call per deferred row.
-    oracle.prefetch(sorted({entry[3] for entry in plan if entry[0] == "vis"}))
-
-    # Phase 3.
-    for entry in plan:
-        if entry[0] == "row":
-            _k, status, name, detail = entry
-            c.add(status, name, detail)
-            continue
-        _k, name, resolved, slug = entry
-        visibility, how = oracle.visibility(slug)
-        if visibility != "PRIVATE":
-            c.add(FAIL, name, "data dir %s: %s repo %s is not verified PRIVATE (%s); failing closed"
-                  % (resolved, visibility, slug, how))
-        else:
-            c.add(PASS, name, "%s [PRIVATE %s] versioned in the private companion repo" % (resolved, slug))
-    return c
 
 
 # --- check 6: is the authority green? --------------------------------------------------------------
@@ -1212,14 +867,13 @@ def default_branch(gh, slug, timeout, cache=None):
     return b, ("" if b else (se or "gh exit %s" % rc))
 
 
-def ci_targets(oracle, slugs, timeout, offline=False, listings=None, branches=None):
-    """[(slug, names_or_None, why, visibility)] for EVERY repo of ours that has a clone here.
+def ci_targets(slugs, timeout, offline=False, listings=None, branches=None):
+    """[(slug, names_or_None, why)] for EVERY repo of ours that has a clone here.
 
     Listings are fetched concurrently; pmap preserves input order, so rows stay sorted.
     """
     ordered = sorted(slugs)
-    oracle.prefetch(ordered)
-    return [(slug, names, why, oracle.visibility(slug)[0]) for slug, (names, why) in zip(ordered, pmap(
+    return [(slug, names, why) for slug, (names, why) in zip(ordered, pmap(
         lambda s: remote_workflow_files(s, slugs[s], timeout, offline=offline,
                                         memo=listings, branches=branches), ordered))]
 
@@ -1270,7 +924,7 @@ def ci_execution_detail(gh, slug, run_id, timeout):
 
 
 def check_ci(targets, timeout, branches=None):
-    """targets: [(slug, names_or_None, why, visibility), ...] as built by ci_targets().
+    """targets: [(slug, names_or_None, why), ...] as built by ci_targets().
 
     names is the FULL workflow listing observed on that slug's remote default branch, or None when
     the listing could not be observed, in which case `why` says so and the repo gets an UNKNOWN row
@@ -1333,7 +987,7 @@ def check_ci(targets, timeout, branches=None):
     pmap(lambda s: default_branch(gh, s, timeout, branches), branch_slugs)  # warm the branch memo
 
     jobs = []
-    for slug, workflows, _why, _vis in ordered:
+    for slug, workflows, _why in ordered:
         if not workflows:
             continue
         branch, _bwhy = default_branch(gh, slug, timeout, branches)
@@ -1348,16 +1002,13 @@ def check_ci(targets, timeout, branches=None):
 
     runs_by_job = dict(zip([(s, w) for s, w, _b in jobs], pmap(ask_runs, jobs)))
 
-    for slug, workflows, listing_why, visibility in ordered:
+    for slug, workflows, listing_why in ordered:
         if workflows is None:
             c.add(UNKNOWN, slug, "workflow listing not observed: %s" % (listing_why or "no reason given"))
             continue
         if not workflows:
             # An answered listing that is empty is a FACT, not a gap: the repo is NAMED.
-            if visibility == "PRIVATE":
-                c.add(SKIP, slug, "PRIVATE repo with no workflows")
-            else:
-                c.add(SKIP, slug, "%s repo with no workflows" % visibility)
+            c.add(SKIP, slug, "repo with no workflows")
             continue
         branch, why = default_branch(gh, slug, timeout, branches)
         for wf in sorted(workflows):
@@ -1431,8 +1082,7 @@ COLLAPSE_MIN = 6   # a SKIP reason repeated more than this many times is rolled 
 def print_rows(rows):
     """Print the rows, rolling up any large run of identical SKIPs.
 
-    The visibility map names 70+ repos and only ~17 are cloned here, so a literal listing buries
-    four real failures under 56 identical "no local clone" lines. A report nobody scrolls through
+    A literal listing can bury a few real failures under dozens of identical SKIP lines. A report nobody scrolls through
     is the same failure as a check nobody runs, so the count and the names are kept and the
     56 lines are not.
     """
@@ -1676,7 +1326,6 @@ def main(argv=None):
     ap.add_argument("--skills-dir", default=DEFAULT_SKILLS_DIR)
     ap.add_argument("--code-root", default=DEFAULT_CODE_ROOT,
                     help="where the fleet's working copies live")
-    ap.add_argument("--visibility", default=DEFAULT_VISIBILITY)
     ap.add_argument("--listing", help="captured current skill listing for measured G3 visibility; absent evidence stays UNKNOWN")
     ap.add_argument("--capacity", type=int, help="explicit current G3 capacity policy; historical estimates are not enforced")
     ap.add_argument("--status-json", default=DEFAULT_STATUS,
@@ -1696,7 +1345,6 @@ def main(argv=None):
         except (OSError, ValueError, RuntimeError, ImportError) as error:
             print("status path lookup rejected: %s" % error, file=sys.stderr)
             return 1
-    oracle = VisibilityOracle(a.visibility, offline=a.offline, timeout=a.gh_timeout)
     if not a.no_status:
         try:
             a.status_json = resolve_status_path(a.status_json)
@@ -1728,8 +1376,6 @@ def main(argv=None):
         checks.append(inventory)
     checks.append(check_conformance(repos, a.conformance_timeout))
     checks.append(check_budget(skills_dir, code_root, a.conformance_timeout, a.listing, a.capacity))
-    checks.append(check_data_boundary(os.path.abspath(os.path.expanduser(a.visibility)),
-                                      repos=repos, offline=a.offline, timeout=a.gh_timeout, oracle=oracle))
 
     if a.offline:
         c = Check("ci", "EVERY workflow on EVERY repo of ours is GREEN ON THE DEFAULT BRANCH")
@@ -1737,7 +1383,7 @@ def main(argv=None):
         c.add(UNKNOWN, "(all public repos)", "offline: CI state unobserved")
         checks.append(c)
     else:
-        targets = ci_targets(oracle, slugs, timeout=a.gh_timeout, offline=a.offline,
+        targets = ci_targets(slugs, timeout=a.gh_timeout, offline=a.offline,
                              listings=listings, branches=branches)
         checks.append(check_ci(targets, a.gh_timeout, branches=branches))
 

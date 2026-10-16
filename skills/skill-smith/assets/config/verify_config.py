@@ -2,7 +2,7 @@
 """Check the discovered companion config's generic schema and directory shape.
 
 Uses the emitted consumer identity and the fleet_guards companion resolver, regardless of caller cwd.
-Explicit --config-dir, CONFIG and CONFIG_DIR selections take precedence and never fall through.
+Explicit --config-dir and CONFIG selections take precedence and never fall through.
 Exit 0 means template conformance only, 1 means a failed check, 2 means a usage error.
 Functional readiness requires the consuming skill's own checks and exercise.
 
@@ -86,7 +86,7 @@ def main():
         return 1
     skill = runtime.skill
     print("Config doctor for skill '%s'" % skill)
-    print("Discovery env var: %s (and %s_DIR)" % (env_var(skill), env_var(skill)))
+    print("Discovery env var: %s" % env_var(skill))
     if not cfg:
         print("  [%s] config located -> none found." % FAIL)
         print("       Set %s=<dir> or run: python scripts/init_config.py" % env_var(skill))

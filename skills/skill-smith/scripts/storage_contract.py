@@ -31,10 +31,7 @@ def _runtime():
 
 
 # Path ownership has one source of truth in fleet-guards.
-_shared = _runtime().storage_contract()
-for _name in ("CONTRACT", "FIELDS", "CLASSES", "SEPARATE", "COMBINED", "relative_path",
-              "validate_contract", "in_data_scope", "matches", "no_links", "owners", "canonical_hash"):
-    globals()[_name] = getattr(_shared, _name)
+sc = _runtime().storage_contract()
 
 
 def resolve_companion(repo, companion=None):
@@ -42,16 +39,16 @@ def resolve_companion(repo, companion=None):
 
     Its PRIVATE publication is enforced by commit-time hooks, not here.
     """
-    repo = no_links(repo).resolve()
-    contract = validate_contract(repo)
-    combined = contract.get("layout", SEPARATE) == COMBINED
+    repo = sc.no_links(repo).resolve()
+    contract = sc.validate_contract(repo)
+    combined = contract.get("layout", sc.SEPARATE) == sc.COMBINED
     if companion is None and combined:
         companion = repo
     if companion is None:
         companion = _runtime().companion_resolver(source_root=repo).resolve_companion_root(contract["tool"])
         if companion is None:
             raise ValueError("companion is uninitialized; configure the existing shared resolver")
-    root = no_links(companion).resolve()
+    root = sc.no_links(companion).resolve()
     if combined:
         if root != repo:
             raise ValueError("combined_private_repo requires the same source and companion root")
@@ -62,9 +59,9 @@ def resolve_companion(repo, companion=None):
 
 def inventory(root, selected=None, *, hash_files=False):
     """Enumerate metadata without following links; hashes are limited to planned removals."""
-    root = no_links(root).resolve()
-    start = root / relative_path(selected) if selected else root
-    no_links(start)
+    root = sc.no_links(root).resolve()
+    start = root / sc.relative_path(selected) if selected else root
+    sc.no_links(start)
     rows, errors = [], []
 
     def visit(path):
@@ -105,14 +102,14 @@ def inventory(root, selected=None, *, hash_files=False):
 
 
 def check_storage(repo, companion=None):
-    contract = validate_contract(repo)
+    contract = sc.validate_contract(repo)
     root = resolve_companion(repo, companion)
-    layout = contract.get("layout", SEPARATE)
+    layout = contract.get("layout", sc.SEPARATE)
     data_roots = contract.get("data_roots", [])
     rows, errors, missing, excluded = [], [], [], []
-    if layout == COMBINED:
+    if layout == sc.COMBINED:
         for relative in data_roots:
-            if no_links(root / relative, allow_missing=True) is None:
+            if sc.no_links(root / relative, allow_missing=True) is None:
                 missing.append(relative)
                 continue
             found, failures = inventory(root, relative)
@@ -132,7 +129,7 @@ def check_storage(repo, companion=None):
     totals = {row["artifact_id"]: 0 for row in contract["artifacts"]}
     undeclared, ambiguous = [], []
     for row in rows:
-        found = owners(contract, row["path"])
+        found = sc.owners(contract, row["path"])
         row["artifact_ids"] = [a["artifact_id"] for a in found]
         if row["type"] == "directory":
             continue  # containers are structural; files and empty leaves are checked below
@@ -158,7 +155,7 @@ def check_storage(repo, companion=None):
     return {"schema_version": 1, "mode": "dry_run", "root": str(root), "layout": layout,
             "data_roots": data_roots, "missing_data_roots": missing, "excluded_source": excluded,
             "bytes": total,
-            "artifact_scope_bytes": total, "worktree_bytes_excluding_git": total if layout == SEPARATE else None,
+            "artifact_scope_bytes": total, "worktree_bytes_excluding_git": total if layout == sc.SEPARATE else None,
             "git_overhead": overhead,
             "artifact_bytes": totals, "undeclared": undeclared, "ambiguous": ambiguous,
             "boundary_errors": errors, "over_budget": over_budget, "structure": rows,
@@ -171,7 +168,7 @@ def git_overhead(root):
     admin = root / ".git"
     if not admin.exists():
         return {"bytes": 0, "status": "missing", "errors": ["missing_git_metadata"]}
-    no_links(admin)
+    sc.no_links(admin)
     if admin.is_file():
         return {"bytes": admin.stat().st_size, "status": "external_admin_not_traversed", "errors": []}
     total, errors = 0, []
@@ -189,7 +186,7 @@ def git_overhead(root):
 
 
 def retirement_rows(contract, root, path):
-    if not in_data_scope(contract, path):
+    if not sc.in_data_scope(contract, path):
         raise ValueError("retirement path is outside declared data_roots")
     for parent in (root / path).parents:
         if parent == root:
@@ -202,10 +199,10 @@ def retirement_rows(contract, root, path):
     nonempty = {r["path"].rpartition("/")[0] for r in rows}
     for row in rows:
         rel = row["path"]
-        if (any(matches(rel, p) for p in contract.get("protected_paths", []))
+        if (any(sc.matches(rel, p) for p in contract.get("protected_paths", []))
                 or Path(rel).name.casefold().endswith((".lock", ".pid", "-wal", "-shm"))):
             raise ValueError("active/recovery marker or protected path refuses retirement: " + rel)
-        found = owners(contract, rel)
+        found = sc.owners(contract, rel)
         # An undeclared container may only contain independently declared removable children.
         container = row["type"] == "directory" and rel in nonempty
         if (not found and not container) or len(found) > 1:
@@ -217,7 +214,7 @@ def retirement_rows(contract, root, path):
 
 def read_paths_file(path):
     """Read one bounded selection; the planner still validates every concrete path."""
-    path = no_links(path)
+    path = sc.no_links(path)
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode):
         raise ValueError("paths-file must be an ordinary UTF-8 JSON file")
@@ -246,9 +243,9 @@ def _native_request(root, rows, *, control_files=()):
 def create_plan(repo, companion, paths, reason, inactive_evidence):
     if not reason.strip() or not inactive_evidence.strip():
         raise ValueError("retirement needs a reviewed reason and evidence that writers/references are inactive")
-    contract = validate_contract(repo)
+    contract = sc.validate_contract(repo)
     root = resolve_companion(repo, companion)
-    clean = sorted(relative_path(p) for p in paths)
+    clean = sorted(sc.relative_path(p) for p in paths)
     if any(character in path for path in clean for character in "[]"):
         raise ValueError("retirement requires concrete paths without glob patterns")
     normalized = [p.casefold() if os.name == "nt" else p for p in clean]
@@ -263,7 +260,7 @@ def create_plan(repo, companion, paths, reason, inactive_evidence):
         controls = _control_snapshots(_control_files(repo))
         _native_request(root, rows, control_files=controls)
     return {"schema_version": 1, "mode": "review_required", "companion": str(root),
-            "contract_sha256": canonical_hash(contract),
+            "contract_sha256": sc.canonical_hash(contract),
             "reason": reason, "inactive_evidence": inactive_evidence,
             "activity_verification": "operator assertion; unknown/active writers must not be approved",
             "items": items}
@@ -279,14 +276,14 @@ class RetirementApplyError(ValueError):
 
 def _control_files(repo):
     """The source contract stays frozen while the native executor removes files."""
-    return [Path(repo) / CONTRACT]
+    return [Path(repo) / sc.CONTRACT]
 
 
 def _control_snapshots(paths):
     records = []
     for path in paths:
         path = Path(os.path.abspath(path))
-        exists = no_links(path, allow_missing=True) is not None
+        exists = sc.no_links(path, allow_missing=True) is not None
         if exists and path.is_dir():
             # The root .git directory is checked as a boundary, not read as a file.
             records.append({"path": str(path), "directory": True})
@@ -483,7 +480,7 @@ try {
                 if row["path"] in acknowledged:
                     continue
                 try:
-                    if no_links(root / row["path"], allow_missing=True) is None:
+                    if sc.no_links(root / row["path"], allow_missing=True) is None:
                         missing.append(row["path"])
                 except (OSError, ValueError):
                     unknown.append(row["path"])
@@ -493,7 +490,7 @@ try {
                                         "native_exit_code": result.returncode})
         return removed
     for row in ordered:
-        target = no_links(root / relative_path(row["path"]))
+        target = sc.no_links(root / sc.relative_path(row["path"]))
         if not target.is_relative_to(root) or target == root:
             raise ValueError("deletion escaped the companion boundary")
         if row["type"] == "directory" and any(target.iterdir()):
@@ -564,7 +561,7 @@ def main(argv=None):
         parser.error("--path and --paths-file are only valid for plan")
     try:
         if args.command == "validate":
-            contract = validate_contract(args.repo)
+            contract = sc.validate_contract(args.repo)
             result = {"ok": True, "tool": contract["tool"], "artifacts": len(contract["artifacts"])}
         elif args.command == "check":
             result = check_storage(args.repo, args.companion)

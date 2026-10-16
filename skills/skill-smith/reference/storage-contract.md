@@ -58,7 +58,7 @@ outside the declared data roots.
 ## Runtime discovery and outputs
 
 `fleet_guards.runtime.companion_resolver` selects the first existing supported DATA candidate in this order:
-`SKILL_SMITH_DATA_DIR`, `SKILL_SMITH_CONFIG`, `SKILL_SMITH_CONFIG_DIR`, then a proven sibling
+`SKILL_SMITH_DATA_DIR`, `SKILL_SMITH_CONFIG`, then a proven sibling
 companion. There is no home-directory candidate. Companion-root candidates try `data/` first.
 Writers use the declared layout: `data/fleet-check-status.json`, `data/worklist.json`
 and `data/description-backups/`. Clear an inherited DATA_DIR override when switching CONFIG.
@@ -129,7 +129,7 @@ authorize deletion or override a prior refusal; each concrete selection still ne
 its own review and current admission.
 
 Pure contract validation and path matching live in fleet-guards
-(`fleet_guards.runtime.storage_contract()`). Smith's adapter reexports those primitives and owns the
+(`fleet_guards.runtime.storage_contract()`). Smith's CLI calls those primitives directly and owns the
 inventory and reviewed-retirement CLI. Run that CLI from the canonical source checkout:
 
 ```bash

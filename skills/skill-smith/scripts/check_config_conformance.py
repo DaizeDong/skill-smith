@@ -17,7 +17,8 @@ import sys
 import tempfile
 
 import config_contract
-import storage_contract
+from fleet_guards.runtime import storage_contract as _storage_contract
+storage_contract = _storage_contract()
 
 PASS, FAIL, NOT_RUN, NOT_APPLICABLE = "PASS", "FAIL", "NOT_RUN", "NOT_APPLICABLE"
 LABELS = {

@@ -16,8 +16,7 @@ Config discovery order:
 
 1. `--out <dir>` for initialization or `--config-dir <dir>` for the doctor.
 2. `$__ENVVAR__`, environment variable (location-independent).
-3. `$__ENVVAR___DIR`, accepted alias.
-4. The companion resolver's existing candidates: `$__DATAENV__`, then the sibling
+3. The companion resolver's existing candidates: `$__DATAENV__`, then the sibling
    `__NAME__-config/`. There is no home-directory candidate.
 
 Explicit config selections never fall through: the doctor fails if the selected directory is

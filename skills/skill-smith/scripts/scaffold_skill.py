@@ -280,8 +280,8 @@ def emit_config_bearing(root, name, force, write_fn):
         "documentation": ["README.md", "README_CN.md", "CONFIG.md"],
         "settings": {
             "schema_document": "CONFIG.md", "discovery_document": "CONFIG.md",
-            "environment": env, "aliases": [env + "_DIR", name.upper().replace("-", "_") + "_DATA_DIR"],
-            "precedence": ["explicit config directory", env, env + "_DIR", "shared companion resolver"],
+            "environment": env, "aliases": [name.upper().replace("-", "_") + "_DATA_DIR"],
+            "precedence": ["explicit config directory", env, "shared companion resolver"],
             "required_fields": ["capability.required_resource"],
             "initializer": {"path": "scripts/init_config.py", "args": ["--out", "{output}"]},
             "doctor": {"path": "scripts/verify_config.py", "args": []}}}

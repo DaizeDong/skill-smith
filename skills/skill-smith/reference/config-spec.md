@@ -27,7 +27,7 @@ A registry filename or a particular version-key spelling is not required.
 Name required resource roots and the credential references needed for the selected capability.
 Public examples must be synthetic and reproducible by `tools/make_fixtures.py`.
 
-The primary convention is `<SKILL>_CONFIG`, with `<SKILL>_CONFIG_DIR` as an alias. Use the shared
+The convention is `<SKILL>_CONFIG` (no alias). Use the shared
 companion resolver for the supported sibling/default paths and document the actual precedence.
 Do not maintain a second resolver that can silently choose another root. Missing optional read
 configuration may be reported as uninitialized; required operations and writes must fail clearly.

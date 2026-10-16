@@ -3,7 +3,8 @@ import json
 import re
 from pathlib import Path
 
-import storage_contract
+from fleet_guards.runtime import storage_contract as _storage_contract
+storage_contract = _storage_contract()
 
 CONTRACT = "config.contract.json"
 

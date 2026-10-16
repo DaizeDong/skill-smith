@@ -4,7 +4,7 @@
 `__NAME__` is **config-bearing**, it reads per-user state (keys, installed-tool registry) from a
 **separate, private** companion config repo. Full contract: [CONFIG.md](CONFIG.md).
 
-- **Mount (discovery order):** CLI path → `$__ENVVAR__` → `$__ENVVAR___DIR` → the fleet_guards
+- **Mount (discovery order):** CLI path → `$__ENVVAR__` → the fleet_guards
   companion resolver (`$__DATAENV__`, then the proven sibling `__NAME__-config/`; no home-directory default).
   Explicit config paths never fall through. Missing config makes the doctor exit 1; a missing `fleet_guards`
   package and unproven discovery fail with instructions. See [CONFIG.md](CONFIG.md) for the full contract.
