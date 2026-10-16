@@ -194,7 +194,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file
 
 
 def _storage_module():
-    """Use the same pinned resolver and destination check as the fleet report writer."""
+    """Use the same companion resolver and destination check as the fleet report writer."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fleet_check.py")
     spec = importlib.util.spec_from_file_location("_fleet_storage_for_trim", path)
     if spec is None or spec.loader is None:

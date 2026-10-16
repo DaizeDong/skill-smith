@@ -18,10 +18,8 @@ jobs:
       PYTHONUTF8: '1'
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install -r requirements.txt git+https://github.com/DaizeDong/fleet-guards
       - run: python skills/skill-smith/scripts/storage_contract.py validate --repo .

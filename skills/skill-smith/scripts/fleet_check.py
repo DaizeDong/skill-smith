@@ -919,14 +919,13 @@ class VisibilityOracle:
     Three fixes were on the table. A TTL alone is the cheapest, but it does not close the hole: a
     freshly written map entry is inside any window, so the poisoned-copy demonstration above still
     passes. Scheduling refresh_visibility.py narrows the drift but leaves a window of exactly the
-    refresh interval, and it makes correctness depend on a scheduled task nobody watches -- the same
-    "remember to run the script" design that visibility_of.py already learned not to trust. So the
+    refresh interval, and it makes correctness depend on a scheduled task nobody watches. So the
     order is inverted instead: gh is asked live, and the map is consulted ONLY when gh cannot answer
     (--offline, gh missing, unauthenticated, rate limited).
 
     The cost is real and was accepted deliberately: one `gh repo view` per DISTINCT slug that this
-    check actually reaches, which is the handful of skills that have both tools/datadir.py and an
-    initialized data dir, not the 119 keys in the map. Answers are cached per run. That is small
+    check actually reaches, which is the handful of skills with an initialized companion data dir,
+    not the 119 keys in the map. Answers are cached per run. That is small
     beside the two gh calls per public repo the workflow check already makes.
 
     The fallback is bounded so the property survives even offline: the map may only vote while it is
@@ -1033,9 +1032,8 @@ class VisibilityOracle:
             return None, "gh is not on PATH"
         # Every logged in identity: a private repo owned by one account is a 404 to another's
         # token, so asking with only one of them turns "private, and you cannot see it" into
-        # "no answer". visibility_of.py handles this with `gh auth switch`, which rewrites the
-        # machine's ACTIVE account. This tool is read-only, so it borrows each token for one
-        # child process instead and leaves the active account exactly where it found it.
+        # "no answer". `gh auth switch` would rewrite the machine's ACTIVE account. This tool is
+        # read-only, so it borrows each token for one child process instead and leaves the active account exactly where it found it.
         def accounts():
             yield None
             yield from self._accounts(gh)

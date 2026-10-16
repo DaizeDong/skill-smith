@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Scaffold a Skill-Repo-Spec-v1-conformant Claude Code skill repo skeleton.
 
-Creates version-aligned entry documents, a skill skeleton and pinned Guards/Style integrations.
+Creates version-aligned entry documents, a skill skeleton and .githooks shims.
 Complete the draft content under ../reference/scaffold.md before accepted-stage conformance.
 Stdlib only.
 
