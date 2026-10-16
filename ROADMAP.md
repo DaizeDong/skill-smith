@@ -21,7 +21,7 @@ production readiness.
   evidence are separate. Smith declares runtime-storage-only applicability; external operators
   own initialization of its supplied configuration inputs.
 - Report and trim writers check each destination once: inside a versioned companion, outside
-  the tool repository. PRIVATE publication is enforced by commit-time hooks and CI, not at write
+  the tool repository. PRIVATE publication is enforced by the repository's commit-time `.githooks` shims, not at write
   time. Synthetic tests do not establish live fleet readiness.
 - Reviewed retirement accepts bounded JSON path selections and rejects plans above Windows
   snapshot row or native request limits before approval. Operators choose each concrete batch;

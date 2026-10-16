@@ -170,7 +170,7 @@ Companion discovery always uses the shared checker's own pinned Guards resolver,
 including for targets that do not ship Guards. The resolver is explicitly bound to
 the target source. There is no target/shared fallback. A companion inside the source
 fails. Inventory reports links without descending into them. PRIVATE publication is
-enforced by commit-time hooks and CI, not by this CLI.
+enforced by the repository's commit-time `.githooks` shims, not by this CLI.
 
 Smith's report JSON (`fleet-status`), its atomic staging file (`fleet-status-staging`), trim
 worklists (`worklist`) and rollback leaves (`description-rollback`) are declared in the source

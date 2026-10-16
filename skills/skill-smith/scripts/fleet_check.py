@@ -68,13 +68,8 @@ THE ONE INVARIANT THAT MAKES THE STATUSES MEAN ANYTHING
 -------------------------------------------------------
     UNKNOWN means "this run could not OBSERVE the answer". It never means "the answer was bad."
 
-That distinction is the whole reason this file was rewritten on 2026-07-30. The workflow check used
-to stat the LOCAL clone and print PASS, so a guard workflow that was committed but never pushed
-scored green on a PUBLIC repo whose remote carried no guard at all (claude-codex-memory-sync was
-exactly this, for as long as the check existed). The CI check asked only about pii-guard, so
-promotion-assistant printed PASS while its dash-guard had been red since 2026-07-24. And UNKNOWN was
-defined as never-failing, which was right for "gh is not installed" and catastrophically wrong for
-"this public repo has no guard workflow at all" -- a real finding wearing an UNKNOWN costume.
+UNKNOWN never fails, which is right for "gh is not installed" and wrong for a real finding, so
+a finding must never be reported as UNKNOWN.
 
 So the two are now separated by construction. Infrastructure that is unavailable (no gh, not
 authenticated, rate limited, offline, remote HEAD not present locally) yields UNKNOWN, is printed
@@ -1281,24 +1276,16 @@ def check_ci(targets, timeout, branches=None):
     the listing could not be observed, in which case `why` says so and the repo gets an UNKNOWN row
     rather than vanishing.
 
-    EVERY workflow in the listing is read; see the CI_WARN_ONLY note at the top of this file.
-
-    One row per (repo, workflow). The predecessor asked only about pii-guard and titled itself "the
-    guard CI is green", so promotion-assistant printed a single confident PASS on 2026-07-30 while
-    its dash-guard had been failing since 2026-07-24. A check that names one workflow and reports on
-    the category is not a check, it is a headline.
+    EVERY workflow in the listing is read, one row per (repo, workflow); see the CI_WARN_ONLY note
+    at the top of this file. Gates do not run in CI, so these are product workflows.
 
     WHY THE BRANCH FILTER EXISTS (2026-07-31)
     -----------------------------------------
     The query was `gh run list -w <wf> --limit 1`, which is the newest run on ANY ref. Every other
-    check in this file interrogates the remote DEFAULT branch, and the sentence this one prints --
-    "the guard CI is green" -- is a claim about the branch the world clones. On 2026-07-31 two of
-    its 34 green rows were evidence from the topic branch feat/login-handoff-and-depth-gate on
-    shopping-aggregator, reported as if they described main. That is survivable only by luck: on
-    2026-07-22 daily-hotspots had a GREEN pii-guard run on feat/source-coverage-selfevolve while
-    master's own newest pii-guard run was a FAILURE, so this check would have printed PASS over a
-    red default branch. A gate that answers a question nobody asked, in the voice of the question
-    they did ask, is the defect class this whole file was written against.
+    check in this file interrogates the remote DEFAULT branch, and the verdict this one prints is a
+    claim about the branch the world clones. On 2026-07-31 two of its green rows were evidence from
+    a topic branch, reported as if they described main, and a green topic-branch run can sit over a
+    red default branch.
 
     "No run on the default branch" is UNKNOWN, not a silent fallback to whatever run exists. A
     workflow that has only ever fired on topic branches has not yet said anything about the branch

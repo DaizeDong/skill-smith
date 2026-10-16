@@ -77,12 +77,12 @@ contract and `reference/documentation.md` for its documentation duties.
 
 ## Fleet checks
 
-`scripts/fleet_check.py` checks junctions, local conformance, whole-library budget, DATA boundaries,
-remote guard actions and every remote default-branch workflow. It does not repair repositories.
-Scaffold metadata validation and remote action inspection require PyYAML; unavailable remote parsing is reported as unobserved.
+`scripts/fleet_check.py` checks junctions, local conformance, whole-library budget, DATA boundaries
+and every remote default-branch product workflow. It does not repair repositories.
+Scaffold metadata validation requires PyYAML.
 
 Reports use the shared companion resolver and check the destination once before writing: inside
-a versioned companion, outside the tool repository. Commit-time hooks and CI enforce PRIVATE publication.
+a versioned companion, outside the tool repository. The repository's `.githooks` shims enforce PRIVATE publication at commit time.
 `--no-status` is console-only. `--offline` reports remote rows unobserved, never passed. Quote the
 full verdict with its coverage fraction.
 

@@ -158,7 +158,7 @@ instructions and final deliverables. A PRIVATE repository does not make developm
 intermediate reports or obsolete snapshots necessary to retain.
 
 Write only declared, non-retired artifacts, into the companion and outside the source tree.
-Writers do not prove PRIVATE publication at runtime; commit-time hooks and CI enforce it, and
+Writers do not prove PRIVATE publication at runtime; the repository's `.githooks` shims enforce it at commit time, and
 `storage_contract.py check` reports undeclared paths. Undeclared or retired artifacts must not be written. Existing undeclared paths require review and are not
 deleted by default. A retention class does not itself authorize deletion: verify that producers,
 consumers and active recovery needs permit retirement before applying a reviewed removal plan.
