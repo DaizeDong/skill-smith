@@ -15,6 +15,9 @@ All notable changes to this project are documented here (Keep a Changelog style)
   DATA-boundary row now reads the companion's origin visibility. `tools/make_fixtures.py` keeps
   only the public example generator.
 - Delete the test suite, pytest config and dev requirements; CI no longer runs tests.
+- Delete the `storage-contract` CI workflow; run `storage_contract.py validate --repo .`
+  locally when needed. `canonical_hash` now comes from the fleet-guards storage contract
+  instead of a local copy.
 - Stop passing `mcp_isolation=True` for `read_only` requirements: llmcall removed the
   option. read_only still runs judge mode on sandboxed Codex rungs and remains not a
   permission guarantee.

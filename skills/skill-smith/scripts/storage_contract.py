@@ -33,7 +33,7 @@ def _runtime():
 # Path ownership has one source of truth in fleet-guards.
 _shared = _runtime().storage_contract()
 for _name in ("CONTRACT", "FIELDS", "CLASSES", "SEPARATE", "COMBINED", "relative_path",
-              "validate_contract", "in_data_scope", "matches", "no_links", "owners"):
+              "validate_contract", "in_data_scope", "matches", "no_links", "owners", "canonical_hash"):
     globals()[_name] = getattr(_shared, _name)
 
 
@@ -213,10 +213,6 @@ def retirement_rows(contract, root, path):
         if any(a["retention_rule"]["class"] == "core" for a in found):
             raise ValueError("core artifact refuses retirement: " + rel)
     return rows
-
-
-def canonical_hash(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def read_paths_file(path):
