@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -22,21 +21,17 @@ MAX_NATIVE_REQUEST_BYTES = 16 * 1024 * 1024
 MAX_PATHS_FILE_BYTES = 1024 * 1024
 
 
-def load_guard(repo, name):
-    # The single shared checker owns one reviewed security dependency. Consumer
-    # repositories need neither a copied script nor a second Guards installation.
-    package_root = Path(__file__).resolve().parents[3]
-    path = package_root / "guards/tools" / (name + ".py")
-    spec = importlib.util.spec_from_file_location("storage_contract_" + name, path)
-    if spec is None or spec.loader is None:
-        raise ValueError("required pinned guards module is unavailable")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+def _runtime():
+    try:
+        from fleet_guards import runtime
+    except ImportError as exc:
+        raise ImportError(
+            'fleet_guards is not installed; run: pip install -e "$(git config --get fleet.guards)"') from exc
+    return runtime
 
 
-# Path ownership has one source of truth in the pinned Guards kit.
-_shared = load_guard(None, "storage_contract")
+# Path ownership has one source of truth in fleet-guards.
+_shared = _runtime().storage_contract()
 for _name in ("CONTRACT", "FIELDS", "CLASSES", "SEPARATE", "COMBINED", "relative_path",
               "validate_contract", "in_data_scope", "matches", "no_links", "owners"):
     globals()[_name] = getattr(_shared, _name)
@@ -45,7 +40,7 @@ for _name in ("CONTRACT", "FIELDS", "CLASSES", "SEPARATE", "COMBINED", "relative
 def resolve_companion(repo, companion=None):
     """The companion root, separate from the source unless the layout is combined.
 
-    Its PRIVATE publication is enforced by commit-time hooks and CI, not here.
+    Its PRIVATE publication is enforced by commit-time hooks, not here.
     """
     repo = no_links(repo).resolve()
     contract = validate_contract(repo)
@@ -53,9 +48,7 @@ def resolve_companion(repo, companion=None):
     if companion is None and combined:
         companion = repo
     if companion is None:
-        resolver = load_guard(repo, "datadir")
-        resolver._own_repo_root = lambda: str(repo)
-        companion = resolver.resolve_companion_root(contract["tool"])
+        companion = _runtime().companion_resolver(source_root=repo).resolve_companion_root(contract["tool"])
         if companion is None:
             raise ValueError("companion is uninitialized; configure the existing shared resolver")
     root = no_links(companion).resolve()

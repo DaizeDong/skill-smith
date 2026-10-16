@@ -31,7 +31,7 @@ for completion, review and release duties.
 ## What it does
 
 - Route new single or batch skill creation through research, overlap checks and available generators.
-- Emit a version-aligned skeleton with pinned Guards and Style submodules and fail-closed hooks.
+- Emit a version-aligned skeleton with fail-closed `.githooks` shims that run the local fleet-guards and fleet-style checkouts.
 - Validate evaluator G1/G2 scores and required G3-G8 artifacts against frozen policy and candidate.
 - Measure whole-library budget and overlap, preserving missing inventory and listing evidence.
 - Hand accepted evidence to an available self-evolve provider and verify requested installation or publication separately.
@@ -72,13 +72,14 @@ runnable evaluator; unavailable providers remain explicit gaps.
 For a source checkout:
 
 ```bash
-git clone --recurse-submodules https://github.com/DaizeDong/skill-smith.git
+git clone https://github.com/DaizeDong/skill-smith.git
 cd skill-smith
 git config core.hooksPath .githooks
+python -m pip install -e "$(git config --get fleet.guards)"
 python -m pip install -r requirements.txt
 ```
 
-Keep both submodules initialized; an existing clone uses `git submodule update --init --recursive`.
+The hooks and checkers use the local fleet-guards and fleet-style checkouts named by `git config fleet.guards` and `git config fleet.style`; an unset key blocks.
 Use a public-safe commit identity before contributing. Installed aliases and resource paths require
 their own verification; see [deployment](skills/skill-smith/reference/deploy.md).
 
@@ -142,10 +143,10 @@ export SKILL_SMITH_CONFIG="$(cd ../skill-smith-config && pwd)"
 ```
 
 For an existing companion, clone it and set the same variable. The visibility query must return
-`PRIVATE`. PRIVATE publication is enforced by commit-time hooks and CI; writers do not prove it at runtime.
+`PRIVATE`. PRIVATE publication is enforced by commit-time hooks; writers do not prove it at runtime.
 See [runtime discovery and outputs](skills/skill-smith/reference/storage-contract.md#runtime-discovery-and-outputs)
 for selection precedence, exact output paths, the destination check, console-only operation and recovery,
-and [Guards companion verification](guards/COMPANION.md#verifying-a-companion) for the commit-time audit.
+and `COMPANION.md` in the fleet-guards checkout for the commit-time audit.
 Smith owns runtime storage only; Profile Sync and operators initialize the external configuration
 inputs listed in the storage reference. G8 conformance alone does not prove storage readiness.
 
@@ -158,13 +159,13 @@ Budget requires a current captured `--listing FILE` to prove visibility. Histori
 advisory; `--capacity N` supplies a current policy. Observed listing losses and projected removals
 are separate. A removal decision remains BLOCKED; incomplete observations cannot produce G3 PASS.
 
-`fleet_check.py` is read-only and checks aliases, local conformance, budget, DATA boundaries,
-remote guard workflows and each default-branch workflow. `--offline` leaves remote rows unobserved.
+`fleet_check.py` is read-only and checks aliases, local conformance, budget, DATA boundaries
+and each default-branch workflow. `--offline` leaves remote rows unobserved.
 Quote its coverage-bearing VERDICT, not only the failure count. Workflow inspection distinguishes
 executed jobs from zero-step/no-runner failure without attributing an unproven cause.
 
 Local conformance retains security and packaging checks and delegates structural documentation to
-`style/tools/doc_contract.py --root . --profile skill --stage accepted`. A missing checker fails.
+`tools/doc_contract.py --root . --profile skill --stage accepted` from the fleet-style checkout. A missing checker fails.
 SKILL size warns above 12,000 characters and fails above 16,000, with existing dated shrink
 exceptions reported explicitly. Required relative resources must resolve. These checks do not
 establish live usefulness, remote CI or semantic correctness.

@@ -4,6 +4,16 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 
+- Gates run from local checkouts. The `guards` and `style` submodules and the `pii-guard`,
+  `dash-guard`, `doc-contract`, `load-budget` and `fleet-sync` workflows are removed; the
+  `.githooks` shims run the fleet-guards and fleet-style checkouts named by `git config
+  fleet.guards` and `fleet.style` and block when either is unset. The scaffolder now emits
+  those shims with no submodules or gate workflows, and generated config commands, the storage
+  CLI and `fleet_check` resolve companions through `fleet_guards.runtime`. Conformance checks
+  the shims, `core.hooksPath` and the kit checkouts instead of `guards/` files. `fleet_check`
+  drops the remote guard-workflow check and the removed `prove_private_companion` call; its
+  DATA-boundary row now reads the companion's origin visibility. `tools/make_fixtures.py` keeps
+  only the public example generator.
 - Delete the test suite, pytest config and dev requirements; CI no longer runs tests.
 - Stop passing `mcp_isolation=True` for `read_only` requirements: llmcall removed the
   option. read_only still runs judge mode on sandboxed Codex rungs and remains not a
@@ -15,7 +25,7 @@ All notable changes to this project are documented here (Keep a Changelog style)
   running the Guards proof and `authorize_artifact_write` before and again around each write;
   retirement resolves the companion without proving it and no longer freezes Git configuration
   files. `--synthetic-home` and its visibility receipts are gone. PRIVATE publication stays
-  enforced by commit-time hooks and CI; the fleet DATA-boundary audit still checks visibility.
+  enforced by commit-time hooks; the fleet DATA-boundary audit still checks visibility.
 
 ### Fixed
 - Reject oversized Windows retirement plans before approval: at most 10,000 file

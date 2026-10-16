@@ -90,7 +90,7 @@
       "purpose": "Optional shared resolver identity",
       "schema": "Single tool identity line",
       "producer": "Companion initializer",
-      "consumer_or_final_deliverable": "guards/tools/datadir.py",
+      "consumer_or_final_deliverable": "fleet_guards.runtime.companion_resolver",
       "retention_rule": {
         "class": "core",
         "rule": "Keep while marker-based discovery is used"

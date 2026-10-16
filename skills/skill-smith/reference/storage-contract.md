@@ -57,7 +57,7 @@ outside the declared data roots.
 
 ## Runtime discovery and outputs
 
-`guards/tools/datadir.py` selects the first existing supported DATA candidate in this order:
+`fleet_guards.runtime.companion_resolver` selects the first existing supported DATA candidate in this order:
 `SKILL_SMITH_DATA_DIR`, `SKILL_SMITH_CONFIG`, `SKILL_SMITH_CONFIG_DIR`, then a proven sibling
 companion. There is no home-directory candidate. Companion-root candidates try `data/` first.
 Writers use the declared layout: `data/fleet-check-status.json`, `data/worklist.json`
@@ -67,8 +67,8 @@ Each writer checks its destination once, before writing: it must sit inside a ve
 This applies to explicit `--status-json`, `--out` and `--backup-dir` destinations too. There is no
 in-repo fallback; an unresolved companion fails.
 
-PRIVATE publication of the companion is enforced by commit-time hooks and CI, not at write time; see
-[Guards companion verification](../../../guards/COMPANION.md#verifying-a-companion). `.companion`
+PRIVATE publication of the companion is enforced by commit-time hooks, not at write time; see
+`COMPANION.md` in the fleet-guards checkout. `.companion`
 establishes ownership only. Commit and push run data in the private companion. Restore by cloning
 that companion, setting CONFIG and checking resolved paths before resuming.
 
@@ -128,8 +128,8 @@ and failure evidence, and temporary files. Changing a retention class does not
 authorize deletion or override a prior refusal; each concrete selection still needs
 its own review and current admission.
 
-Pure contract validation and path matching live in the pinned Guards module
-`guards/tools/storage_contract.py`. Smith's adapter reexports those primitives and owns the
+Pure contract validation and path matching live in fleet-guards
+(`fleet_guards.runtime.storage_contract()`). Smith's adapter reexports those primitives and owns the
 inventory and reviewed-retirement CLI. Run that CLI from the canonical source checkout:
 
 ```bash

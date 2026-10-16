@@ -9,8 +9,8 @@ The wheel CI rejects a mismatch.
 
 ## Build and dependencies
 
-Use Python 3.10+ and a reviewed distribution of the declared `fleet-guards`
-dependency. Build a wheel with:
+Use Python 3.10+ and the declared `fleet-guards` dependency, installed editable from the
+local checkout: `pip install -e "$(git config --get fleet.guards)"`. Build a wheel with:
 
 ```bash
 python -m pip wheel --no-deps --wheel-dir OUTPUT_DIRECTORY .

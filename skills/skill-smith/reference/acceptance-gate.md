@@ -72,8 +72,8 @@ The gate recomputes lift and both trigger rates rather than trusting a supplied 
 All records attest to external checks; retain their raw logs for independent review. Hashing a claimed
 pass does not authenticate that the check actually ran.
 
-The public `tools/make_fixtures.py` generator creates test bundles with `fixture: true`. They may
-produce `contract_valid: true`, but always `accepted: false`, `verdict: "synthetic_only"`, exit 1.
+Synthetic bundles marked `fixture: true` may produce
+`contract_valid: true`, but always `accepted: false`, `verdict: "synthetic_only"`, exit 1.
 They are examples of format and gate behavior, never evidence of real skill effectiveness.
 
 ## Result and resume

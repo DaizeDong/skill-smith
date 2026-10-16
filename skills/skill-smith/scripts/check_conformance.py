@@ -422,12 +422,20 @@ def check_retrofit_markers(root, contents=None):
               True)
 
 
+def kit_path(root, key, rel):
+    """A file in the local kit checkout named by `git config fleet.<key>`, or None."""
+    p = subprocess.run(["git", "config", "--get", "fleet." + key], cwd=root,
+                       capture_output=True, text=True)
+    base = p.stdout.strip()
+    return os.path.join(base, *rel.split("/")) if base else None
+
+
 def check_documentation(root, stage="accepted"):
-    """Delegate structural documentation rules to the pinned presentation kit."""
-    checker = os.path.join(root, "style", "tools", "doc_contract.py")
-    if not os.path.isfile(checker):
+    """Delegate structural documentation rules to the fleet-style checkout."""
+    checker = kit_path(root, "style", "tools/doc_contract.py")
+    if not checker or not os.path.isfile(checker):
         check("documentation: checker available", False,
-              "style/tools/doc_contract.py missing; initialize the reviewed Style revision")
+              "git config fleet.style is unset or its checkout has no tools/doc_contract.py")
         return
     try:
         result = subprocess.run([sys.executable, checker, "--root", root, "--profile", "skill",
@@ -496,21 +504,26 @@ def main(root, stage="accepted"):
     # Private records in public history require history remediation, not only a working-file edit.
     # Run the safety gate before commit so examples and generated artifacts remain synthetic.
     # A repo without the gate is a repo accumulating that debt right now.
-    # The kit is a submodule now, so the paths moved. .pii-allow stays in the repo: which
-    # findings are exempt is a fact about THIS repo and cannot be shared.
-    for rel in ["guards/tools/pii_guard.py",
-                "guards/hooks/pre-commit", "guards/hooks/pre-push",
-                ".github/workflows/pii-guard.yml", ".pii-allow"]:
-        check("PII gate: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
-    # A successful exit means no blocking findings. Keep nonblocking diagnostics visible.
-    # FAIL, not skip, when the scanner is absent. `if os.path.isfile(...)` made this whole check
-    # vanish silently on any repo missing the guard, which after the submodule migration is every
-    # repo whose submodule is not checked out. A conformance report that drops a check reads
-    # exactly like one where the check passed.
-    guard = os.path.join(root, "guards", "tools", "pii_guard.py")
-    if not os.path.isfile(guard):
+    # The checks live in the local fleet-guards and fleet-style checkouts named by
+    # git config fleet.guards and fleet.style; the repo carries the .githooks shims that run
+    # them, plus .pii-allow and .dataclass.json, which are facts about THIS repo.
+    for rel in [".githooks/pre-commit", ".githooks/pre-push", ".pii-allow", ".dataclass.json"]:
+        check("gate file: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
+    staged = subprocess.run(["git", "ls-files", "-s", "--", ".githooks/pre-commit", ".githooks/pre-push"],
+                            cwd=root, capture_output=True, text=True).stdout.split("\n")
+    modes = [line.split()[0] for line in staged if line.strip()]
+    check("hooks: .githooks shims tracked as executable", modes == ["100755", "100755"],
+          "modes %s" % (modes or "untracked"))
+    hooks_path = subprocess.run(["git", "config", "--get", "core.hooksPath"], cwd=root,
+                                capture_output=True, text=True).stdout.strip()
+    check("hooks: core.hooksPath = .githooks", hooks_path == ".githooks", hooks_path or "unset")
+
+    # FAIL, not skip, when a scanner is absent: a report that drops a check reads exactly like
+    # one where the check passed.
+    guard = kit_path(root, "guards", "tools/pii_guard.py")
+    if not guard or not os.path.isfile(guard):
         check("PII gate: scan completed (tree + history)", False,
-              "scanner absent, so NOTHING scanned this repo; run git submodule update --init")
+              "git config fleet.guards is unset or has no tools/pii_guard.py, so NOTHING scanned this repo")
     else:
         p = subprocess.run([sys.executable, guard, "--tree", "--history"],
                            cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -526,37 +539,22 @@ def main(root, stage="accepted"):
                   diagnostics)
 
     # 1c) the DATA BOUNDARY (Spec v1 section 9) -- the PRIMARY control; the scan above is a backstop.
-    #
-    # Runtime records can disclose private activity without containing an email or phone number.
-    # A string scanner cannot establish the privacy of arbitrary records, so the primary control
-    # is the storage boundary: every path is TOOL, FIXTURE or DATA, and the shipped repository is an
-    # UNINITIALIZED
-    # TOOL: real-run output resolves to a private store, and an agent writing this repo has nothing
-    # real within reach to copy.
-    for rel in ["guards/tools/data_boundary.py", "guards/tools/datadir.py", ".dataclass.json"]:
-        check("data boundary: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
-    boundary = os.path.join(root, "guards", "tools", "data_boundary.py")
-    if not os.path.isfile(boundary):
+    # Runtime records can disclose private activity without containing an email or phone number,
+    # so every path is TOOL, FIXTURE or DATA and the shipped repository is an UNINITIALIZED TOOL.
+    boundary = kit_path(root, "guards", "tools/data_boundary.py")
+    if not boundary or not os.path.isfile(boundary):
         check("data boundary: repo is an uninitialized tool", False,
-              "the PRIMARY control is absent, so it asserted nothing; git submodule update --init")
+              "git config fleet.guards is unset or has no tools/data_boundary.py, so it asserted nothing")
     else:
         p = subprocess.run([sys.executable, boundary], cwd=root, capture_output=True, text=True)
         check("data boundary: repo is an uninitialized tool", p.returncode == 0,
               (p.stderr or "").strip().splitlines()[0] if p.returncode else "")
 
-    # 1d) the DASH gate (Spec v1 section 10): published prose carries no en/em dash. Style, not
-    # security, so it scans the current tree only. The tool de-dashes Markdown + Python comments and
-    # leaves every string literal (data) alone.
-    # The dash gate lives in the STYLE submodule, not the security one. It moved when the two
-    # kits were split, and this line kept pointing at guards/, so every scaffolded repo failed
-    # conformance on a file that was never going to be there.
-    for rel in ["style/tools/dash_guard.py", ".github/workflows/dash-guard.yml"]:
-        check("dash gate: %s" % rel, os.path.isfile(os.path.join(root, *rel.split("/"))))
-    dguard = os.path.join(root, "style", "tools", "dash_guard.py")
-    if not os.path.isfile(dguard):
+    # 1d) the DASH gate (Spec v1 section 10): published prose carries no en/em dash.
+    dguard = kit_path(root, "style", "tools/dash_guard.py")
+    if not dguard or not os.path.isfile(dguard):
         check("dash gate: prose is dash-clean (tree)", False,
-              "scanner absent, so nothing was examined; the STYLE submodule is not checked out "
-              "(git submodule update --init style)")
+              "git config fleet.style is unset or has no tools/dash_guard.py, so nothing was examined")
     else:
         p = subprocess.run([sys.executable, dguard, "--tree"], cwd=root, capture_output=True, text=True)
         check("dash gate: prose is dash-clean (tree)", p.returncode == 0,

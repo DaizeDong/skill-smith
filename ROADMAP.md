@@ -9,10 +9,10 @@ production readiness.
 ## v0.2.0 (current)
 
 - Research-first creation uses a concise SKILL entry, step-specific references and a deterministic
-  Spec-v1 scaffolder. The scaffold pins Guards and Style, installs fail-closed hooks, and assigns
+  Spec-v1 scaffolder. The scaffold installs fail-closed `.githooks` shims for the local fleet-guards and fleet-style checkouts, and assigns
   the required documents. It produces a draft, not an accepted skill.
-- Local conformance delegates documentation structure to the pinned Style checker. The dash
-  workflow uses `./style/ci/dash-guard`; its scanner checks Markdown and Python comments without
+- Local conformance delegates documentation structure to the fleet-style checker. The dash
+  check runs in the pre-commit shim; its scanner checks Markdown and Python comments without
   changing string literals or ASCII hyphens. SKILL and referenced-resource checks remain separate.
 - Remote metadata tooling sets base-9 plus domain topics, description and homepage, and G6b checks
   the live repository after publication. Missing authentication or connectivity remains SKIP.

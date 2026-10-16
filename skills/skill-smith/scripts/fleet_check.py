@@ -8,7 +8,7 @@ because nothing ever ran it. A linter with no driver is a linter that does not e
 piece here was never more judgment, it was a driver and a schedule. So this file adds no new
 opinions: it fans out the checkers that already exist, plus the two assertions nothing on this
 machine performs at all (a data directory resolving into a repo the world can read, and whether the
-CI that the whole doctrine calls "the authority" is actually green).
+product CI is actually green).
 
 WHAT IT DELIBERATELY DOES NOT DO
 --------------------------------
@@ -19,7 +19,7 @@ WHAT IT DELIBERATELY DOES NOT DO
    be branch-agnostic and nothing on this machine reads branch.<name>.remote any more, so that check
    would guard a property with no consumer and stay red forever.
 3. It does not check that the per-skill config dotdirs are junctions. The plain-directory shape is
-   the DESIGNED one, spelled out in tools/datadir.py's own docstring.
+   the DESIGNED one, spelled out in the fleet-guards tools/datadir.py docstring.
    The rule behind all three: a nightly check whose first run reports findings that are unfixable by
    design trains the operator to skip the digest line. That is precisely how check_conformance.py
    died the first time, and it would take this driver down with it.
@@ -82,22 +82,13 @@ under UNOBSERVED with its reason, and never fails the run. A definitive negative
 remote we did reach is a FAIL. Because UNKNOWN can only ever be produced by the first case, the old
 sentence "UNKNOWN never affects the exit code" stays true without hiding anything.
 
-THE FIVE CHECKS
----------------
+THE CHECKS
+----------
   junctions   every junction/symlink under ~/.claude/skills resolves to a directory that exists.
               Failure mode: a repo gets moved (CodesSelf -> CodesClaude, 2026-07-22) and the skill
               silently vanishes from the agent's library with no error anywhere. A skills dir that
               is missing or holds no junctions at all reports UNKNOWN rather than nothing: a check
               that emits zero rows reads as green, which is the same lie in a quieter voice.
-  workflow    visibility PUBLIC implies the REMOTE default branch carries every guard workflow
-              (pii-guard and dash-guard -- the same pair check_conformance.py already requires
-              locally). The remote is interrogated over gh, falling back to `git ls-remote` plus a
-              local `ls-tree` of the remote HEAD when that sha is already in the object store. The
-              LOCAL working tree is never consulted, because the file being on this disk is not
-              evidence that it is on GitHub, and GitHub is where CI runs.
-              Entries with no local clone under the fleet root are SKIPPED, not failed: the
-              visibility map outlives the working copies it was built from and names repos that are
-              not checked out here (and third-party forks, whose CI is not ours to install).
   conformance check_conformance.py over every repo carrying .claude-plugin/plugin.json. Repos
               without one are SKIPPED out loud, so that a deleted plugin.json shows up as a repo
               dropping out of coverage instead of as one fewer line nobody counted. A repo whose
@@ -124,32 +115,16 @@ THE FIVE CHECKS
               Not-initialized is not a failure: an uninitialized tool is the correct shipping state.
               If git cannot be run at all the answer is UNKNOWN, never PASS -- a missing git used to
               silently clear every repo in this check.
-              Visibility comes from LIVE gh, with the map as a bounded-age offline fallback: see
-              VisibilityOracle for why the reverse order made the whole check defeatable by one
-              stale line of JSON.
+              The data dir is resolved with fleet_guards.runtime.companion_resolver bound to that
+              repo, and its companion's origin visibility comes from LIVE gh, with the map as a
+              bounded-age offline fallback.
   ci          EVERY workflow found on the remote is actually GREEN ON THE DEFAULT BRANCH, reported
-              one row per (repo, workflow) so a red dash-guard cannot hide behind a green pii-guard.
-              "CI is the authority" is the load-bearing sentence of the whole doctrine and nothing
-              observed whether that authority was passing.
-              EVERY is literal, and it was not until 2026-07-31. This check used to interrogate the
-              two names in GUARD_WORKFLOWS, so every other workflow the fleet authors (gate,
-              heartbeat, test, memory health) was invisible to the fleet report, and repos that are
-              PRIVATE were not interrogated at all. That is how a report can print "34 of 34 green"
-              on a day when a repo's own gate workflow is concluding success over a log that reads
-              "RESULT: BLOCK". Rows are now CLASSIFIED, not filtered: guard (mandated) or other
-              (anything else we wrote), and a red run FAILS the row in both tiers. The only escape
-              is CI_WARN_ONLY, one named workflow on one named repo, with a reason printed every
-              run. See its note for why a severity tier would just rebuild the hiding place.
-              Degrades to UNKNOWN (never FAIL,
-              never blocking) when gh is missing, unauthenticated, rate limited, or the workflow has
-              no run on the default branch -- GitHub expires run history, so "no runs" is an absence
-              of evidence, not evidence of absence. The presence question is the workflow check's
-              job, and there it can FAIL.
-              The branch filter is not a detail. Without it the probe reported the newest run on ANY
-              ref, so a green push to a topic branch was printed as the default branch's status: on
-              2026-07-22 daily-hotspots would have shown PASS for pii-guard from a green run on
-              feat/source-coverage-selfevolve while master's own newest run was a FAILURE. Every
-              other check here interrogates the remote DEFAULT branch; this one silently did not.
+              one row per (repo, workflow). Gates do not run in CI any more (they run from the
+              .githooks shims against the local fleet-guards and fleet-style checkouts), so these
+              are product workflows; a red run on the default branch FAILS the row unless
+              CI_WARN_ONLY names it. Degrades to UNKNOWN (never FAIL) when gh is missing,
+              unauthenticated, rate limited, or the workflow has no run on the default branch.
+              Only runs whose head ref IS the remote default branch are counted.
 
 OUTPUT CONTRACT
 ---------------
@@ -173,7 +148,6 @@ from __future__ import annotations
 import argparse
 import concurrent.futures as futures
 import fnmatch
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -187,7 +161,6 @@ import textwrap
 import threading
 import time
 from datetime import datetime, timezone
-from functools import lru_cache
 from urllib.parse import quote, urlsplit
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -209,40 +182,10 @@ STATUSES = (PASS, FAIL, WARN, SKIP, UNKNOWN)
 # Statuses that mean "this row was actually evaluated". SKIP and UNKNOWN are the silence.
 EVALUATED = (PASS, FAIL, WARN)
 
-# The guard workflows every PUBLIC repo must carry ON THE REMOTE. This is not a new policy invented
-# here: check_conformance.py already requires .github/workflows/pii-guard.yml and dash-guard.yml in
-# the local tree. This check asserts the same pair actually reached GitHub, which is the only place
-# the assertion has teeth.
-GUARD_WORKFLOWS = ("pii-guard", "dash-guard")
-
-# GUARD_WORKFLOWS is a PRESENCE policy: these two must EXIST on every public remote. It is not, and
-# must never again be, the list of workflows whose RESULT gets read. Until 2026-07-31 check_ci
-# interrogated exactly this pair, so every other workflow the fleet authors was invisible to the
-# fleet report: market-intel's `gate`, the `heartbeat` jobs, `Test`, `memory-health-guard`. On
-# 2026-07-31 that printed "34 of 34 green" while market-intel's gate workflow was concluding success
-# over a log that said "RESULT: BLOCK (3 blocking issue(s))". The name filter was the reason nobody
-# could see it. check_ci now reads EVERY workflow on each public remote and CLASSIFIES it.
-#
-# The classification has two tiers and both of them FAIL on red. The tiers differ only in what the
-# row is called, because the operator reading the report needs to know whether a red row breaches
-# fleet policy or is just a broken job:
-#
-#   guard  a workflow named in GUARD_WORKFLOWS. Red = a mandated guard is down.
-#   other  anything else this fleet wrote. Red = a workflow we authored, in a repo we own, is
-#          failing.
-#
-# WHY "other" FAILS RATHER THAN WARNS. WARN in this file means "evaluated, not clean, and no edit
-# available today makes it clean" (see the PASS/FAIL/WARN note above). That does not describe a red
-# workflow in a repo we control: there is always an edit available, namely fix it or delete it. If
-# a non-guard red only warned, then the exact defect this change exists to close, a real gate going
-# red without anything going red, would be rebuilt one layer down: instead of hiding behind a name
-# filter it would hide behind a severity tier. So redness fails, whoever wrote the workflow.
-#
-# The escape hatch is deliberately narrow, per workflow and per repo, never per tier: an entry in
-# CI_WARN_ONLY downgrades one named workflow on one named repo to WARN, and it has to carry a
-# reason that gets printed in the row. Empty means no exemptions exist, which is the intended
-# steady state. Anyone adding one is stating in writing which specific job they have chosen to stop
-# believing, and the report keeps saying so on every run.
+# check_ci reads EVERY workflow on every repo of ours and FAILS a red run on the default branch.
+# The escape hatch is deliberately narrow, per workflow and per repo: an entry in CI_WARN_ONLY
+# downgrades one named workflow on one named repo to WARN, and it has to carry a reason that gets
+# printed in the row. Empty means no exemptions exist, which is the intended steady state.
 CI_WARN_ONLY = {
     # ("owner/repo", "workflow-file.yml"): "why this job's redness is not actionable here",
 }
@@ -671,10 +614,8 @@ def remote_workflow_files(slug, path, timeout, offline=False, memo=None, branche
     names is a list (possibly empty) when the remote answered, None when it could not be observed.
     Never consults the working tree: an unpushed file is not CI.
 
-    Memoized per DISTINCT (slug, path) when a memo is supplied. check_workflow already hands its
-    listings to ci_targets by hand, so that is belt and braces rather than the main saving -- but it
-    makes the reuse a property of the function instead of a discipline two call sites have to
-    remember, so a third caller cannot reintroduce the duplicate fetch by forgetting.
+    Memoized per DISTINCT (slug, path) when a memo is supplied, so a second caller cannot
+    reintroduce a duplicate fetch.
     """
     if offline:
         return None, "offline mode: the remote was not contacted"
@@ -702,12 +643,6 @@ def remote_workflow_files(slug, path, timeout, offline=False, memo=None, branche
     # around and stored on Check objects; a shared mutable would let one caller's sort or append
     # rewrite another's evidence.
     return (list(names) if names is not None else None), why
-
-
-def guards_present(names):
-    """Which GUARD_WORKFLOWS a remote file listing contains, by bare name."""
-    stems = {os.path.splitext(n)[0].lower() for n in names or []}
-    return [g for g in GUARD_WORKFLOWS if g in stems]
 
 
 # --- the report ----------------------------------------------------------------------------------
@@ -750,168 +685,6 @@ def check_junctions(skills_dir):
     if not c.rows:
         c.note = "no junctions found (are the skills deployed as plain copies?)"
         c.add(UNKNOWN, skills_dir, "contains no junctions; nothing to resolve")
-    return c
-
-
-# --- check 2: PUBLIC implies the guard workflows are ON THE REMOTE --------------------------------
-def condition_state(value):
-    """Recognize constant conditions without attempting to evaluate GitHub expressions."""
-    if value is None or value is True:
-        return "enabled"
-    if value is False:
-        return "disabled"
-    expression = str(value).strip()
-    if expression.startswith('${{') and expression.endswith('}}'):
-        expression = expression[3:-2].strip()
-    while expression.startswith('(') and expression.endswith(')'):
-        expression = expression[1:-1].strip()
-    if expression.lower() in ('false', '0', 'null', "''", '""'):
-        return "disabled"
-    return "enabled" if expression.lower() in ('true', '1') else "conditional"
-
-
-def workflow_guards(text, conditions=None):
-    """Read configured guard actions from workflow jobs, never from filenames or comments."""
-    try:
-        import yaml
-    except ImportError as exc:
-        raise ValueError("PyYAML is required to inspect workflow actions") from exc
-    try:
-        workflow = yaml.safe_load(text)
-    except yaml.YAMLError as exc:
-        raise ValueError("workflow YAML is invalid") from exc
-    if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs"), dict):
-        raise ValueError("workflow has no jobs object")
-    found = set()
-    for job in workflow["jobs"].values():
-        if not isinstance(job, dict) or condition_state(job.get("if")) == "disabled":
-            continue
-        steps = job.get("steps", [])
-        if not isinstance(steps, list):
-            raise ValueError("workflow steps must be a list")
-        for step in steps:
-            if not isinstance(step, dict) or condition_state(step.get("if")) == "disabled":
-                continue
-            action = str(step.get("uses", "")).split("@", 1)[0].rstrip("/")
-            for guard, kit in (("pii-guard", "guards"), ("dash-guard", "style")):
-                if action in ("./ci/" + guard, "./%s/ci/%s" % (kit, guard)):
-                    found.add(guard)
-                    if conditions is not None and any(condition_state(item.get("if")) == "conditional"
-                                                      for item in (job, step)):
-                        conditions.add(guard)
-    return [guard for guard in GUARD_WORKFLOWS if guard in found]
-
-
-def required_guards(role):
-    if role == "security-kit":
-        return ["pii-guard"]
-    if role in ("skill", "style-kit"):
-        return list(GUARD_WORKFLOWS)
-    raise ValueError("unknown repository role: %s" % role)
-
-
-def remote_guard_coverage(slug, names, timeout, offline=False, branches=None):
-    gh = shutil.which("gh")
-    if offline or not gh:
-        return None, "workflow action bodies not observed (offline or gh unavailable)"
-    branch, rc, error = branch_probe(gh, slug, timeout, branches)
-    if rc:
-        return None, "gh could not reach %s: %s" % (slug, error or "exit %s" % rc)
-    if not branch:
-        return None, "gh returned no default branch for %s" % slug
-    found = set()
-    conditional = set()
-    for filename in names:
-        endpoint = "repos/%s/contents/.github/workflows/%s?ref=%s" % (slug, quote(filename, safe=""), quote(branch, safe=""))
-        rc, so, se = run([gh, "api", endpoint, "-H", "Accept: application/vnd.github.raw+json"], timeout=timeout)
-        if rc:
-            return None, "workflow body unavailable: %s" % (first_line(se) or filename)
-        try:
-            found.update(workflow_guards(so, conditional))
-        except ValueError as exc:
-            return None, str(exc)
-    note = "conditional execution unverified: " + ", ".join(sorted(conditional)) if conditional else ""
-    return [g for g in GUARD_WORKFLOWS if g in found], note
-
-
-def check_workflow(visibility_path, slugs, code_root, timeout=30, offline=False,
-                    listings=None, branches=None, policies=None, oracle=None):
-    """Assert the guard workflows exist on the REMOTE default branch of every PUBLIC repo.
-
-    The predecessor stat()ed the local clone, which answers a question nobody asked. A workflow file
-    is only CI once GitHub has it: committed-but-unpushed, or sitting dirty in the worktree, both
-    scored PASS while the public remote was completely ungated.
-
-    The result is hung on the Check as .remote_workflows so the CI check can ask about exactly the
-    workflows that were observed to exist, instead of guessing a name and reading the resulting
-    "no such workflow" error as a shrug.
-
-    Two listings are hung on the Check, and they answer different questions:
-      .remote_workflows      the GUARD subset, which is what this check's own PASS/FAIL is about.
-      .all_remote_workflows  every workflow file observed on the remote default branch, which is
-                             what check_ci reads. The full listing was always fetched here and then
-                             thrown away; keeping it is what lets the CI check stop being a
-                             hardcoded pair of names.
-    """
-    c = Check("workflow", "visibility PUBLIC implies %s on the REMOTE default branch"
-              % " + ".join(GUARD_WORKFLOWS))
-    c.remote_workflows = {}
-    c.all_remote_workflows = {}
-    c.visibility_oracle = oracle or VisibilityOracle(visibility_path, offline=offline, timeout=timeout)
-    oracle = c.visibility_oracle
-    c.note = ("the REMOTE is interrogated, never the working tree; entries with no clone under %s "
-              "are skipped; cloned origins use current visibility" % code_root)
-    if oracle.error:
-        c.note += "; visibility map unreadable: %s" % oracle.error
-        if not slugs:
-            c.add(UNKNOWN, os.path.basename(visibility_path), oracle.error)
-    oracle.prefetch(slugs)
-    visibility = {slug: oracle.visibility(slug) for slug in sorted(slugs)}
-    public = sorted(slug for slug, (value, _why) in visibility.items() if value == "PUBLIC")
-    for slug, (value, why) in visibility.items():
-        if value == "UNKNOWN":
-            c.add(UNKNOWN, slug, "visibility not observed: %s" % why)
-    for slug in sorted(oracle.map):
-        if oracle._mapped(slug) == "PUBLIC" and slug not in slugs:
-            c.add(SKIP, slug, "no local clone")
-    # Fetch every listing CONCURRENTLY, then emit the rows in the same sorted order as before. Each
-    # listing is two blocking gh round trips and there are ~17 of them with a clone here; serially
-    # that alone was over half a minute of this report's wall clock.
-    fetched = dict(zip(public, pmap(
-        lambda s: remote_workflow_files(s, slugs[s], timeout, offline=offline,
-                                         memo=listings, branches=branches), public)))
-    coverage = dict(zip(public, pmap(
-        lambda s: remote_guard_coverage(s, fetched[s][0], timeout, offline, branches)
-        if fetched[s][0] is not None else (None, fetched[s][1]), public)))
-    for slug in public:
-        names, why = fetched[slug]
-        if names is None:
-            # Could not look. Say so; do not award a pass for a question never asked.
-            c.add(UNKNOWN, slug, "remote not observed: %s" % why)
-            continue
-        c.all_remote_workflows[slug] = list(names)
-        found, body_why = coverage[slug]
-        if found is None:
-            c.add(UNKNOWN, slug, "remote workflow actions not observed: %s" % body_why)
-            continue
-        c.remote_workflows[slug] = found
-        policy = (policies or {}).get(slug, {"role": "skill"})
-        try:
-            role = policy["role"]
-            if role != "skill" and not policy.get("reason"):
-                raise ValueError("non-skill role requires a reviewed reason")
-            required = required_guards(role)
-        except (ValueError, TypeError, KeyError) as exc:
-            c.add(FAIL, slug, "invalid role policy: %s" % exc)
-            continue
-        missing = [g for g in required if g not in found]
-        if missing:
-            c.add(FAIL, slug, "PUBLIC but the remote default branch has no %s configured action (remote workflows: %s)"
-                  % (", ".join(missing), ", ".join(names) or "none"))
-        else:
-            c.add(PASS, slug, "remote actions: %s; role=%s%s%s" % (", ".join(found), role,
-                  (" (%s)" % policy["reason"]) if policy.get("reason") else "",
-                  ("; " + body_why) if body_why else ""))
     return c
 
 
@@ -1098,16 +871,6 @@ def check_budget(skills_dir, code_root, timeout, listing=None, capacity=None):
     if unresolved and not c.count(UNKNOWN):
         c.add(UNKNOWN, "library coverage", "unresolved=%d; known findings above cover only measured skills" % unresolved)
     return c
-
-
-# --- check 5: the inverse data boundary -----------------------------------------------------------
-def load_datadir(path, modname):
-    spec = importlib.util.spec_from_file_location(modname, path)
-    if spec is None or spec.loader is None:
-        raise ImportError("no loader for %s" % path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
 
 
 def parse_stamp(text):
@@ -1333,6 +1096,16 @@ class VisibilityOracle:
             pmap(self.visibility, want)
 
 
+# --- check: the inverse data boundary --------------------------------------------------------------
+def companion_resolver(source_root):
+    try:
+        from fleet_guards.runtime import companion_resolver as bind
+    except ImportError as exc:
+        raise ImportError(
+            'fleet_guards is not installed; run: pip install -e "$(git config --get fleet.guards)"') from exc
+    return bind(source_root=os.path.abspath(source_root))
+
+
 def data_skill_identity(root):
     """Companion identity comes from plugin metadata, independently of the checkout name."""
     path = os.path.join(root, ".claude-plugin", "plugin.json")
@@ -1359,9 +1132,7 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30, oracl
               "resolved real-run data dirs are never inside a PUBLIC or UNKNOWN repo")
     c.note = ("DATA belongs in the PRIVATE companion repo, versioned; a data dir inside a private "
               "repo PASSES and the repo is named. Unknown visibility FAILS CLOSED. An uninitialized "
-              "skill has no data dir yet, which is the correct shipping state. The pinned shared "
-              "proof requires fresh PRIVATE receipts for all physical and effective fetch/push "
-              "routes; the live inventory oracle may reject a destination but cannot override that proof.")
+              "skill has no data dir yet, which is the correct shipping state.")
     oracle = oracle or VisibilityOracle(visibility_path, offline=offline, timeout=timeout)
     if oracle.error:
         c.note += " | visibility map unreadable (%s): there is no fallback left" % oracle.error
@@ -1372,27 +1143,16 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30, oracl
     # Resolve and audit locally before the optional live visibility lookups.
     plan = []
     for name, path in sorted(repos.items()):
-        dd = os.path.join(path, "guards", "tools", "datadir.py")
-        if not os.path.isfile(dd):
-            plan.append(("row", UNKNOWN, name,
-                         "pinned guards/tools/datadir.py missing; initialize the guards submodule. "
-                         "No consumer tools/ fallback is permitted"))
-            continue
-        # Use the resolver THAT REPO would use: the question is where ITS resolver points, and
-        # a re-implementation here would answer a subtly different question the moment one drifts.
+        # Use the resolver bound to THAT REPO: the question is where its data dir resolves.
         try:
             skill = data_skill_identity(path)
-            mod = load_datadir(dd, "fleet_datadir_%s" % skill.replace("-", "_"))
-            resolved = mod.resolve_data_dir(skill, create=False)
+            resolved = companion_resolver(path).resolve_data_dir(skill, create=False)
         except Exception as e:                                   # noqa: BLE001 (report, never crash)
-            # The resolver's own refusal is a FINDING, not a gap. datadir.py raises
-            # DataDirInsideOwnRepo when a data dir resolves inside the skill repo that ships it --
-            # the in-repo fallback shape. Reporting that as UNKNOWN would file a caught violation
-            # under "could not observe", which is the exact rounding this file exists to prevent.
+            # DataDirInsideOwnRepo is the in-repo fallback shape: a finding, not a gap.
             if type(e).__name__ == "DataDirInsideOwnRepo":
                 plan.append(("row", FAIL, name, first_line(str(e)) or str(e)))
             else:
-                plan.append(("row", UNKNOWN, name, "cannot resolve plugin identity or load guards/tools/datadir.py: %s" % e))
+                plan.append(("row", UNKNOWN, name, "cannot resolve plugin identity or companion: %s" % e))
             continue
         if resolved is None:
             plan.append(("row", SKIP, name, "not initialized"))
@@ -1413,30 +1173,20 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30, oracl
             plan.append(("row", FAIL, name,
                          "%s is unversioned; DATA requires a verified PRIVATE companion repository" % resolved))
             continue
-        try:
-            boundary = _data_boundary()
-        except (OSError, ImportError) as error:
-            plan.append(("row", UNKNOWN, name, "cannot load the pinned PRIVATE audit: %s" % error))
-            continue
-        try:
-            proof = boundary.prove_private_companion(reject_output_aliases(resolved), visibility_map=visibility_path)
-        except (boundary.GitError, ValueError) as error:
-            plan.append(("row", FAIL, name, "%s: %s; failing closed" % (resolved, error)))
-            continue
-        except (OSError, RuntimeError) as error:
-            plan.append(("row", UNKNOWN, name, "cannot run the pinned PRIVATE audit: %s" % error))
-            continue
-        if Path(path).resolve().is_relative_to(Path(proof.root).resolve()):
+        if os.path.normcase(os.path.abspath(path)).startswith(os.path.normcase(os.path.abspath(top)) + os.sep) \
+                or os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(top)):
             plan.append(("row", FAIL, name, "%s: the companion contains the tool repository; failing closed" % resolved))
             continue
-        plan.append(("vis", name, resolved, proof))
+        rc, so, se = run(["git", "-C", top, "remote", "get-url", "origin"], timeout=20)
+        slug = slug_from_url(first_line(so)) if rc == 0 else None
+        if not slug:
+            plan.append(("row", FAIL, name, "%s: companion %s has no GitHub origin; visibility unknown, failing closed"
+                         % (resolved, top)))
+            continue
+        plan.append(("vis", name, resolved, slug))
 
     # Phase 2. One concurrent burst instead of one blocking gh call per deferred row.
-    destinations = set()
-    for entry in plan:
-        if entry[0] == "vis":
-            destinations.update(entry[3].repositories)
-    oracle.prefetch(sorted(destinations))
+    oracle.prefetch(sorted({entry[3] for entry in plan if entry[0] == "vis"}))
 
     # Phase 3.
     for entry in plan:
@@ -1444,16 +1194,13 @@ def check_data_boundary(visibility_path, repos, offline=False, timeout=30, oracl
             _k, status, name, detail = entry
             c.add(status, name, detail)
             continue
-        _k, name, resolved, proof = entry
-        for target in proof.repositories:
-            visibility, how = oracle.visibility(target)
-            if visibility != "PRIVATE":
-                c.add(FAIL, name, "data dir %s: %s repo %s is not verified PRIVATE (%s); failing closed"
-                      % (resolved, visibility, target, how))
-                break
+        _k, name, resolved, slug = entry
+        visibility, how = oracle.visibility(slug)
+        if visibility != "PRIVATE":
+            c.add(FAIL, name, "data dir %s: %s repo %s is not verified PRIVATE (%s); failing closed"
+                  % (resolved, visibility, slug, how))
         else:
-            c.add(PASS, name, "%s [%s] versioned in the private companion repo"
-                  % (resolved, private_output_description(proof)))
+            c.add(PASS, name, "%s [PRIVATE %s] versioned in the private companion repo" % (resolved, slug))
     return c
 
 
@@ -1465,49 +1212,23 @@ RED = ("failure", "timed_out", "cancelled", "startup_failure", "action_required"
 def default_branch(gh, slug, timeout, cache=None):
     """(branch, why-not) for a slug's remote default branch.
 
-    Backed by the SAME memo the workflow check fills, so a slug whose default branch was already
-    established while listing its workflows costs nothing here. It also removes the possibility of
-    the two checks resolving different branches for one repo mid-run.
+    Backed by the SAME memo the workflow listing fills, so a slug whose default branch was already
+    established while listing its workflows costs nothing here.
     """
     b, rc, se = branch_probe(gh, slug, timeout, cache)
     return b, ("" if b else (se or "gh exit %s" % rc))
 
 
-def ci_targets(wf_check, visibility_path, slugs, timeout, offline=False,
-               listings=None, branches=None):
+def ci_targets(oracle, slugs, timeout, offline=False, listings=None, branches=None):
     """[(slug, names_or_None, why, visibility)] for EVERY repo of ours that has a clone here.
 
-    check_workflow checks PUBLIC repos, because guard PRESENCE is a public-remote policy.
-    CI greenness is not, and at least one PRIVATE repo here carries a real guard workflow that no
-    fleet report has ever read. A private repo's CI going red is exactly as much a broken thing as a
-    public one's, so the listing is fetched for the private repos too rather than reusing a set that
-    was assembled to answer a different question.
-
-    Listings already obtained by check_workflow are reused verbatim, so the public repos cost no
-    extra API calls.
+    Listings are fetched concurrently; pmap preserves input order, so rows stay sorted.
     """
-    seen = getattr(wf_check, "all_remote_workflows", {}) or {}
-    oracle = getattr(wf_check, "visibility_oracle", None)
-    if oracle is None:
-        oracle = VisibilityOracle(visibility_path, offline=offline, timeout=timeout)
-    oracle.prefetch(set(slugs) | set(seen))
-    out = [(s, n, "", oracle.visibility(s)[0]) for s, n in sorted(seen.items())]
-    # The repos check_workflow never walked, chiefly the PRIVATE ones. Fetched CONCURRENTLY and
-    # appended in the same sorted order; pmap preserves input order, so `out` is byte-identical to
-    # what the serial loop produced.
-    extra = [s for s in sorted(slugs) if s not in seen]
-    #                             ^ no clone here: not ours to interrogate, and check_workflow
-    #                               already records the SKIP for the public ones
-    for slug, (names, why) in zip(extra, pmap(
-            lambda s: remote_workflow_files(s, slugs[s], timeout, offline=offline,
-                                            memo=listings, branches=branches), extra)):
-        out.append((slug, names, why, oracle.visibility(slug)[0]))
-    return out
-
-
-def workflow_tier(filename):
-    """"guard" if this workflow file is one of GUARD_WORKFLOWS, else "other". Never filters."""
-    return "guard" if os.path.splitext(filename)[0].lower() in GUARD_WORKFLOWS else "other"
+    ordered = sorted(slugs)
+    oracle.prefetch(ordered)
+    return [(slug, names, why, oracle.visibility(slug)[0]) for slug, (names, why) in zip(ordered, pmap(
+        lambda s: remote_workflow_files(s, slugs[s], timeout, offline=offline,
+                                        memo=listings, branches=branches), ordered))]
 
 
 def valid_ci_step(step):
@@ -1562,8 +1283,7 @@ def check_ci(targets, timeout, branches=None):
     the listing could not be observed, in which case `why` says so and the repo gets an UNKNOWN row
     rather than vanishing.
 
-    EVERY workflow in the listing is read; see the CI_WARN_ONLY note at the top of this file for
-    why a red non-guard workflow fails the row exactly like a red guard does.
+    EVERY workflow in the listing is read; see the CI_WARN_ONLY note at the top of this file.
 
     One row per (repo, workflow). The predecessor asked only about pii-guard and titled itself "the
     guard CI is green", so promotion-assistant printed a single confident PASS on 2026-07-30 while
@@ -1593,13 +1313,9 @@ def check_ci(targets, timeout, branches=None):
         c.note = "gh not on PATH; CI state unobserved (infrastructure, non-failing)"
         c.add(UNKNOWN, "gh", "not installed")
         return c
-    c.note = ("every workflow file on every remote default branch is read, not a hardcoded list, and "
-              "PRIVATE repos are read too (a private repo here carries a guard workflow no report "
-              "ever saw); rows are tagged guard (%s, mandated) or other (any workflow this fleet wrote), and BOTH "
-              "fail on red. Only runs whose head ref IS the remote default branch are counted; "
-              "UNKNOWN means the answer could not be OBSERVED and never fails the run; a guard "
-              "MISSING from a remote is a FAIL in the workflow check above, not a shrug here"
-              % ", ".join(GUARD_WORKFLOWS))
+    c.note = ("every workflow file on every remote default branch is read, PRIVATE repos included, "
+              "and a red run fails. Only runs whose head ref IS the remote default branch are counted; "
+              "UNKNOWN means the answer could not be OBSERVED and never fails the run")
     if not targets:
         c.add(UNKNOWN, "(nothing to ask)", "no repo reported any workflow on its remote")
         return c
@@ -1607,7 +1323,7 @@ def check_ci(targets, timeout, branches=None):
     ordered = sorted(targets, key=lambda t: t[0])
     # A fresh memo when the caller supplies none reproduces the old per-call `branches = {}` cache
     # exactly: one lookup per repo, not one per workflow. main() passes the shared one so a branch
-    # already resolved by the workflow check is not resolved a second time here.
+    # already resolved while listing workflows is not resolved a second time here.
     branches = Memo() if branches is None else branches
 
     # --- the expensive part, and why it is shaped like this ---------------------------------------
@@ -1652,24 +1368,15 @@ def check_ci(targets, timeout, branches=None):
             c.add(UNKNOWN, slug, "workflow listing not observed: %s" % (listing_why or "no reason given"))
             continue
         if not workflows:
-            # An answered listing that is empty is a FACT, not a gap. Which fact depends on who owns
-            # the repo: a PRIVATE companion data repo is supposed to have no CI (guard presence is a
-            # public-remote policy), so it is a SKIP that names itself rather than eight permanent
-            # WARN rows an operator learns to scroll past. A PUBLIC repo with no workflows at all is
-            # a different animal and stays a WARN here; check_workflow above is already FAILing it
-            # for the missing mandated guards, so this row is the corroborating detail, not the
-            # verdict. Either way the repo is NAMED, which is the part the old name filter got
-            # wrong.
+            # An answered listing that is empty is a FACT, not a gap: the repo is NAMED.
             if visibility == "PRIVATE":
-                c.add(SKIP, slug, "PRIVATE companion repo with no workflows; CI is not mandated here")
+                c.add(SKIP, slug, "PRIVATE repo with no workflows")
             else:
-                c.add(WARN, slug, "%s repo has NO workflow files on its remote default branch"
-                      % visibility)
+                c.add(SKIP, slug, "%s repo with no workflows" % visibility)
             continue
         branch, why = default_branch(gh, slug, timeout, branches)
         for wf in sorted(workflows):
-            tier = workflow_tier(wf)
-            name = "%s [%s:%s]" % (slug, tier, wf)
+            name = "%s [%s]" % (slug, wf)
             exempt = CI_WARN_ONLY.get((slug, wf))
             if not branch:
                 # Without the default branch there is no question to ask. Reporting the newest run
@@ -1905,37 +1612,19 @@ def reject_output_aliases(path):
 
 
 def default_data_path(name):
-    """Resolve a real-run destination through the consumer's pinned resolver."""
+    """Resolve a real-run destination through the fleet_guards companion resolver."""
     repo = os.path.realpath(os.path.join(HERE, "..", "..", ".."))
-    module = load_datadir(os.path.join(repo, "guards", "tools", "datadir.py"), "skill_smith_datadir")
-    # Bind the consumer explicitly so linked worktrees retain sibling discovery.
-    module._own_repo_root = lambda: repo
-    directory = module.resolve_data_dir("skill-smith")
+    directory = companion_resolver(repo).resolve_data_dir("skill-smith")
     if directory is None:
         raise ValueError("Initialize the private skill-smith companion or set SKILL_SMITH_CONFIG; no DATA fallback")
     return os.path.join(directory, name)
-
-
-@lru_cache(maxsize=None)
-def _load_data_boundary(repo):
-    return load_datadir(os.path.join(repo, "guards", "tools", "data_boundary.py"), "skill_smith_data_boundary")
-
-
-def _data_boundary():
-    """The pinned Guards data_boundary, loaded once; only the fleet audit asks it for publication routes."""
-    return _load_data_boundary(os.path.realpath(os.path.join(HERE, "..", "..", "..")))
-
-
-def private_output_description(proof):
-    """Describe public proof fields without exposing captured process configuration."""
-    return "PRIVATE " + ", ".join(proof.repositories)
 
 
 def resolve_status_path(path, *, default_name="fleet-check-status.json", directory=False, source_root=None):
     """Check a DATA destination once, before writing: inside a versioned companion, outside the tool repo.
 
     The companion is the nearest Git worktree above the destination. Its PRIVATE publication is
-    enforced by commit-time hooks and CI, not here.
+    enforced by commit-time hooks, not here.
     """
     repo = os.path.realpath(source_root or os.path.join(HERE, "..", "..", ".."))
     path = reject_output_aliases(default_data_path(default_name) if path is None else path)
@@ -2005,7 +1694,6 @@ def main(argv=None):
     ap.add_argument("--visibility", default=DEFAULT_VISIBILITY)
     ap.add_argument("--listing", help="captured current skill listing for measured G3 visibility; absent evidence stays UNKNOWN")
     ap.add_argument("--capacity", type=int, help="explicit current G3 capacity policy; historical estimates are not enforced")
-    ap.add_argument("--workflow-policy", help="reviewed JSON mapping repo slug to role and reason; public security is always required")
     ap.add_argument("--status-json", default=DEFAULT_STATUS,
                     help="machine-readable result; the caller checks its utc for freshness")
     ap.add_argument("--no-status", action="store_true", help="do not write the status file")
@@ -2023,17 +1711,6 @@ def main(argv=None):
         except (OSError, ValueError, RuntimeError, ImportError) as error:
             print("status path lookup rejected: %s" % error, file=sys.stderr)
             return 1
-    policies = None
-    if a.workflow_policy:
-        try:
-            with open(a.workflow_policy, encoding="utf-8") as f:
-                policies = json.load(f)
-            if not isinstance(policies, dict):
-                raise ValueError("workflow policy must be an object")
-        except (OSError, ValueError) as e:
-            print("workflow policy rejected: %s" % e, file=sys.stderr)
-            return 1
-
     oracle = VisibilityOracle(a.visibility, offline=a.offline, timeout=a.gh_timeout)
     if not a.no_status:
         try:
@@ -2064,10 +1741,6 @@ def main(argv=None):
         for name, reason in inventory_problems:
             inventory.add(UNKNOWN, name, reason)
         checks.append(inventory)
-    wf = check_workflow(os.path.abspath(os.path.expanduser(a.visibility)), slugs, code_root,
-                        timeout=a.gh_timeout, offline=a.offline,
-                        listings=listings, branches=branches, policies=policies, oracle=oracle)
-    checks.append(wf)
     checks.append(check_conformance(repos, a.conformance_timeout))
     checks.append(check_budget(skills_dir, code_root, a.conformance_timeout, a.listing, a.capacity))
     checks.append(check_data_boundary(os.path.abspath(os.path.expanduser(a.visibility)),
@@ -2079,12 +1752,7 @@ def main(argv=None):
         c.add(UNKNOWN, "(all public repos)", "offline: CI state unobserved")
         checks.append(c)
     else:
-        # Ask about EVERY workflow on EVERY repo of ours, not the guard subset of the public ones.
-        # Note this includes repos that FAILED above for missing one of the mandated pair: a repo
-        # with pii-guard but no dash-guard still gets everything it does have read, because dropping
-        # it would let a red run hide behind an unrelated failure.
-        targets = ci_targets(wf, os.path.abspath(os.path.expanduser(a.visibility)), slugs,
-                             timeout=a.gh_timeout, offline=a.offline,
+        targets = ci_targets(oracle, slugs, timeout=a.gh_timeout, offline=a.offline,
                              listings=listings, branches=branches)
         checks.append(check_ci(targets, a.gh_timeout, branches=branches))
 

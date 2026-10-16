@@ -4,13 +4,13 @@
 `__NAME__` is **config-bearing**, it reads per-user state (keys, installed-tool registry) from a
 **separate, private** companion config repo. Full contract: [CONFIG.md](CONFIG.md).
 
-- **Mount (discovery order):** CLI path → `$__ENVVAR__` → `$__ENVVAR___DIR` → the consumer's pinned
-  guard resolver (`$__DATAENV__`, then the proven sibling `__NAME__-config/`; no home-directory default).
-  Explicit config paths never fall through. Missing config makes the doctor exit 1; missing guards
-  and unproven discovery fail with instructions. See [CONFIG.md](CONFIG.md) for the full contract.
+- **Mount (discovery order):** CLI path → `$__ENVVAR__` → `$__ENVVAR___DIR` → the fleet_guards
+  companion resolver (`$__DATAENV__`, then the proven sibling `__NAME__-config/`; no home-directory default).
+  Explicit config paths never fall through. Missing config makes the doctor exit 1; a missing `fleet_guards`
+  package and unproven discovery fail with instructions. See [CONFIG.md](CONFIG.md) for the full contract.
 - **First time:**
   ```bash
-  git submodule update --init --recursive guards
+  pip install -e "$(git config --get fleet.guards)"
   python scripts/init_config.py     # reuse the discovered companion; without one, pass --out <dir>
   python scripts/verify_config.py    # generic shape checks; prints selected config path
   ```

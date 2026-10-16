@@ -64,16 +64,16 @@ reachable.
 
 ## Deterministic checking and release
 
-Run the shared presentation check from the reviewed pinned Style submodule:
+Run the shared presentation check from the fleet-style checkout:
 
 ```bash
-python style/tools/doc_contract.py --root . --profile skill --stage accepted
+python "$(git config --get fleet.style)/tools/doc_contract.py" --root . --profile skill --stage accepted
 ```
 
 Use `software` or `companion` for the corresponding repository kind. An explicitly combined PRIVATE
 source/backup repository uses `combined`: bounded maintenance README, ROADMAP and
-`docs/MAINTENANCE_CHANGELOG.md`, as defined by the pinned Style kit's
-[combined profile](../../../style/docs/COMBINED_DOCUMENTATION.md). Captured root CHANGELOG and
+`docs/MAINTENANCE_CHANGELOG.md`, as defined by the combined profile in the fleet-style
+checkout's `docs/COMBINED_DOCUMENTATION.md`. Captured root CHANGELOG and
 other backup payloads are not opened as release documentation. This profile still needs meaningful
 rationale, setup, current state, recovery and a local storage-contract link; it grants no PRIVATE
 storage or publication proof. Configuration ownership remains a separate `config.contract.json` axis.

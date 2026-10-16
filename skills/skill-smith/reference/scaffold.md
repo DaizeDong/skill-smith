@@ -34,8 +34,8 @@ The principal entry files are initialized at version `0.1.0`:
   skills/<name>/SKILL.md             frontmatter and body skeleton
 ```
 
-The scaffold also initializes pinned Guards and Style submodules, tracked `.githooks` forwarders,
-and their required checks. Keep the badge order: Claude Code Skill (orange), License MIT (blue),
+The scaffold also writes the tracked `.githooks` shims, which run the local fleet-guards and
+fleet-style checkouts named by `git config fleet.guards` and `fleet.style`. Keep the badge order: Claude Code Skill (orange), License MIT (blue),
 0 to 2 feature badges (green), Languages EN/CN (blue), then Roadmap vX.Y.Z (purple).
 
 Assign a generation owner to complete the applicable documents using

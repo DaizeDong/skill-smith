@@ -57,8 +57,8 @@ contracts and cannot award acceptance. Follow
     reports, including the complete research brief, belong in a verified PRIVATE versioned companion.
     Public design rationale contains only reusable TOOL documentation and generated synthetic examples.
     Never fall back into the tool repo.
-8. Scaffold tracked `.githooks` forwarders and pin both kits. Empty, wrong or incomplete submodules
-   fail. Hooks use `.githooks`, never the potentially empty `guards/hooks` directory directly.
+8. Scaffold the tracked `.githooks` shims; they run the local fleet-guards and fleet-style
+   checkouts named by `git config fleet.guards` and `fleet.style` and block when either is unset.
 9. Use `scripts/bump_version.py` to align version surfaces. Verify the installed alias, resources and
    published tree separately from the current worktree.
 10. Complete applicable documents under `reference/documentation.md`: update authoritative existing

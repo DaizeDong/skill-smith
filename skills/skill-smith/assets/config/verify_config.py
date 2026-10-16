@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check the discovered companion config's generic schema and directory shape.
 
-Uses the emitted consumer identity and its pinned guards resolver, regardless of caller cwd.
+Uses the emitted consumer identity and the fleet_guards companion resolver, regardless of caller cwd.
 Explicit --config-dir, CONFIG and CONFIG_DIR selections take precedence and never fall through.
 Exit 0 means template conformance only, 1 means a failed check, 2 means a usage error.
 Functional readiness requires the consuming skill's own checks and exercise.

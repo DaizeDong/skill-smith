@@ -63,13 +63,14 @@ skill-smith 在生成之前安排调研，在生成之后要求测量证据。�
 源码安装：
 
 ```bash
-git clone --recurse-submodules https://github.com/DaizeDong/skill-smith.git
+git clone https://github.com/DaizeDong/skill-smith.git
 cd skill-smith
 git config core.hooksPath .githooks
+python -m pip install -e "$(git config --get fleet.guards)"
 python -m pip install -r requirements.txt
 ```
 
-两个子模块都要初始化；已有 clone 可运行 `git submodule update --init --recursive`。
+钩子和检查器使用 `git config fleet.guards`、`git config fleet.style` 指向的本机 fleet-guards、fleet-style 检出；没设就拦下。
 参与提交前设置适合公开的身份。已安装别名和资源路径需要另行核验，见[部署说明](skills/skill-smith/reference/deploy.md)。
 
 Python 调用方可以构建并安装 `skill_smith` 技能目录与运行适配包。
@@ -129,10 +130,10 @@ export SKILL_SMITH_CONFIG="$(cd ../skill-smith-config && pwd)"
 ```
 
 已有伴生仓时 clone 并设置同一变量。可见性查询必须返回 `PRIVATE`。
-PRIVATE 发布由提交期钩子和 CI 保证，写入时不再做运行时证明。
+PRIVATE 发布由提交期钩子保证，写入时不再做运行时证明。
 选择优先级、准确输出路径、目标检查、仅控制台运行和恢复步骤见
 [运行数据发现与输出](skills/skill-smith/reference/storage-contract.md#runtime-discovery-and-outputs)，
-提交期审计见 [Guards 伴生仓核验](guards/COMPANION.md#verifying-a-companion)。
+提交期审计见 fleet-guards 检出里的 `COMPANION.md`。
 Smith 仅管理运行数据；存储参考文档中的外部配置输入由 Profile Sync 和操作者初始化。
 G8 合规本身不证明存储已就绪。
 
@@ -145,13 +146,13 @@ G8 合规本身不证明存储已就绪。
 历史容量仅供参考，`--capacity N` 表示当前策略。实测丢失与预计移除分别记录；
 需要用户决定移除时保留 BLOCKED，不完整观测不能给出 G3 PASS。
 
-`fleet_check.py` 只读检查别名、本地 conformance、预算、DATA 边界、远端 guard workflow
+`fleet_check.py` 只读检查别名、本地 conformance、预算、DATA 边界
 和默认分支的每个 workflow。`--offline` 将远端项目标为未观测。
 引用带覆盖率的 VERDICT，不要只引用失败数。
 CI 说明会区分已执行的 job 和零步骤 / 无 runner 的失败，不能据此猜测原因。
 
 本地 conformance 保留安全与包格式检查，将文档结构交给
-`style/tools/doc_contract.py --root . --profile skill --stage accepted`；检查器缺失会失败。
+fleet-style 检出里的 `tools/doc_contract.py --root . --profile skill --stage accepted`；检查器缺失会失败。
 SKILL 超过 12,000 字符警告，超过 16,000 字符失败；已有的限期缩减例外会明确显示。
 必需相对资源路径必须存在。这些检查不证明真实效果、远端 CI 或文档语义准确。
 
