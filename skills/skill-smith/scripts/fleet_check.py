@@ -6,9 +6,8 @@ WHY THIS EXISTS
 check_conformance.py has been correct and complete for weeks and has surfaced exactly nothing,
 because nothing ever ran it. A linter with no driver is a linter that does not exist. The missing
 piece here was never more judgment, it was a driver and a schedule. So this file adds no new
-opinions: it fans out the checkers that already exist, plus the two assertions nothing on this
-machine performs at all (a data directory resolving into a repo the world can read, and whether the
-product CI is actually green).
+opinions: it fans out the checkers that already exist, plus the one assertion nothing on this
+machine performs at all (whether the product CI is actually green).
 
 WHAT IT DELIBERATELY DOES NOT DO
 --------------------------------
