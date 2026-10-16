@@ -191,10 +191,6 @@ Windows removal uses PowerShell `Remove-Item -LiteralPath` on individual leaves,
 never recursive traversal. A mid-operation failure is visible and can leave a
 partially removed disposable group; prepare a fresh plan after inspecting it.
 
-The dedicated storage-contract CI runs the core storage and retirement-batch suites
-on Linux and Windows. Windows exercises native removal against generated fixtures;
-those tests do not establish readiness for a live companion or permission to remove its data.
-
 The skill-smith companion has a 64 MiB working-data budget. The retired campaign is a temporary
 classification for removal after dependency clearance, not an allowed future
 output location. Old rounds, copied source trees and test workspaces are not core
