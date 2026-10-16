@@ -90,10 +90,9 @@ Remote identity checks support GitHub URLs and static SSH aliases proven by the 
 unsupported hosts and complex alias rules remain unknown. Git inspection failures remain visible
 in inventory coverage. Trim worklists and backups use the same destination check as reports.
 
-An explicit `--workflow-policy` maps repository slugs to `skill`, `security-kit` or `style-kit` with
-a reviewed reason for a non-skill role. Public security remains required for every role. A style
-kit without its own security action remains a failure. CI distinguishes recorded execution from
-zero-step/no-runner failure; that distinction alone does not identify the admission cause.
+The CI check reads every workflow on every remote default branch; gates no longer run in CI, so
+each of them is a product workflow. CI distinguishes recorded execution from zero-step/no-runner
+failure; that distinction alone does not identify the admission cause.
 
 Load only the reference needed for the current step. Preserve user changes and use isolated
 worktrees for repairs; this acceptance command does not authorize external actions.
