@@ -84,7 +84,8 @@ Scaffold metadata validation requires PyYAML.
 Reports use the shared companion resolver and check the destination once before writing: inside
 a versioned companion, outside the tool repository. The repository's `.githooks` shims enforce PRIVATE publication at commit time.
 `--no-status` is console-only. `--offline` reports remote rows unobserved, never passed. Quote the
-full verdict with its coverage fraction.
+full verdict with its coverage fraction. The daily run is the `SkillSmithFleetCheck` task declared in
+the repository's `automation/tasks.json`.
 
 Remote identity checks support GitHub URLs and static SSH aliases proven by the local SSH config;
 unsupported hosts and complex alias rules remain unknown. Git inspection failures remain visible

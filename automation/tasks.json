@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "skill": "skill-smith",
+  "tasks": [
+    {
+      "id": "skill-smith/fleetcheck",
+      "name": "SkillSmithFleetCheck",
+      "purpose": "Daily read-only fleet check: skill junctions, local conformance, library budget and default-branch workflows, written to the companion's fleet status report.",
+      "enabled": true,
+      "trigger": {"type": "daily", "at": "21:30"},
+      "argv": ["%ProgramData%\\miniconda3\\python.exe", "-X", "utf8", "${SKILL_ROOT}/skills/skill-smith/scripts/fleet_check.py"],
+      "timeout_seconds": 1800,
+      "checks": [
+        {
+          "id": "status",
+          "required": true,
+          "health": {
+            "label": "skill-smith fleet check (daily 21:30)",
+            "max_age_hours": 26,
+            "artifact": "${COMPANION_ROOT}/data/fleet-check-status.json",
+            "artifact_max_age_hours": 26,
+            "ok_exit_codes": [0, 1],
+            "exit_code_is_authoritative": false,
+            "artifact_note": "The checker exits 1 when the fleet has failing rows and writes the report either way; a fresh report proves the check ran, and the nightly digest reads the verdict inside it."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -148,6 +148,9 @@ G8 合规本身不证明存储已就绪。
 
 `fleet_check.py` 只读检查别名、本地 conformance、预算、DATA 边界
 和默认分支的每个 workflow。`--offline` 将远端项目标为未观测。
+定时任务随 skill 一起声明在 [automation/tasks.json](automation/tasks.json)：`SkillSmithFleetCheck`
+每天 21:30 跑一次体检，报告写进伴生仓。安装 skill 时由 background-task-core 的 `install-skill`
+创建这个任务；本机想改时间之类，写在伴生仓的 `automation/tasks.local.json`。
 引用带覆盖率的 VERDICT，不要只引用失败数。
 CI 说明会区分已执行的 job 和零步骤 / 无 runner 的失败，不能据此猜测原因。
 

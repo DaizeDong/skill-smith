@@ -4,6 +4,10 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 
+- The daily fleet check ships with the skill: `automation/tasks.json` declares
+  `SkillSmithFleetCheck` (21:30) for background-task-core `install-skill`, and the storage
+  contract declares the companion override `automation/tasks.local.json`. The config standard
+  documents the same pattern for new skills. Contract entries for removed scratch paths are gone.
 - `fleet_check` drops the `databoundary` check and its live GitHub visibility oracle and
   `--visibility` flag; PRIVATE publication is enforced only at commit time by the `.githooks`
   shims. The scaffold and docs no longer accept a `<SKILL>_CONFIG_DIR` alias, and the storage

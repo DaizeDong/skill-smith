@@ -161,6 +161,10 @@ are separate. A removal decision remains BLOCKED; incomplete observations cannot
 
 `fleet_check.py` is read-only and checks aliases, local conformance, budget, DATA boundaries
 and each default-branch workflow. `--offline` leaves remote rows unobserved.
+The skill ships its schedule in [automation/tasks.json](automation/tasks.json): `SkillSmithFleetCheck`
+runs the check daily at 21:30 and writes the companion report. background-task-core `install-skill`
+creates the task when the skill is installed; the companion's `automation/tasks.local.json` holds
+machine overrides such as a different time.
 Quote its coverage-bearing VERDICT, not only the failure count. Workflow inspection distinguishes
 executed jobs from zero-step/no-runner failure without attributing an unproven cause.
 

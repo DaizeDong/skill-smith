@@ -134,6 +134,15 @@ The blank-template probe is not exhaustive field or capability coverage; retain 
 validator tests and functional A/B journey evidence separately. Timeouts and inspection errors
 retain complete rows and cannot become an applicability exemption.
 
+## Scheduled tasks
+
+A skill that needs recurring work declares it in its own `automation/tasks.json`, using only
+`${SKILL_ROOT}`, `${COMPANION_ROOT}` and `%NAME%` references, and its companion may hold
+`automation/tasks.local.json` for machine choices; declare that override in `storage.contract.json`.
+background-task-core `install-skill` creates the declared tasks when the skill is installed, so no
+task is registered by hand or declared a second time elsewhere. The manifest fields are defined in
+background-task-core `docs/skill-tasks.md`. A skill without scheduled work ships no manifest.
+
 ## Storage and documentation
 
 Keep `storage.contract.json` in the main tool repository so the permitted companion contents are
