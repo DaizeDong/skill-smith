@@ -4,6 +4,9 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 
+- `scripts/fleet-verdict.ps1` ships with the skill: the PowerShell reader of the fleet status
+  artifact (`Get-FleetVerdict`, `Format-FleetVerdictBlock`) that digests such as a task-health
+  monitor or a nightly backup dot-source. It finds `fleet_check.py` beside itself.
 - `reference/repo-layout.md` is the home of the public repository layout: file set, `plugin.json`
   fields, README skeleton and badges, topics, version display, dash rules and the one-fact-one-layer
   table, linked from `reference/documentation.md`.

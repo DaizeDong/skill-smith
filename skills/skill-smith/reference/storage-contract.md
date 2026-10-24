@@ -74,6 +74,9 @@ that companion, setting CONFIG and checking resolved paths before resuming.
 
 `fleet_check.py --print-status-path` prints the default path selected by the report writer's
 resolver. It does not inspect the fleet, create files or prove write readiness.
+`scripts/fleet-verdict.ps1` is the PowerShell reader for that artifact: dot-source it and call
+`Get-FleetVerdict` (with `-NotOlderThan` set to the producing run's start) and
+`Format-FleetVerdictBlock` to put the verdict in another task's digest without touching its exit code.
 `fleet_check.py --no-status` is console-only and needs no report destination.
 `trim_descriptions.py --scan` creates a private review worklist without changing descriptions;
 apply requires reviewed authorization and PyYAML frontmatter validation.
