@@ -46,7 +46,11 @@ by this package's installation metadata.
 
 Catalog requests support `skill_roots`, `repo_roots`, `plugin_registries`,
 `plugin_descriptors`, `external_skill_repos` with `profile_home`, `private_bindings`,
-`workflow_roots`, and `runtime_discovery`. Roots and registries are explicit;
+`workflow_roots`, and `runtime_discovery`. `external_skill_repos` names a repository
+manifest: `repos` rows with `url`, `path` (relative to `profile_home`) and `skills`
+(`name`, `subPath`), and `vendored` rows with `name`, `upstream`, `subPath` and `into`.
+Rows with `restore: "never"` and skills with `inSkillManifest: false` are not declared
+sources. Roots and registries are explicit;
 `approved_roots` bounds resolved links. An omitted source is unchecked. Missing,
 malformed, unreadable or ambiguous supplied inputs produce partial coverage.
 Record identity and declared/enabled/cached/installed/resolved/discovered/compatible

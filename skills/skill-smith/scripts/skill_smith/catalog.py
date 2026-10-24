@@ -201,36 +201,43 @@ class Discovery:
         if not isinstance(home, str) or not home.strip():
             self.problem(stage, "profile_home must be a nonempty string for external sources")
             return
-        for key, root_key in (("repos", "skillRepoRoot"), ("vendored", "vendoredRoot")):
-            if key not in data:
+        if "repos" not in data and "vendored" not in data:
+            self.problem(stage, "external manifest declares no source collections")
+            return
+        # A repository manifest: every path is relative to profile_home. A repo row declares the
+        # skills linked from it; restore "never" rows and skills marked inSkillManifest=false are
+        # not declared sources. A vendored row names the directory it was copied into.
+        for repo in (self.collection(data, "repos", stage) if "repos" in data else []):
+            if repo.get("restore") == "never" or not repo.get("skills"):
+                continue
+            if not self.external_fields(repo, ("url", "path"), ("branch", "commit"), stage):
                 continue
             try:
-                items = self.collection(data, key, stage)
-                if not items:
-                    continue
-                root = join_relative(home, data[root_key])
-            except (KeyError, TypeError, ValueError):
+                root = join_relative(home, repo["path"])
+            except (TypeError, ValueError):
                 self.problem(stage, "invalid external source root")
                 continue
             self.approved.append(root)
-            for item in items:
-                if key == "repos":
-                    if not self.external_fields(item, ("url", "dir"), ("branch", "commit"), stage):
-                        continue
-                    skills = self.collection(item, "skills", stage, ("name", "subPath"))
-                    pairs = [(s, item) for s in skills]
-                else:
-                    if not self.external_fields(item, ("name", "subPath", "upstream"),
-                                                ("commit", "vendored"), stage):
-                        continue
-                    pairs = [(item, None)]
-                for skill, repo in pairs:
-                    try:
-                        self.external_skill(skill, repo, root, self.approved, stage)
-                    except (KeyError, TypeError, ValueError):
-                        self.problem(stage, "invalid external source declaration")
-        if "repos" not in data and "vendored" not in data:
-            self.problem(stage, "external manifest declares no source collections")
+            for skill in self.collection(repo, "skills", stage, ("name", "subPath")):
+                if skill.get("inSkillManifest") is False:
+                    continue
+                try:
+                    self.external_skill(skill, repo, join_relative(root, skill["subPath"]), self.approved, stage)
+                except (KeyError, TypeError, ValueError):
+                    self.problem(stage, "invalid external source declaration")
+        for item in (self.collection(data, "vendored", stage) if "vendored" in data else []):
+            if not self.external_fields(item, ("name", "subPath", "upstream", "into"), ("commit", "vendored"), stage):
+                continue
+            try:
+                path = join_relative(home, item["into"])
+            except (TypeError, ValueError):
+                self.problem(stage, "invalid external source root")
+                continue
+            self.approved.append(path)
+            try:
+                self.external_skill(item, None, path, self.approved, stage)
+            except (KeyError, TypeError, ValueError):
+                self.problem(stage, "invalid external source declaration")
 
     def external_fields(self, data, required, optional, stage):
         if any(not isinstance(data.get(key), str) or not data[key].strip() for key in required):
@@ -238,11 +245,11 @@ class Discovery:
             return False
         return self.text_fields(data, optional, stage)
 
-    def external_skill(self, skill, repo, root, roots, stage):
+    def external_skill(self, skill, repo, path, roots, stage):
         name, relative = skill["name"], skill["subPath"]
         upstream = repo["url"] if repo is not None else skill["upstream"]
         relative = join_relative(".", relative).replace("\\", "/")
-        origin = ({"type": "checkout", "url": upstream, "dir": repo["dir"], "branch": repo.get("branch")}
+        origin = ({"type": "checkout", "url": upstream, "dir": repo["path"].replace("\\", "/").rstrip("/").split("/")[-1], "branch": repo.get("branch")}
                   if repo is not None else
                   {"type": "vendored", "upstream": upstream, "vendored": skill.get("vendored"),
                    "commit": skill.get("commit"), "subPath": skill["subPath"]})
@@ -253,8 +260,6 @@ class Discovery:
         record["version"] = repo.get("commit") if repo is not None else skill.get("commit")
         self.observe(record, "declared", "yes", "external source manifest")
         self.observe(record, "cached", "not_applicable", "not a plugin cache")
-        path = (join_relative(root, repo["dir"], skill["subPath"]) if repo is not None else
-                join_relative(root, name))
         previous = self.records.get(record["source_id"])
         if previous is not None and (
                 previous["resolution"] == "ambiguous" or previous["version"] != record["version"]
