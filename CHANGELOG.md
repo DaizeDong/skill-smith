@@ -4,6 +4,9 @@ All notable changes to this project are documented here (Keep a Changelog style)
 
 ## [Unreleased]
 
+- `reference/repo-layout.md` is the home of the public repository layout: file set, `plugin.json`
+  fields, README skeleton and badges, topics, version display, dash rules and the one-fact-one-layer
+  table, linked from `reference/documentation.md`.
 - The daily fleet check ships with the skill: `automation/tasks.json` declares
   `SkillSmithFleetCheck` (21:30) for background-task-core `install-skill`, and the storage
   contract declares the companion override `automation/tasks.local.json`. The config standard

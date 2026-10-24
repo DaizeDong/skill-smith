@@ -16,6 +16,7 @@ maintenance or retired status describes lifecycle and never weakens safety or DA
 | ROADMAP | Current capabilities, verification limits and planned work; distinguish implemented, verified and published, and link release history in CHANGELOG |
 | CHANGELOG | User-visible and maintainer-relevant changes under Unreleased, grouped by resulting behavior; use real versions/dates for releases and preserve historical facts and evidence limits |
 | Companion README / DATA guidance | Configuration discovery, verified PRIVATE versioned DATA, writer failure, restoration and retention; link the tool contract instead of copying a full plugin document set |
+| Repository layout and presentation | File set, `plugin.json` fields, README skeleton and badges, topics, version display, dash rules and the one-fact-one-layer table: [repo-layout.md](repo-layout.md) |
 
 The generation owner completes every applicable document. A scaffold is a draft: placeholder prose
 in required current sections is unfinished work. Legitimate future TODOs and historical limitations
